@@ -67,11 +67,22 @@ exist.
    the section's own entries; `scripts/release/extract-release-notes.sh` refuses
    a section without `### Highlights` or outside 3 to 6 bullets, unwraps hard
    line breaks, rewrites relative documentation links to absolute blob URLs
-   at the release tag, and places `### Maintenance` last), and run
-   `bash scripts/release/concat-changelog-fragments.sh --write`
-   ([ADR-0245](../adr/0245-changelog-render-at-landing.md)). The section
-   holds the changes since the previous candidate, or since the previous
-   release for `rc.1`.
+   at the release tag, and places `### Maintenance` last), delete every fragment
+   rotated into the release section, then run
+   `bash scripts/release/concat-changelog-fragments.sh --write` so `[Unreleased]`
+   is empty and `--check` passes
+   ([ADR-0245](../adr/0245-changelog-render-at-landing.md)). A plain render pull request
+   carries `CHANGELOG.md` only; a release pull request carries `CHANGELOG.md`, optional
+   fragment deletions (the check allows a cut with none when prior candidates
+   consumed them; the procedure deletes what it rotates), and the release files only
+   (`VERSION_SITES` in `scripts/prepare-release.py`, compile-context projections, and
+   `RELEASE_DOCS` in `scripts/release/check-changelog-staleness.py`). Pull requests fail
+   when the base owes a render for more than 20 h judged on the merge commit's first parent,
+   directing authors to land the render PR first
+   ([ADR-0251](../adr/0251-changelog-render-owed-on-pull-requests.md)). A render pull
+   request whose merge tree renders current passes even while the base owes more
+   than 20 h (the remedy itself is never blocked). The section holds the changes
+   since the previous candidate, or since the previous release for `rc.1`.
 2. Run `bash scripts/test-abi-upgrade.sh --old-ref <previous tag> --build-dir build-upgrade`
    and attach its output to the release pull request.
 3. Merge. Dispatch `Tester publish` from the default branch with an empty `ref`

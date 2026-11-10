@@ -148,6 +148,16 @@ ACTIONLINT_RENOVATE_TEMPLATES = {
     "datasourceTemplate": "go",
 }
 ACTIONLINT_GO_STEP = "- name: Set up Go for actionlint"
+DOCS_PR_RENDER_STEP = "Changelog render owed at most 20 h on pull requests"
+DOCS_PR_RENDER_IF = "if: github.event_name == 'pull_request'"
+DOCS_PR_RENDER_COMMAND = "python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20"
+DOCS_PR_RENDER_ALLOWED_STEP_KEYS = frozenset({"name", "if", "run"})
+DOCS_JOB_ALLOWED_KEYS = frozenset({"name", "runs-on", "timeout-minutes", "steps"})
+# ADR-0251: top-level keys reach every job, the PR render step included
+# (defaults: run: shell, env: GIT_DIR). Measured on ci.yml 2026-11-10.
+CI_WORKFLOW_ALLOWED_TOP_KEYS = frozenset(
+    {"name", "on", "permissions", "concurrency", "jobs"}
+)
 # #228: the hosted lavapipe lane (software Vulkan). It is functional evidence
 # only. The Praetor hosted-gate draft step comes first (HISS-18), every later
 # step carries the draft guard, and the lane keeps a bounded budget.
@@ -2618,28 +2628,64 @@ def validate_qsv_replay_text(replay: str) -> list[str]:
     return errors
 
 
+WORKFLOW_JOB_START = re.compile(r"  ([A-Za-z0-9_-]+):\s*(?:#.*)?\n?")
+
+
+def _jobs_section(lines: list[str]) -> range:
+    """Line indices inside the first top-level `jobs:` mapping; comments stay inside."""
+    first = next(
+        (index + 1 for index, line in enumerate(lines) if line.rstrip() == "jobs:"),
+        None,
+    )
+    if first is None:
+        return range(0)
+    for index in range(first, len(lines)):
+        line = lines[index]
+        if line.strip() and not line.startswith((" ", "\t", "#")):
+            return range(first, index)
+    return range(first, len(lines))
+
+
+def _validate_job_names(relative: str, text: str) -> list[str]:
+    """ADR-0251: every job key is a plain `  <name>:` line set once.
+
+    workflow_job_blocks starts a block only at such a line and keeps the last
+    block per name, so a quoted, flow-style or repeated job key would hide a
+    job from every check that reads the blocks.
+    """
+    lines = text.splitlines(keepends=True)
+    errors: list[str] = []
+    names: list[str] = []
+    for index in _jobs_section(lines):
+        line = lines[index]
+        body = line[2:]
+        if line[:2] != "  " or not body.strip() or body[0] in " #":
+            continue
+        match = WORKFLOW_JOB_START.fullmatch(line)
+        if match is None:
+            errors.append(
+                f"{relative}:{index + 1}: job key line must be a plain `  <name>:` key"
+            )
+        else:
+            names.append(match.group(1))
+    for repeated in _repeated_keys(names):
+        errors.append(f"{relative}: workflow sets job {repeated} more than once")
+    return errors
+
+
 def workflow_job_blocks(text: str) -> dict[str, str]:
     """Extract top-level workflow job blocks without executing YAML."""
     lines = text.splitlines(keepends=True)
-    try:
-        jobs_line = next(
-            index for index, line in enumerate(lines) if line.rstrip() == "jobs:"
-        )
-    except StopIteration:
-        return {}
-
     starts: list[tuple[str, int]] = []
-    for index in range(jobs_line + 1, len(lines)):
-        line = lines[index]
-        if line.strip() and not line.startswith((" ", "\t")):
-            break
-        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):\s*(?:#.*)?\n?", line)
+    section = _jobs_section(lines)
+    for index in section:
+        match = WORKFLOW_JOB_START.fullmatch(lines[index])
         if match:
             starts.append((match.group(1), index))
 
     blocks: dict[str, str] = {}
     for position, (name, start) in enumerate(starts):
-        end = starts[position + 1][1] if position + 1 < len(starts) else len(lines)
+        end = starts[position + 1][1] if position + 1 < len(starts) else section.stop
         blocks[name] = "".join(lines[start:end])
     return blocks
 
@@ -3671,9 +3717,105 @@ def _validate_ci_ffmpeg_job(relative: str, ffmpeg: str) -> list[str]:
     return errors
 
 
+def _validate_docs_pr_render_step(relative: str, docs: str) -> list[str]:
+    """ADR-0251: docs job must check changelog render debt on pull requests."""
+    errors: list[str] = []
+    matching = [
+        step for _, step in _job_steps(docs) if _step_name(step) == DOCS_PR_RENDER_STEP
+    ]
+    if len(matching) != 1:
+        return [
+            f"{relative}: docs job needs exactly one step named {DOCS_PR_RENDER_STEP!r}"
+        ]
+    step = matching[0]
+    commands = _step_commands(step)
+    if commands != [DOCS_PR_RENDER_COMMAND]:
+        errors.append(
+            f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} must run "
+            f"{DOCS_PR_RENDER_COMMAND!r} as the only command of its run: key"
+        )
+    keys = [key.split(" #", 1)[0].strip() for key in _step_keys(step)]
+    if DOCS_PR_RENDER_IF not in keys:
+        errors.append(
+            f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} must set "
+            f"{DOCS_PR_RENDER_IF!r}"
+        )
+    step_keys = [raw_key.split(":", 1)[0].strip() for raw_key in _step_keys(step)]
+    for k in step_keys:
+        if k not in DOCS_PR_RENDER_ALLOWED_STEP_KEYS:
+            msg = f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} must not set {k}"
+            if msg not in errors:
+                errors.append(msg)
+    for repeated in _repeated_keys(step_keys):
+        errors.append(
+            f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} sets {repeated} more than once"
+        )
+    errors.extend(
+        _dev_image_step_conditions(
+            relative, "docs", DOCS_PR_RENDER_STEP, step, allowed_if=DOCS_PR_RENDER_IF
+        )
+    )
+    return errors
+
+
+def _mapping_keys(text: str, indent: int) -> list[str]:
+    """Every non-comment line at exactly indent columns, cut at its first colon.
+
+    Quoted keys and `<<:` merge keys come back as written, so an allow-list
+    over the result refuses them instead of missing them.
+    """
+    keys: list[str] = []
+    for line in text.splitlines():
+        body = line[indent:]
+        if line[:indent].strip(" ") or not body or body[0] in " #":
+            continue
+        keys.append(body.split(":", 1)[0].strip())
+    return keys
+
+
+def _repeated_keys(keys: Iterable[str]) -> list[str]:
+    """Keys in an iterable appearing more than once, in order of first repeat."""
+    seen: set[str] = set()
+    repeated: list[str] = []
+    for key in keys:
+        if key in seen:
+            if key not in repeated:
+                repeated.append(key)
+        else:
+            seen.add(key)
+    return repeated
+
+
+def _validate_docs_job_keys(relative: str, docs: str) -> list[str]:
+    """ADR-0251: the docs job sets only its allow-listed keys (no execution overrides)."""
+    keys = _mapping_keys("\n".join(docs.splitlines()[1:]), 4)
+    errors = [
+        f"{relative}: docs job must not set {key}"
+        for key in keys
+        if key not in DOCS_JOB_ALLOWED_KEYS
+    ]
+    for repeated in _repeated_keys(keys):
+        errors.append(f"{relative}: docs job sets {repeated} more than once")
+    return errors
+
+
+def _validate_ci_top_keys(relative: str, text: str) -> list[str]:
+    """ADR-0251: ci.yml sets only its allow-listed top-level keys."""
+    keys = _mapping_keys(text, 0)
+    errors = [
+        f"{relative}: ci.yml must not set top-level {key}"
+        for key in keys
+        if key not in CI_WORKFLOW_ALLOWED_TOP_KEYS
+    ]
+    for repeated in _repeated_keys(keys):
+        errors.append(f"{relative}: ci.yml sets top-level {repeated} more than once")
+    return errors
+
+
 def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
     """Validate actionlint and go toolchain pins in the docs workflow job."""
     errors: list[str] = []
+    errors.extend(_validate_docs_job_keys(relative, docs))
     for token in (
         ACTIONLINT_GO_STEP,
         "go-version: ${{ env.GO_VERSION }}",
@@ -3706,6 +3848,7 @@ def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
             f"{relative}: docs job must set exactly one go-version, "
             f"'${{{{ env.GO_VERSION }}}}' (found {go_versions})"
         )
+    errors.extend(_validate_docs_pr_render_step(relative, docs))
     return errors
 
 
@@ -3718,6 +3861,7 @@ def _validate_workflow_specialized_jobs(
     if rel_name == "ci.yml":
         if not re.search(r"^  workflow_call:", text, re.MULTILINE):
             errors.append(f"{relative}: ci.yml must declare workflow_call for release")
+        errors.extend(_validate_ci_top_keys(relative, text))
         errors.extend(_validate_ci_ffmpeg_job(relative, jobs.get("ffmpeg-stack", "")))
         errors.extend(_validate_ci_docs_job(relative, jobs.get("docs", "")))
         errors.extend(validate_windows_job(relative, jobs.get(WINDOWS_JOB)))
@@ -3744,7 +3888,8 @@ def validate_workflow_text(
     if not jobs:
         return [f"{relative}: no jobs found"]
     return (
-        _validate_workflow_structure_and_jobs(relative, text, jobs)
+        _validate_job_names(relative, text)
+        + _validate_workflow_structure_and_jobs(relative, text, jobs)
         + _validate_workflow_native_packages(relative, jobs)
         + _validate_workflow_specialized_jobs(relative, text, jobs, meson_text=meson_text)
     )
@@ -5875,6 +6020,227 @@ def _docs_pin_shape_cases(source: str) -> dict:
     }
 
 
+def _docs_pr_render_structural_cases(
+    source: str, step_block: str
+) -> dict[str, tuple[str, str]]:
+    """Structural and condition mutations of the PR render step."""
+    return {
+        "pr render step removed": (
+            source.replace(step_block, ""),
+            "docs job needs exactly one step named",
+        ),
+        "pr render step renamed": (
+            source.replace(
+                "name: Changelog render owed at most 20 h on pull requests",
+                "name: Changelog render check",
+            ),
+            "docs job needs exactly one step named",
+        ),
+        "pr render step duplicated": (
+            source.replace(step_block, step_block + step_block),
+            "docs job needs exactly one step named",
+        ),
+        "pr render step if flipped": (
+            source.replace(
+                step_block,
+                step_block.replace(
+                    "if: github.event_name == 'pull_request'",
+                    "if: github.event_name != 'pull_request'",
+                ),
+            ),
+            "must not set if other than",
+        ),
+        "pr render step if dropped": (
+            source.replace(
+                step_block,
+                step_block.replace(
+                    "        if: github.event_name == 'pull_request'\n", ""
+                ),
+            ),
+            "must set",
+        ),
+        "pr render step continue-on-error": (
+            source.replace(
+                step_block, step_block + "        continue-on-error: true\n"
+            ),
+            "must not set continue-on-error",
+        ),
+    }
+
+
+def _docs_pr_render_override_cases(
+    source: str, step_block: str
+) -> dict[str, tuple[str, str]]:
+    """Execution override mutations of the PR render step and docs job."""
+    return {
+        "pr render step shell": (
+            source.replace(step_block, step_block + "        shell: echo {0}\n"),
+            "must not set shell",
+        ),
+        "pr render step working-directory": (
+            source.replace(
+                step_block, step_block + "        working-directory: docs\n"
+            ),
+            "must not set working-directory",
+        ),
+        "pr render step env": (
+            source.replace(
+                step_block,
+                step_block + "        env:\n          EXTRA: 1\n",
+            ),
+            "must not set env",
+        ),
+        "pr render job continue-on-error": (
+            source.replace("  docs:\n", "  docs:\n    continue-on-error: true\n"),
+            "docs job must not set continue-on-error",
+        ),
+        "pr render job if": (
+            source.replace("  docs:\n", "  docs:\n    if: false\n"),
+            "docs job must not set if",
+        ),
+        "pr render job defaults": (
+            source.replace(
+                "  docs:\n",
+                "  docs:\n    defaults:\n      run:\n        shell: echo {0}\n",
+            ),
+            "docs job must not set defaults",
+        ),
+        "pr render job quoted continue-on-error": (
+            source.replace("  docs:\n", '  docs:\n    "continue-on-error": true\n'),
+            'docs job must not set "continue-on-error"',
+        ),
+        "pr render workflow top-level defaults": (
+            "defaults:\n  run:\n    shell: echo {0}\n" + source,
+            "ci.yml must not set top-level defaults",
+        ),
+        "pr render workflow top-level env": (
+            source.replace("\njobs:\n", "\nenv:\n  GIT_DIR: /dev/null\njobs:\n"),
+            "ci.yml must not set top-level env",
+        ),
+    }
+
+
+def _docs_pr_render_command_cases(
+    source: str, step_block: str
+) -> dict[str, tuple[str, str]]:
+    """Command-line mutations of the PR render step."""
+
+    def mutate(old: str, new: str) -> str:
+        return source.replace(step_block, step_block.replace(old, new))
+
+    cmd = (
+        "run: python3 -I scripts/release/check-changelog-staleness.py "
+        "--pull-request --max-age-hours 20"
+    )
+    return {
+        "pr render step pull-request flag dropped": (
+            mutate(" --pull-request", ""),
+            "must run",
+        ),
+        "pr render step max-age-hours 24": (
+            mutate("--max-age-hours 20", "--max-age-hours 24"),
+            "must run",
+        ),
+        "pr render step or-true appended": (
+            mutate("--max-age-hours 20", "--max-age-hours 20 || true"),
+            "must run",
+        ),
+        "pr render step command moved to echo": (
+            mutate("run: python3 -I", "run: echo python3 -I"),
+            "must run",
+        ),
+        "pr render step command replaced by comment and true": (
+            mutate(
+                cmd,
+                "run: |\n          # python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20\n          true",
+            ),
+            "must run",
+        ),
+    }
+
+
+def _docs_pr_render_wrapper_cases(
+    source: str, step_block: str
+) -> dict[str, tuple[str, str]]:
+    """Block run: mutations that keep the command as a line but stop it running."""
+    wrappers = {
+        "pr render step exit 0 before command": (["exit 0"], []),
+        "pr render step exit 0 after command": ([], ["exit 0"]),
+        "pr render step heredoc wrapper": (["cat <<'EOF'"], ["EOF"]),
+        "pr render step if false wrapper": (["if false; then"], ["fi"]),
+    }
+    run_line = f"run: {DOCS_PR_RENDER_COMMAND}"
+    cases: dict[str, tuple[str, str]] = {}
+    for name, (before, after) in wrappers.items():
+        body = "\n          ".join([*before, DOCS_PR_RENDER_COMMAND, *after])
+        block = step_block.replace(run_line, "run: |\n          " + body)
+        cases[name] = (source.replace(step_block, block), "must run")
+    return cases
+
+
+def _docs_pr_render_repeat_cases(
+    source: str, step_block: str
+) -> dict[str, tuple[str, str]]:
+    """Duplicate key mutations in the step, docs job, jobs map and ci.yml top level."""
+    docs = workflow_job_blocks(source)["docs"]
+    return {
+        "pr render docs job duplicated": (
+            source.replace(docs, docs.replace(step_block, "") + docs),
+            "sets job docs more than once",
+        ),
+        "pr render job quoted key": (
+            source.replace("  semgrep:\n", '  "docs":\n  semgrep:\n'),
+            "must be a plain `  <name>:` key",
+        ),
+        "pr render step run duplicated": (
+            source.replace(step_block, step_block + "        run: true\n"),
+            "sets run more than once",
+        ),
+        "pr render job steps duplicated": (
+            source.replace(
+                "  semgrep:\n",
+                "    steps:\n      - run: true\n  semgrep:\n",
+            ),
+            "docs job sets steps more than once",
+        ),
+        "pr render workflow top-level jobs duplicated": (
+            source + "\njobs:\n",
+            "sets top-level jobs more than once",
+        ),
+    }
+
+
+def _docs_pr_render_comment_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations proving column-0 comments do not truncate the jobs map."""
+    return {
+        "pr render docs job after column-0 comment": (
+            source
+            + "# planted comment\n  docs:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: true\n",
+            "sets job docs more than once",
+        ),
+        "pr render quoted job key after column-0 comment": (
+            source + '# planted comment\n  "docs":\n    runs-on: ubuntu-24.04\n',
+            "must be a plain",
+        ),
+    }
+
+
+def _docs_pr_render_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Planted mutations of the docs job PR changelog render step (ADR-0251)."""
+    step_block = (
+        "      - name: Changelog render owed at most 20 h on pull requests\n"
+        "        if: github.event_name == 'pull_request'\n"
+        "        run: python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20\n"
+    )
+    cases = _docs_pr_render_structural_cases(source, step_block)
+    cases.update(_docs_pr_render_override_cases(source, step_block))
+    cases.update(_docs_pr_render_command_cases(source, step_block))
+    cases.update(_docs_pr_render_wrapper_cases(source, step_block))
+    cases.update(_docs_pr_render_repeat_cases(source, step_block))
+    cases.update(_docs_pr_render_comment_cases(source))
+    return cases
+
+
 def lavapipe_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
     """Mutations of the #228 lavapipe lane that the validator must reject."""
     lane = workflow_job_blocks(source).get(LAVAPIPE_JOB, "")
@@ -6231,6 +6597,32 @@ def run_key_scope_regression() -> list[str]:
     return []
 
 
+def job_blocks_reader_regression() -> list[str]:
+    """Prove workflow_job_blocks scans past comments and stops at jobs section end."""
+    failures: list[str] = []
+    positive = "jobs:\n  a:\n    runs-on: x\n# c\n  b:\n    runs-on: y\nenv:\n  Z: 1\n"
+    expected_positive = {
+        "a": "  a:\n    runs-on: x\n# c\n",
+        "b": "  b:\n    runs-on: y\n",
+    }
+    got_positive = workflow_job_blocks(positive)
+    if got_positive != expected_positive:
+        failures.append(
+            f"workflow regression: job blocks reader positive got {got_positive!r}"
+        )
+    if workflow_job_blocks("env:\n  Z: 1\n") != {}:
+        failures.append("workflow regression: job blocks reader negative got non-empty")
+    if workflow_job_blocks("jobs:\n") != {}:
+        failures.append(
+            "workflow regression: job blocks reader boundary empty got non-empty"
+        )
+    if workflow_job_blocks("jobs:\n  a:\n") != {"a": "  a:\n"}:
+        failures.append(
+            "workflow regression: job blocks reader boundary bodyless got unexpected"
+        )
+    return failures
+
+
 def sei_fit_qualifying_jobs(source: str) -> list[str]:
     """Return CI job names whose check-test-skips invocation carries pelorus:sei-fit requires."""
     jobs = workflow_job_blocks(source)
@@ -6394,7 +6786,11 @@ def workflow_validator_regressions() -> list[str]:
     ci_path = WORKFLOWS[0]
     source = ci_path.read_text(encoding="utf-8")
     cases = _ci_toolchain_cases(source)
-    cases |= _docs_pin_shape_cases(source) | _load_step_cases(source)
+    cases |= (
+        _docs_pin_shape_cases(source)
+        | _load_step_cases(source)
+        | _docs_pr_render_cases(source)
+    )
     relative = ci_path.relative_to(ROOT).as_posix()
     failures.extend(windows_pin_bump_regression(source, relative))
     failures.extend(sei_fit_planted_rule_regression(source, relative))
@@ -6407,6 +6803,7 @@ def workflow_validator_regressions() -> list[str]:
             failures.append(f"workflow regression: {name} was accepted")
 
     failures.extend(run_key_scope_regression())
+    failures.extend(job_blocks_reader_regression())
     msvc_errors = [
         err
         for err in validate_workflow_text(relative, source)

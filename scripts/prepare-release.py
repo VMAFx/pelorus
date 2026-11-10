@@ -29,6 +29,13 @@ _PELORUS_STR_RE = re.compile(r'#define\s+PELORUS_VERSION_STR\s+"([^"]+)"')
 _README_VER_RE = re.compile(r"Pre-1\.0\s+\(`v([^`]+)`\)\.")
 _AGENTS_VER_RE = re.compile(r"- Release\s+`v([^`]+)`\s+line:")
 
+VERSION_SITES: tuple[str, ...] = (
+    "meson.build",
+    "libpelorus/include/pelorus/pelorus.h",
+    "README.md",
+    "AGENTS.md",
+)
+
 
 def _expect(condition: bool, message: str) -> None:
     """Helper raising AssertionError when condition is false (Bandit B101)."""
@@ -151,8 +158,8 @@ def run_write(root: Path, new_ver: str) -> int:
         print(f"prepare-release: version {new_ver} is already current; nothing written")
         return 0
     _write_all(root, new_ver, (maj, min_, pat))
-    print(f"prepare-release: updated 4 files to version {new_ver}:")
-    print("  meson.build\n  libpelorus/include/pelorus/pelorus.h\n  README.md\n  AGENTS.md")
+    print(f"prepare-release: updated {len(VERSION_SITES)} files to version {new_ver}:")
+    print("\n".join(f"  {site}" for site in VERSION_SITES))
     print("\nfollow-up steps:\n  praetorctl compile-context\n  changelog rotation per docs/development/release.md")
     return 0
 
@@ -234,15 +241,10 @@ def _run_cli(argv: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _copy_tree_files(src: Path, dst: Path) -> list[Path]:
-    """Copy the four tracked release-version files to temporary root."""
-    paths = [
-        Path("meson.build"),
-        Path("libpelorus/include/pelorus/pelorus.h"),
-        Path("README.md"),
-        Path("AGENTS.md"),
-    ]
+    """Copy the tracked release-version files to temporary root."""
     out = []
-    for rel in paths:
+    for rel_str in VERSION_SITES:
+        rel = Path(rel_str)
         target = dst / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((src / rel).read_bytes())
