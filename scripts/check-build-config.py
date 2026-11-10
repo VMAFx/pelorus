@@ -150,8 +150,13 @@ ACTIONLINT_RENOVATE_TEMPLATES = {
 ACTIONLINT_GO_STEP = "- name: Set up Go for actionlint"
 DOCS_PR_RENDER_STEP = "Changelog render owed at most 20 h on pull requests"
 DOCS_PR_RENDER_IF = "if: github.event_name == 'pull_request'"
-DOCS_PR_RENDER_COMMAND = (
-    "python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20"
+DOCS_PR_RENDER_COMMAND = "python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20"
+DOCS_PR_RENDER_ALLOWED_STEP_KEYS = frozenset({"name", "if", "run"})
+DOCS_JOB_ALLOWED_KEYS = frozenset({"name", "runs-on", "timeout-minutes", "steps"})
+# ADR-0251: top-level keys reach every job, the PR render step included
+# (defaults: run: shell, env: GIT_DIR). Measured on ci.yml 2026-11-10.
+CI_WORKFLOW_ALLOWED_TOP_KEYS = frozenset(
+    {"name", "on", "permissions", "concurrency", "jobs"}
 )
 # #228: the hosted lavapipe lane (software Vulkan). It is functional evidence
 # only. The Praetor hosted-gate draft step comes first (HISS-18), every later
@@ -3699,6 +3704,12 @@ def _validate_docs_pr_render_step(relative: str, docs: str) -> list[str]:
             f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} must set "
             f"{DOCS_PR_RENDER_IF!r}"
         )
+    for raw_key in _step_keys(step):
+        k = raw_key.split(":", 1)[0].strip()
+        if k not in DOCS_PR_RENDER_ALLOWED_STEP_KEYS:
+            msg = f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} must not set {k}"
+            if msg not in errors:
+                errors.append(msg)
     errors.extend(
         _dev_image_step_conditions(
             relative, "docs", DOCS_PR_RENDER_STEP, step, allowed_if=DOCS_PR_RENDER_IF
@@ -3707,9 +3718,43 @@ def _validate_docs_pr_render_step(relative: str, docs: str) -> list[str]:
     return errors
 
 
+def _mapping_keys(text: str, indent: int) -> list[str]:
+    """Every non-comment line at exactly indent columns, cut at its first colon.
+
+    Quoted keys and `<<:` merge keys come back as written, so an allow-list
+    over the result refuses them instead of missing them.
+    """
+    keys: list[str] = []
+    for line in text.splitlines():
+        body = line[indent:]
+        if line[:indent].strip(" ") or not body or body[0] in " #":
+            continue
+        keys.append(body.split(":", 1)[0].strip())
+    return keys
+
+
+def _validate_docs_job_keys(relative: str, docs: str) -> list[str]:
+    """ADR-0251: the docs job sets only its allow-listed keys (no execution overrides)."""
+    return [
+        f"{relative}: docs job must not set {key}"
+        for key in _mapping_keys("\n".join(docs.splitlines()[1:]), 4)
+        if key not in DOCS_JOB_ALLOWED_KEYS
+    ]
+
+
+def _validate_ci_top_keys(relative: str, text: str) -> list[str]:
+    """ADR-0251: ci.yml sets only its allow-listed top-level keys."""
+    return [
+        f"{relative}: ci.yml must not set top-level {key}"
+        for key in _mapping_keys(text, 0)
+        if key not in CI_WORKFLOW_ALLOWED_TOP_KEYS
+    ]
+
+
 def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
     """Validate actionlint and go toolchain pins in the docs workflow job."""
     errors: list[str] = []
+    errors.extend(_validate_docs_job_keys(relative, docs))
     for token in (
         ACTIONLINT_GO_STEP,
         "go-version: ${{ env.GO_VERSION }}",
@@ -3755,6 +3800,7 @@ def _validate_workflow_specialized_jobs(
     if rel_name == "ci.yml":
         if not re.search(r"^  workflow_call:", text, re.MULTILINE):
             errors.append(f"{relative}: ci.yml must declare workflow_call for release")
+        errors.extend(_validate_ci_top_keys(relative, text))
         errors.extend(_validate_ci_ffmpeg_job(relative, jobs.get("ffmpeg-stack", "")))
         errors.extend(_validate_ci_docs_job(relative, jobs.get("docs", "")))
         errors.extend(validate_windows_job(relative, jobs.get(WINDOWS_JOB)))
@@ -5952,8 +5998,62 @@ def _docs_pr_render_structural_cases(
             "must set",
         ),
         "pr render step continue-on-error": (
-            source.replace(step_block, step_block + "        continue-on-error: true\n"),
+            source.replace(
+                step_block, step_block + "        continue-on-error: true\n"
+            ),
             "must not set continue-on-error",
+        ),
+    }
+
+
+def _docs_pr_render_override_cases(
+    source: str, step_block: str
+) -> dict[str, tuple[str, str]]:
+    """Execution override mutations of the PR render step and docs job."""
+    return {
+        "pr render step shell": (
+            source.replace(step_block, step_block + "        shell: echo {0}\n"),
+            "must not set shell",
+        ),
+        "pr render step working-directory": (
+            source.replace(
+                step_block, step_block + "        working-directory: docs\n"
+            ),
+            "must not set working-directory",
+        ),
+        "pr render step env": (
+            source.replace(
+                step_block,
+                step_block + "        env:\n          EXTRA: 1\n",
+            ),
+            "must not set env",
+        ),
+        "pr render job continue-on-error": (
+            source.replace("  docs:\n", "  docs:\n    continue-on-error: true\n"),
+            "docs job must not set continue-on-error",
+        ),
+        "pr render job if": (
+            source.replace("  docs:\n", "  docs:\n    if: false\n"),
+            "docs job must not set if",
+        ),
+        "pr render job defaults": (
+            source.replace(
+                "  docs:\n",
+                "  docs:\n    defaults:\n      run:\n        shell: echo {0}\n",
+            ),
+            "docs job must not set defaults",
+        ),
+        "pr render job quoted continue-on-error": (
+            source.replace("  docs:\n", '  docs:\n    "continue-on-error": true\n'),
+            'docs job must not set "continue-on-error"',
+        ),
+        "pr render workflow top-level defaults": (
+            "defaults:\n  run:\n    shell: echo {0}\n" + source,
+            "ci.yml must not set top-level defaults",
+        ),
+        "pr render workflow top-level env": (
+            source.replace("\njobs:\n", "\nenv:\n  GIT_DIR: /dev/null\njobs:\n"),
+            "ci.yml must not set top-level env",
         ),
     }
 
@@ -5969,7 +6069,8 @@ def _docs_pr_render_command_cases(
         ),
         "pr render step max-age-hours 24": (
             source.replace(
-                step_block, step_block.replace("--max-age-hours 20", "--max-age-hours 24")
+                step_block,
+                step_block.replace("--max-age-hours 20", "--max-age-hours 24"),
             ),
             "must run",
         ),
@@ -5982,7 +6083,8 @@ def _docs_pr_render_command_cases(
         ),
         "pr render step command moved to echo": (
             source.replace(
-                step_block, step_block.replace("run: python3 -I", "run: echo python3 -I")
+                step_block,
+                step_block.replace("run: python3 -I", "run: echo python3 -I"),
             ),
             "must run",
         ),
@@ -6007,6 +6109,7 @@ def _docs_pr_render_cases(source: str) -> dict[str, tuple[str, str]]:
         "        run: python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20\n"
     )
     cases = _docs_pr_render_structural_cases(source, step_block)
+    cases.update(_docs_pr_render_override_cases(source, step_block))
     cases.update(_docs_pr_render_command_cases(source, step_block))
     return cases
 

@@ -38,7 +38,10 @@ creates the GitHub release with five assets: `pelorus-ffmpeg-patches-vX.Y.Z.tar.
    `### Maintenance` last, and fails the tag build if the section or its
    `### Highlights` (3 to 6 bullets) is missing.
 4. **Commit** the version bump (`chore(release): vX.Y.Z`), open a PR, merge to
-   `master`.
+   `master`. A release PR carries `CHANGELOG.md`, optional fragment deletions, and the release files
+   only (defined by `VERSION_SITES` in `scripts/prepare-release.py`, compile-context
+   projections, and `RELEASE_DOCS` in `scripts/release/check-changelog-staleness.py`;
+   any other path fails pull request CI per ADR-0251).
 5. **Tag + push** (signed tag via pre-tag guard):
 
    ```sh

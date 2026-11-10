@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.util
 import io
 import os
 import pathlib
@@ -25,6 +26,45 @@ from typing import Any, Callable
 
 SUBPROCESS_TIMEOUT_S = 120
 VALID_DIFF_STATUSES = frozenset({"A", "D", "M", "T"})
+
+# praetorctl compile-context outputs; no machine list exists
+# (praetorctl compile-context --help has none; AGENTS.readonly.md lacks the marker).
+CONTEXT_PROJECTIONS: frozenset[str] = frozenset(
+    {
+        "CLAUDE.md",
+        "AGENTS.readonly.md",
+        ".codex/rules.md",
+        ".cursor/rules/hiss-invariants.mdc",
+        ".gemini/GEMINI.md",
+        ".github/copilot-instructions.md",
+        ".windsurfrules",
+    }
+)
+
+# Measured release cuts (e2e4040, 4617be1, 91826e5, 7cae980, 0c2f79d, 5737c8f).
+RELEASE_DOCS: frozenset[str] = frozenset(
+    {
+        "docs/roadmap.md",
+        "docs/rebase-notes.md",
+    }
+)
+
+
+def _load_version_sites() -> tuple[str, ...]:
+    """Load VERSION_SITES from scripts/prepare-release.py; raise RuntimeError on failure."""
+    path = pathlib.Path(__file__).resolve().parent.parent / "prepare-release.py"
+    spec = importlib.util.spec_from_file_location("prepare_release", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load VERSION_SITES: no loader for {path}")
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except (OSError, ImportError, SyntaxError) as exc:
+        raise RuntimeError(f"cannot load VERSION_SITES from {path}: {exc}") from exc
+    sites = getattr(mod, "VERSION_SITES", None)
+    if not isinstance(sites, tuple) or not all(isinstance(s, str) for s in sites):
+        raise RuntimeError(f"cannot load VERSION_SITES: {path} has no tuple of paths")
+    return sites
 
 
 def _run_git_step(cmd: list[str], env: dict[str, str], what: str) -> None:
@@ -258,25 +298,47 @@ def _check_render_pr_scope(
     if not is_render_pr:
         return False, 0
 
-    has_fragment_deletions = any(
-        path.startswith("changelog.d/") and status == "D"
-        for status, path in diff_entries
-    )
-    offending: list[tuple[str, str]] = []
-    for status, path in diff_entries:
-        if path.startswith("changelog.d/"):
-            if status != "D":
-                offending.append((status, path))
-        elif not has_fragment_deletions:
-            if path != "CHANGELOG.md":
-                offending.append((status, path))
+    is_release_cut = ("M", "meson.build") in diff_entries
+    if is_release_cut:
+        try:
+            version_sites = _load_version_sites()
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return True, 1
+        release_files = (
+            frozenset(version_sites)
+            | CONTEXT_PROJECTIONS
+            | RELEASE_DOCS
+            | {"CHANGELOG.md"}
+        )
+        offending = [
+            (status, path)
+            for status, path in diff_entries
+            if (
+                status != "D"
+                if path.startswith("changelog.d/")
+                else not (status == "M" and path in release_files)
+            )
+        ]
+        if offending:
+            for status, path in offending:
+                print(
+                    f"release pull request changes {path} ({status}): "
+                    "a release pull request modifies release files and deletes fragments only; "
+                    "land fragment and code changes in their own pull request first",
+                    file=sys.stderr,
+                )
+            return True, 1
+        return True, 0
 
+    offending = [
+        (status, path) for status, path in diff_entries if path != "CHANGELOG.md"
+    ]
     if offending:
         for status, path in offending:
             print(
                 f"render pull request changes {path} ({status}): "
-                "a render pull request carries CHANGELOG.md only "
-                "(plus fragment deletions at a release cut); "
+                "a render pull request carries CHANGELOG.md only; "
                 "land fragment and code changes in their own pull request first",
                 file=sys.stderr,
             )
@@ -812,11 +874,21 @@ def _setup_release_pr(
     frag_name: str,
     script_dest: pathlib.Path,
     now: int,
+    base_files: dict[str, str] | None = None,
 ) -> None:
-    """Set up a release PR branch with consumed fragment deleted and version updated."""
+    """Set up a release PR branch with consumed fragment deleted and version updated.
+
+    base_files are extra paths committed on the base branch with the fragment.
+    """
     _fixture_git(repo, env, "checkout", "-q", "-b", base_name, "master")
+    (repo / "meson.build").write_text(
+        "project('p', 'c', version: '0.1.0')\n", encoding="utf-8"
+    )
+    for rel, content in (base_files or {}).items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(content, encoding="utf-8")
     (repo / f"changelog.d/added/{frag_name}").write_text("- Add.\n", encoding="utf-8")
-    commit_in_fixture(repo, env, "Add fragment 5h ago", now - 5 * 3600)
+    commit_in_fixture(repo, env, "Add version and fragment 5h ago", now - 5 * 3600)
     _fixture_git(repo, env, "checkout", "-q", "-b", pr_name, base_name)
     (repo / "meson.build").write_text(
         "project('p', 'c', version: '0.2.0')\n", encoding="utf-8"
@@ -909,12 +981,16 @@ def _test_pr_p9(
 
 
 def _test_pr_p10(repo: pathlib.Path, env: dict[str, str]) -> int:
-    """Test pull request case p10 (single parent ref)."""
-    rc10, _, err10 = _run_captured(check_pull_request, repo, "master", 20, env=env)
-    if rc10 != 1 or "is not a merge commit" not in err10:
-        print(f"self-test FAIL: p10 failed: rc={rc10}, err={err10!r}", file=sys.stderr)
-        return 1
-    print("self-test ok: p10 ref with one parent -> rc 1")
+    """Test pull request case p10 (root commit and single-parent refs)."""
+    for ref in ("master", "base-p1"):
+        rc10, _, err10 = _run_captured(check_pull_request, repo, ref, 20, env=env)
+        if rc10 != 1 or "is not a merge commit" not in err10:
+            print(
+                f"self-test FAIL: p10 failed on {ref}: rc={rc10}, err={err10!r}",
+                file=sys.stderr,
+            )
+            return 1
+    print("self-test ok: p10 root commit and one-parent ref -> rc 1")
     return 0
 
 
@@ -975,13 +1051,212 @@ def _test_pr_p12(
     return 0
 
 
-def _run_pr_self_tests(
+def _test_pr_p13(
     repo: pathlib.Path,
     env: dict[str, str],
     script_dest: pathlib.Path,
     now: int,
 ) -> int:
-    """Run pull request self-test cases p1 through p12."""
+    """Test pull request case p13 (Codacy: plain render deleting fragment and adding code)."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p13", "master")
+    (repo / "changelog.d/added/base-p13.md").write_text(
+        "- Add base.\n", encoding="utf-8"
+    )
+    (repo / "changelog.d/added/p13.md").write_text("- Add p13.\n", encoding="utf-8")
+    commit_in_fixture(repo, env, "Add fragments 10h ago", now - 10 * 3600)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p13", "base-p13")
+    _fixture_git(repo, env, "rm", "-q", "changelog.d/added/p13.md")
+    src = repo / "src/p13.c"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("int p13(void) { return 0; }\n", encoding="utf-8")
+    _fixture_render(repo, env, script_dest)
+    commit_in_fixture(repo, env, "Delete fragment and add code in render PR", now)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p13", "base-p13")
+    merge_in_fixture(repo, env, "pr-p13", "Merge pr-p13", now)
+    rc13, _, err13 = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
+    if (
+        rc13 != 1
+        or "changelog.d/added/p13.md (D)" not in err13
+        or "src/p13.c (A)" not in err13
+    ):
+        print(f"self-test FAIL: p13 failed: rc={rc13}, err={err13!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p13 plain render deletes fragment and adds code -> rc 1")
+    return 0
+
+
+def _test_pr_p14(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+) -> int:
+    """Test pull request case p14 (release cut that adds one code file and modifies another)."""
+    old = "src/p14-old.c"
+    _setup_release_pr(
+        repo,
+        env,
+        "base-p14",
+        "pr-p14",
+        "p14.md",
+        script_dest,
+        now,
+        base_files={old: "int p14_old(void) { return 0; }\n"},
+    )
+    (repo / old).write_text("int p14_old(void) { return 1; }\n", encoding="utf-8")
+    (repo / "src/p14.c").write_text("int p14(void) { return 0; }\n", encoding="utf-8")
+    commit_in_fixture(repo, env, "Release cut with code changes", now)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p14", "base-p14")
+    merge_in_fixture(repo, env, "pr-p14", "Merge release cut p14", now)
+    rc14, _, err14 = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
+    if rc14 != 1 or "src/p14.c (A)" not in err14 or f"{old} (M)" not in err14:
+        print(f"self-test FAIL: p14 failed: rc={rc14}, err={err14!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p14 release cut with code files (A and M) -> rc 1")
+    return 0
+
+
+def _test_pr_p15(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+) -> int:
+    """Test pull request case p15 (release cut without fragment deletion: v0.4.0 final shape)."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p15", "master")
+    (repo / "meson.build").write_text(
+        "project('p', 'c', version: '0.1.0')\n", encoding="utf-8"
+    )
+    (repo / "README.md").write_text("# Project 0.1.0\n", encoding="utf-8")
+    roadmap = repo / "docs/roadmap.md"
+    roadmap.parent.mkdir(parents=True, exist_ok=True)
+    roadmap.write_text("# Roadmap 0.1.0\n", encoding="utf-8")
+    commit_in_fixture(repo, env, "Commit release files on base", now - 5 * 3600)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p15", "base-p15")
+    (repo / "meson.build").write_text(
+        "project('p', 'c', version: '0.2.0')\n", encoding="utf-8"
+    )
+    (repo / "README.md").write_text("# Project 0.2.0\n", encoding="utf-8")
+    roadmap.write_text("# Roadmap 0.2.0\n", encoding="utf-8")
+    cl = repo / "CHANGELOG.md"
+    cl.write_text(
+        cl.read_text(encoding="utf-8").replace(
+            "## [0.1.0]",
+            "## [0.2.0] - 2026-02-01\n\n### Added\n\n- Final cut.\n\n## [0.1.0]",
+        ),
+        encoding="utf-8",
+    )
+    _fixture_render(repo, env, script_dest)
+    commit_in_fixture(repo, env, "Final release cut v0.2.0", now)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p15", "base-p15")
+    merge_in_fixture(repo, env, "pr-p15", "Merge final release cut p15", now)
+    rc15, out15, _ = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
+    if rc15 != 0 or "changelog render current" not in out15:
+        print(f"self-test FAIL: p15 failed: rc={rc15}, out={out15!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p15 release cut without fragment deletion -> rc 0")
+    return 0
+
+
+def _test_pr_p16(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+) -> int:
+    """Test pull request case p16 (release cut deleting a release file)."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p16", "master")
+    (repo / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+    (repo / "meson.build").write_text(
+        "project('p', 'c', version: '0.1.0')\n", encoding="utf-8"
+    )
+    (repo / "changelog.d/added/p16.md").write_text("- Add p16.\n", encoding="utf-8")
+    commit_in_fixture(
+        repo, env, "Commit release files and fragment on base", now - 5 * 3600
+    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p16", "base-p16")
+    (repo / "meson.build").write_text(
+        "project('p', 'c', version: '0.2.0')\n", encoding="utf-8"
+    )
+    _fixture_git(repo, env, "rm", "-q", "changelog.d/added/p16.md")
+    _fixture_git(repo, env, "rm", "-q", "AGENTS.md")
+    cl = repo / "CHANGELOG.md"
+    cl.write_text(
+        cl.read_text(encoding="utf-8").replace(
+            "## [0.1.0]",
+            "## [0.2.0] - 2026-02-01\n\n### Added\n\n- Released.\n\n## [0.1.0]",
+        ),
+        encoding="utf-8",
+    )
+    _fixture_render(repo, env, script_dest)
+    commit_in_fixture(repo, env, "Release cut deleting AGENTS.md", now)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p16", "base-p16")
+    merge_in_fixture(repo, env, "pr-p16", "Merge release cut p16", now)
+    rc16, _, err16 = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
+    if rc16 != 1 or "AGENTS.md (D)" not in err16:
+        print(f"self-test FAIL: p16 failed: rc={rc16}, err={err16!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p16 release cut deleting release file -> rc 1")
+    return 0
+
+
+def _test_pr_p17(repo_root: pathlib.Path) -> int:
+    """Test pull request case p17 (verify release allow-lists against real repository)."""
+    if not repo_root.is_dir() or not (repo_root / ".git").exists():
+        print(
+            f"self-test FAIL: p17 repository root not found or not a git repo: {repo_root}",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        tracked_out = run_git_log(repo_root, ["-z"], subcommand="ls-files")
+    except (RuntimeError, OSError) as exc:
+        print(f"self-test FAIL: p17 git ls-files failed: {exc}", file=sys.stderr)
+        return 1
+    tracked_files = {path for path in tracked_out.split("\0") if path}
+    try:
+        version_sites = _load_version_sites()
+    except RuntimeError as exc:
+        print(f"self-test FAIL: p17 {exc}", file=sys.stderr)
+        return 1
+    all_release_files = CONTEXT_PROJECTIONS | RELEASE_DOCS | set(version_sites)
+    for path in sorted(all_release_files):
+        if path not in tracked_files:
+            print(
+                f"self-test FAIL: p17 release file not tracked in git: {path}",
+                file=sys.stderr,
+            )
+            return 1
+    marker = "Compiled automatically by " + "praetorctl compile-context"
+    for rel_path in sorted(tracked_files):
+        if rel_path == "scripts/release/check-changelog-staleness.py":
+            continue
+        full_path = repo_root / rel_path
+        if not full_path.is_file():
+            continue
+        try:
+            content = full_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"self-test FAIL: p17 cannot read {rel_path}: {exc}", file=sys.stderr)
+            return 1
+        if marker in content and rel_path not in CONTEXT_PROJECTIONS:
+            print(
+                f"self-test FAIL: p17 compiled context file not in CONTEXT_PROJECTIONS: {rel_path}",
+                file=sys.stderr,
+            )
+            return 1
+    print("self-test ok: p17 release allow-lists match tracked repository files")
+    return 0
+
+
+def _run_pr_self_tests(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+    repo_root: pathlib.Path,
+) -> int:
+    """Run pull request self-test cases p1 through p17."""
     if _test_pr_p1(repo, env, now) != 0:
         return 1
     if _test_pr_p2(repo, env, now) != 0:
@@ -1005,6 +1280,16 @@ def _run_pr_self_tests(
     if _test_pr_p11() != 0:
         return 1
     if _test_pr_p12(repo, env, script_dest, now) != 0:
+        return 1
+    if _test_pr_p13(repo, env, script_dest, now) != 0:
+        return 1
+    if _test_pr_p14(repo, env, script_dest, now) != 0:
+        return 1
+    if _test_pr_p15(repo, env, script_dest, now) != 0:
+        return 1
+    if _test_pr_p16(repo, env, script_dest, now) != 0:
+        return 1
+    if _test_pr_p17(repo_root) != 0:
         return 1
     return 0
 
@@ -1045,7 +1330,7 @@ def run_self_test(repo_root: pathlib.Path) -> int:
         if _test_case_f(repo, env) != 0:
             return 1
 
-        if _run_pr_self_tests(repo, env, script_dest, now) != 0:
+        if _run_pr_self_tests(repo, env, script_dest, now, repo_root) != 0:
             return 1
 
     print("self-test passed")

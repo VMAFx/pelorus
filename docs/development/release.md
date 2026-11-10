@@ -69,10 +69,13 @@ exist.
    line breaks, rewrites relative documentation links to absolute blob URLs
    at the release tag, and places `### Maintenance` last), and run
    `bash scripts/release/concat-changelog-fragments.sh --write`
-   ([ADR-0245](../adr/0245-changelog-render-at-landing.md)). A render pull request
-   carries `CHANGELOG.md` only (plus fragment deletions at a release cut); pull
-   requests fail when the base owes a render for more than 20 h judged on the
-   merge commit's first parent, directing authors to land the render PR first
+   ([ADR-0245](../adr/0245-changelog-render-at-landing.md)). A plain render pull request
+   carries `CHANGELOG.md` only; a release pull request carries `CHANGELOG.md`, optional
+   fragment deletions, and the release files only (`VERSION_SITES` in
+   `scripts/prepare-release.py`, compile-context projections, and `RELEASE_DOCS` in
+   `scripts/release/check-changelog-staleness.py`). Pull requests fail when the base
+   owes a render for more than 20 h judged on the merge commit's first parent,
+   directing authors to land the render PR first
    ([ADR-0251](../adr/0251-changelog-render-owed-on-pull-requests.md)). The section
    holds the changes since the previous candidate, or since the previous
    release for `rc.1`.
