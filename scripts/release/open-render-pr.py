@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -25,7 +26,7 @@ import sys
 import tempfile
 import textwrap
 import urllib.parse
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 SUBPROCESS_TIMEOUT_S = 120
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -44,7 +45,7 @@ def _load_dco_checker() -> Callable[[str], bool]:
     checker = getattr(mod, "has_dco_trailer", None)
     if checker is None or not callable(checker):
         raise RuntimeError("cannot load check-dco: has_dco_trailer not found")
-    return checker
+    return cast(Callable[[str], bool], checker)
 
 
 def check_settings(env: dict[str, str]) -> int:
@@ -134,7 +135,9 @@ def _find_own_pr(
     bot_login = f"{app_slug}[bot]"
     own_pr: dict[str, Any] | None = None
     for pr in pulls:
-        head_repo = pr.get("head", {}).get("repo", {}).get("full_name")
+        head = pr.get("head") or {}
+        repo = head.get("repo") or {}
+        head_repo = repo.get("full_name")
         if head_repo == repository:
             login = pr.get("user", {}).get("login", "")
             if login == bot_login:
@@ -151,6 +154,7 @@ def _find_own_pr(
 
 
 def _handle_due_false(
+    repository: str,
     own_pr: dict[str, Any] | None,
     runner: GhRunner,
 ) -> int:
@@ -168,6 +172,8 @@ def _handle_due_false(
                 "--comment",
                 comment,
                 "--delete-branch",
+                "--repo",
+                repository,
             ],
             None,
         )
@@ -285,9 +291,7 @@ def _check_branch_head(
         return False, False, None
 
     head_sha = branch_entry["object"]["sha"]
-    commit_json = runner(
-        ["api", f"repos/{repository}/git/commits/{head_sha}"], None
-    )
+    commit_json = runner(["api", f"repos/{repository}/git/commits/{head_sha}"], None)
     head_commit = json.loads(commit_json)
     parents = [p["sha"] for p in head_commit.get("parents", [])]
     tree_sha = head_commit.get("tree", {}).get("sha", "")
@@ -365,9 +369,9 @@ def _update_or_create_ref(
             patch_in,
         )
     else:
-        post_in = json.dumps(
-            {"ref": f"refs/heads/{branch}", "sha": commit_sha}
-        ).encode("utf-8")
+        post_in = json.dumps({"ref": f"refs/heads/{branch}", "sha": commit_sha}).encode(
+            "utf-8"
+        )
         runner(
             ["api", "--method", "POST", f"repos/{repository}/git/refs", "--input", "-"],
             post_in,
@@ -388,7 +392,7 @@ def _ensure_pull_request(
     pr_bluf = "Render-only update for unreleased changelog fragments in CHANGELOG.md."
     pr_cmd = "Reproducer: bash scripts/release/concat-changelog-fragments.sh --write"
     pr_desc = (
-        "Opened by scheduled changelog render workflow under ADR-0252. "
+        "Opened by the scheduled changelog render workflow (ADR-0252). "
         "Lands automatically via squash auto-merge once required checks pass."
     )
     pr_body = f"{pr_bluf}\n\n{pr_cmd}\n\n{pr_desc}\n"
@@ -408,6 +412,7 @@ def _ensure_pull_request(
 
 
 def _arm_squash_merge(
+    repository: str,
     pr_number: int,
     bot_user: str,
     bot_email: str,
@@ -433,6 +438,8 @@ def _arm_squash_merge(
                 str(pr_number),
                 "--auto",
                 "--squash",
+                "--repo",
+                repository,
                 "--subject",
                 f"docs(changelog): render unreleased fragments (#{pr_number})",
                 "--body-file",
@@ -442,14 +449,21 @@ def _arm_squash_merge(
         )
     finally:
         pathlib.Path(tmp_path).unlink(missing_ok=True)
+    print(f"armed squash auto-merge on #{pr_number}")
     return 0
 
 
-def _get_bot_credentials(app_slug: str, runner: GhRunner) -> tuple[str, str]:
+def _get_bot_credentials(app_slug: str, runner: GhRunner) -> tuple[str, str] | None:
     """Resolve bot username and noreply email from the forge."""
     quoted_bot = urllib.parse.quote(f"{app_slug}[bot]")
     bot_user = f"{app_slug}[bot]"
     bot_id = runner(["api", f"users/{quoted_bot}", "--jq", ".id"], None).strip()
+    if re.fullmatch(r"[1-9][0-9]*", bot_id) is None:
+        print(
+            f"error: bot user id for {bot_user} is not numeric: {bot_id}",
+            file=sys.stderr,
+        )
+        return None
     return bot_user, f"{bot_id}+{bot_user}@users.noreply.github.com"
 
 
@@ -467,15 +481,21 @@ def execute_open_render_pr(
         ["api", f"repos/{repository}", "--jq", ".default_branch"], None
     ).strip()
     if branch == default_branch:
-        print(f"error: branch {branch!r} cannot be the repository default branch", file=sys.stderr)
+        print(
+            f"error: branch {branch!r} cannot be the repository default branch",
+            file=sys.stderr,
+        )
         return 1
 
-    bot_user, bot_email = _get_bot_credentials(app_slug, runner)
+    identity = _get_bot_credentials(app_slug, runner)
+    if identity is None:
+        return 1
+    bot_user, bot_email = identity
     own_pr, rc = _find_own_pr(repository, branch, app_slug, runner)
     if rc != 0:
         return rc
     if not due:
-        return _handle_due_false(own_pr, runner)
+        return _handle_due_false(repository, own_pr, runner)
 
     rc_render = _render_and_validate_status(repo, env)
     if rc_render != 0:
@@ -483,11 +503,15 @@ def execute_open_render_pr(
 
     tip = run_git(["rev-parse", "HEAD"], repo, env=env)
     tip_tree = run_git(["rev-parse", "HEAD^{tree}"], repo, env=env)
-    new_tree_sha, rc_tree = _create_blob_and_tree(repo, repository, tip_tree, runner, env)
+    new_tree_sha, rc_tree = _create_blob_and_tree(
+        repo, repository, tip_tree, runner, env
+    )
     if rc_tree != 0 or new_tree_sha is None:
         return rc_tree
 
-    branch_exists, is_current, _ = _check_branch_head(repository, branch, tip, new_tree_sha, runner)
+    branch_exists, is_current, _ = _check_branch_head(
+        repository, branch, tip, new_tree_sha, runner
+    )
     if is_current:
         print("render branch already current")
     else:
@@ -499,7 +523,9 @@ def execute_open_render_pr(
         _update_or_create_ref(repository, branch, commit_sha, branch_exists, runner)
 
     pr_number = _ensure_pull_request(repository, branch, default_branch, own_pr, runner)
-    return _arm_squash_merge(pr_number, bot_user, bot_email, runner)
+    verb = "refreshed" if own_pr is not None else "opened"
+    print(f"{verb} render pull request #{pr_number}")
+    return _arm_squash_merge(repository, pr_number, bot_user, bot_email, runner)
 
 
 # --- Self-test suite ---
@@ -549,13 +575,12 @@ class StubForge:
         self.head_commit_tree = head_commit_tree
         self.open_pulls = open_pulls if open_pulls is not None else []
         self.calls: list[tuple[list[str], bytes | None]] = []
+        self.merge_body = ""
 
     def _calc_blob_sha(self, stdin: bytes | None) -> str:
         """Compute sha1 of git blob payload for stub forge."""
         if self.blob_sha_override:
             return self.blob_sha_override
-        import hashlib
-
         data = json.loads(stdin) if stdin else {}
         content = base64.b64decode(data.get("content", ""))
         header = f"blob {len(content)}\0".encode("ascii")
@@ -573,7 +598,12 @@ class StubForge:
             return self.bot_id
         if "pulls?state=open" in call_str:
             return json.dumps(self.open_pulls)
-        if args[:2] in (["pr", "close"], ["pr", "merge"]):
+        if args[:2] == ["pr", "merge"]:
+            self.merge_body = pathlib.Path(
+                args[args.index("--body-file") + 1]
+            ).read_text(encoding="utf-8")
+            return ""
+        if args[:2] == ["pr", "close"]:
             return ""
         if "git/blobs" in call_str:
             return json.dumps({"sha": self._calc_blob_sha(stdin)})
@@ -583,7 +613,12 @@ class StubForge:
             if self.existing_branch_sha is not None:
                 branch = args[1].split("matching-refs/heads/", 1)[1]
                 return json.dumps(
-                    [{"ref": f"refs/heads/{branch}", "object": {"sha": self.existing_branch_sha}}]
+                    [
+                        {
+                            "ref": f"refs/heads/{branch}",
+                            "object": {"sha": self.existing_branch_sha},
+                        }
+                    ]
                 )
             return json.dumps([])
         if "git/commits/" in call_str and "--method POST" not in call_str:
@@ -598,7 +633,10 @@ class StubForge:
             return json.dumps(
                 {
                     "sha": "commit-sha-mock-12345678901234567890",
-                    "verification": {"verified": self.verified, "reason": self.verification_reason},
+                    "verification": {
+                        "verified": self.verified,
+                        "reason": self.verification_reason,
+                    },
                 }
             )
         if "git/refs" in call_str:
@@ -630,57 +668,116 @@ def _test_s1_s2_s3() -> int:
     return 0
 
 
-def _test_o1(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o1: fragments owed, no branch, no PR."""
-    stub = StubForge()
-    rc = execute_open_render_pr(
-        repo,
-        repo_name,
-        "chore/changelog-render-auto",
-        "vmafx-release-bot",
-        True,
-        stub,
-        env=env,
-    )
-    commit_call = next(
-        (c for c in stub.calls if "git/commits" in " ".join(c[0]) and c[1]), None
-    )
-    if commit_call is None:
-        print("self-test FAIL: o1 missing git/commits call", file=sys.stderr)
-        return 1
-    commit_keys = set(json.loads(commit_call[1]).keys())
-    if commit_keys != {"message", "tree", "parents"}:
-        print(f"self-test FAIL: o1 commit keys {commit_keys}", file=sys.stderr)
-        return 1
-    merge_call = next((c for c in stub.calls if c[0][:2] == ["pr", "merge"]), None)
-    if merge_call is None or "--auto" not in merge_call[0] or "--squash" not in merge_call[0]:
-        print("self-test FAIL: o1 pr merge not called with --auto --squash", file=sys.stderr)
-        return 1
-    if rc != 0:
-        print(f"self-test FAIL: o1 rc={rc}, want 0", file=sys.stderr)
-        return 1
-    print("self-test ok: o1 fragments owed, no branch, no PR -> ok")
-    return 0
-
-
-def _forge_write_calls(
-    calls: list[tuple[list[str], bytes | None]],
+def _calls(
+    stub: StubForge, method: str, path_fragment: str = ""
 ) -> list[tuple[list[str], bytes | None]]:
-    """Return all mutating calls (POST, PATCH, pr close, pr merge)."""
+    """Match recorded API methods or PR commands against joined argv."""
+    marker = method if method.startswith("pr ") else f"--method {method}"
     return [
-        c
-        for c in calls
-        if any(m in c[0] for m in ("--method", "POST", "PATCH"))
-        or any(
-            t in " ".join(c[0])
-            for t in ("git/blobs", "git/trees", "git/commits", "git/refs")
-        )
-        or c[0][:2] in (["pr", "close"], ["pr", "merge"])
+        call
+        for call in stub.calls
+        if marker in " ".join(call[0]) and path_fragment in " ".join(call[0])
     ]
 
 
+def _forge_write_calls(stub: StubForge) -> list[tuple[list[str], bytes | None]]:
+    """Return recorded writes, excluding API reads."""
+    return [
+        call
+        for method in ("POST", "PATCH", "pr close", "pr merge")
+        for call in _calls(stub, method)
+    ]
+
+
+def _capture_execute(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    repo_name: str,
+    stub: StubForge,
+    due: bool = True,
+    branch: str = "chore/changelog-render-auto",
+) -> tuple[int, str, str]:
+    """Capture both output channels for every opener case."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = execute_open_render_pr(
+            repo, repo_name, branch, "vmafx-release-bot", due, stub, env=env
+        )
+    return rc, out.getvalue(), err.getvalue()
+
+
+def _case_result(name: str, passed: bool, result: tuple[int, str, str]) -> int:
+    """Report a case with captured diagnostics on failure."""
+    if not passed:
+        print(
+            f"self-test FAIL: {name}: rc={result[0]}, stdout={result[1]!r}, stderr={result[2]!r}",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"self-test ok: {name}")
+    return 0
+
+
+def _opened_contract(stub: StubForge, repo_name: str) -> bool:
+    """Check every expected write and bot identity for a new render PR."""
+    blobs = _calls(stub, "POST", "git/blobs")
+    trees = _calls(stub, "POST", "git/trees")
+    commits = _calls(stub, "POST", "git/commits")
+    refs = _calls(stub, "POST", "git/refs")
+    pulls = _calls(stub, "POST", "/pulls")
+    merges = _calls(stub, "pr merge")
+    if not all(
+        len(calls) == 1 for calls in (blobs, trees, commits, refs, pulls, merges)
+    ):
+        return False
+    if len(_forge_write_calls(stub)) != 6:
+        return False
+    commit_body = commits[0][1]
+    ref_body = refs[0][1]
+    pull_body = pulls[0][1]
+    if commit_body is None or ref_body is None or pull_body is None:
+        return False
+    commit = json.loads(commit_body)
+    pull = json.loads(pull_body)
+    trailer = "Signed-off-by: vmafx-release-bot[bot] <987654+vmafx-release-bot[bot]@users.noreply.github.com>"
+    return (
+        set(commit) == {"message", "tree", "parents"}
+        and _load_dco_checker()(commit["message"])
+        and trailer in commit["message"]
+        and trailer in stub.merge_body
+        and json.loads(ref_body)
+        == {
+            "ref": "refs/heads/chore/changelog-render-auto",
+            "sha": "commit-sha-mock-12345678901234567890",
+        }
+        and pull["title"] == "docs(changelog): render unreleased fragments"
+        and pull["head"] == "chore/changelog-render-auto"
+        and pull["base"] == "master"
+        and "--auto --squash" in " ".join(merges[0][0])
+        and f"--repo {repo_name}" in " ".join(merges[0][0])
+        and "--subject docs(changelog): render unreleased fragments (#42)"
+        in " ".join(merges[0][0])
+    )
+
+
+def _test_o1(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
+    """New PR: all six writes, signed bot identity, and outcome messages."""
+    stub = StubForge()
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o1 fragments owed, no branch, no PR",
+        (
+            result[0] == 0
+            and _opened_contract(stub, repo_name)
+            and "opened render pull request #42" in result[1]
+            and "armed squash auto-merge on #42" in result[1]
+        ),
+        result,
+    )
+
+
 def _test_o2(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o2: base current (--due false), own PR open -> only pr close."""
+    """Current base: close the own PR, with no other write."""
     stub = StubForge(
         open_pulls=[
             {
@@ -690,52 +787,39 @@ def _test_o2(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
             }
         ]
     )
-    rc = execute_open_render_pr(
-        repo,
-        repo_name,
-        "chore/changelog-render-auto",
-        "vmafx-release-bot",
-        False,
-        stub,
-        env=env,
+    result = _capture_execute(repo, env, repo_name, stub, due=False)
+    closes = _calls(stub, "pr close")
+    return _case_result(
+        "o2 base current, own PR open",
+        (
+            result[0] == 0
+            and len(closes) == 1
+            and len(_forge_write_calls(stub)) == 1
+            and "pr close 101" in " ".join(closes[0][0])
+            and f"--delete-branch --repo {repo_name}" in " ".join(closes[0][0])
+            and "closed render pull request #101" in result[1]
+        ),
+        result,
     )
-    # Exclude the pr close call from write_calls to assert no git/blob/tree/commit/ref/pulls call
-    other_writes = [
-        c for c in _forge_write_calls(stub.calls) if c[0][:2] != ["pr", "close"]
-    ]
-    if rc != 0 or other_writes:
-        print(f"self-test FAIL: o2 rc={rc}, other_writes={other_writes}", file=sys.stderr)
-        return 1
-    close_call = next((c for c in stub.calls if c[0][:2] == ["pr", "close"]), None)
-    if close_call is None or "--delete-branch" not in close_call[0]:
-        print("self-test FAIL: o2 pr close not called with --delete-branch", file=sys.stderr)
-        return 1
-    print("self-test ok: o2 base current, own PR open -> only pr close ... --delete-branch")
-    return 0
 
 
 def _test_o3(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o3: base current, no PR -> zero write calls."""
+    """Current base, no own PR: no write."""
     stub = StubForge()
-    rc = execute_open_render_pr(
-        repo,
-        repo_name,
-        "chore/changelog-render-auto",
-        "vmafx-release-bot",
-        False,
-        stub,
-        env=env,
+    result = _capture_execute(repo, env, repo_name, stub, due=False)
+    return _case_result(
+        "o3 base current, no PR",
+        (
+            result[0] == 0
+            and not _forge_write_calls(stub)
+            and "no render pull request to close" in result[1]
+        ),
+        result,
     )
-    write_calls = _forge_write_calls(stub.calls)
-    if rc != 0 or write_calls:
-        print(f"self-test FAIL: o3 rc={rc}, writes={write_calls}", file=sys.stderr)
-        return 1
-    print("self-test ok: o3 base current, no PR -> zero write calls")
-    return 0
 
 
 def _test_o4(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o4: branch head already parent==tip and tree==new tree, own PR open."""
+    """Current branch: skip commit, refs and pulls; re-arm auto-merge."""
     tip = run_git(["rev-parse", "HEAD"], repo, env=env)
     stub = StubForge(
         existing_branch_sha="branchhead123",
@@ -749,79 +833,65 @@ def _test_o4(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
             }
         ],
     )
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        rc = execute_open_render_pr(
-            repo,
-            repo_name,
-            "chore/changelog-render-auto",
-            "vmafx-release-bot",
-            True,
-            stub,
-            env=env,
-        )
-    commit_calls = [c for c in stub.calls if "git/commits" in c[0] and "--method POST" in c[0]]
-    ref_calls = [c for c in stub.calls if "git/refs" in " ".join(c[0])]
-    if rc != 0 or commit_calls or ref_calls or "render branch already current" not in buf.getvalue():
-        print(f"self-test FAIL: o4 rc={rc}, commits={commit_calls}", file=sys.stderr)
-        return 1
-    print("self-test ok: o4 branch head current -> skip commit, pr merge re-armed")
-    return 0
+    result = _capture_execute(repo, env, repo_name, stub)
+    merges = _calls(stub, "pr merge")
+    return _case_result(
+        "o4 branch head current",
+        (
+            result[0] == 0
+            and not _calls(stub, "POST", "git/commits")
+            and not _calls(stub, "POST", "git/refs")
+            and not _calls(stub, "PATCH", "git/refs")
+            and not _calls(stub, "POST", "/pulls")
+            and len(merges) == 1
+            and len(_forge_write_calls(stub)) == 3
+            and "--auto --squash" in " ".join(merges[0][0])
+            and "render branch already current" in result[1]
+            and "refreshed render pull request #104" in result[1]
+            and "armed squash auto-merge on #104" in result[1]
+        ),
+        result,
+    )
 
 
 def _test_o5(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o5: stub answers verification.verified: false -> rc 1, no ref/pulls calls."""
+    """Unverified commit: no ref, pull or merge write."""
     stub = StubForge(verified=False, verification_reason="bad_signature")
-    rc = execute_open_render_pr(
-        repo,
-        repo_name,
-        "chore/changelog-render-auto",
-        "vmafx-release-bot",
-        True,
-        stub,
-        env=env,
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o5 unverified commit",
+        (
+            result[0] == 1
+            and len(_forge_write_calls(stub)) == 3
+            and len(_calls(stub, "POST", "git/commits")) == 1
+            and not _calls(stub, "POST", "git/refs")
+            and not _calls(stub, "PATCH", "git/refs")
+            and not _calls(stub, "POST", "/pulls")
+            and not _calls(stub, "pr merge")
+            and "is not verified (bad_signature); ref not moved" in result[2]
+        ),
+        result,
     )
-    ref_or_pulls = [
-        c
-        for c in stub.calls
-        if "git/refs" in " ".join(c[0])
-        or ("pulls" in " ".join(c[0]) and "--method POST" in c[0])
-        or c[0][:2] == ["pr", "merge"]
-    ]
-    if rc != 1 or ref_or_pulls:
-        print(f"self-test FAIL: o5 rc={rc}, ref_or_pulls={ref_or_pulls}", file=sys.stderr)
-        return 1
-    print("self-test ok: o5 unverified commit -> rc 1, no ref or pulls calls")
-    return 0
 
 
 def _test_o6(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o6: render touches a second path -> rc 1 naming it, zero forge writes."""
+    """Unexpected path: fail by path name before forge writes."""
     stray = repo / "stray.txt"
     stray.write_text("untracked\n", encoding="utf-8")
     stub = StubForge()
     try:
-        rc = execute_open_render_pr(
-            repo,
-            repo_name,
-            "chore/changelog-render-auto",
-            "vmafx-release-bot",
-            True,
-            stub,
-            env=env,
-        )
+        result = _capture_execute(repo, env, repo_name, stub)
     finally:
         stray.unlink(missing_ok=True)
-    write_calls = _forge_write_calls(stub.calls)
-    if rc != 1 or write_calls:
-        print(f"self-test FAIL: o6 rc={rc}, writes={write_calls}", file=sys.stderr)
-        return 1
-    print("self-test ok: o6 stray path rejected -> rc 1 naming it, zero writes")
-    return 0
+    return _case_result(
+        "o6 stray path rejected",
+        (result[0] == 1 and not _forge_write_calls(stub) and "stray.txt" in result[2]),
+        result,
+    )
 
 
 def _test_o7(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o7: due but render changes nothing -> rc 1, zero forge writes."""
+    """Empty owed render: fail before forge writes."""
     # Render and commit so working tree is clean and current
     render_script = repo / "scripts/release/concat-changelog-fragments.sh"
     subprocess.run(  # nosec B603 - fixed script argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed script argv
@@ -850,25 +920,20 @@ def _test_o7(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
         env=env,
     )
     stub = StubForge()
-    rc = execute_open_render_pr(
-        repo,
-        repo_name,
-        "chore/changelog-render-auto",
-        "vmafx-release-bot",
-        True,
-        stub,
-        env=env,
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o7 render changes nothing",
+        (
+            result[0] == 1
+            and not _forge_write_calls(stub)
+            and "render owed but the render changes nothing" in result[2]
+        ),
+        result,
     )
-    write_calls = _forge_write_calls(stub.calls)
-    if rc != 1 or write_calls:
-        print(f"self-test FAIL: o7 rc={rc}, writes={write_calls}", file=sys.stderr)
-        return 1
-    print("self-test ok: o7 render changes nothing -> rc 1, zero writes")
-    return 0
 
 
 def _test_o8(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o8: open PR on the branch by another login -> rc 1 naming it, zero writes."""
+    """Foreign author in this repository: fail by login and PR number."""
     _add_unrendered_frag(repo, env, "frag-o8")
     stub = StubForge(
         open_pulls=[
@@ -879,64 +944,54 @@ def _test_o8(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
             }
         ]
     )
-    err_buf = io.StringIO()
-    with contextlib.redirect_stderr(err_buf):
-        rc = execute_open_render_pr(
-            repo,
-            repo_name,
-            "chore/changelog-render-auto",
-            "vmafx-release-bot",
-            True,
-            stub,
-            env=env,
-        )
-    err_text = err_buf.getvalue()
-    write_calls = _forge_write_calls(stub.calls)
-    if rc != 1 or write_calls or "authored by 'attacker'" not in err_text:
-        print(f"self-test FAIL: o8 rc={rc}, writes={write_calls}, err={err_text!r}", file=sys.stderr)
-        return 1
-    print("self-test ok: o8 foreign pull request on branch -> rc 1, zero writes")
-    return 0
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o8 foreign pull request on branch",
+        (
+            result[0] == 1
+            and not _forge_write_calls(stub)
+            and "attacker" in result[2]
+            and "#77" in result[2]
+        ),
+        result,
+    )
 
 
 def _test_o9(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o9: --branch equal to default branch -> rc 1; no chore/ prefix -> rc 2."""
+    """Reject default branch and non-chore CLI branch."""
     stub = StubForge(default_branch="master")
-    rc_eq = execute_open_render_pr(
-        repo,
-        repo_name,
-        "master",
-        "vmafx-release-bot",
-        True,
-        stub,
+    result = _capture_execute(repo, env, repo_name, stub, branch="master")
+    cli = subprocess.run(  # nosec B603 - fixed local CLI validation argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed local CLI validation argv
+        [
+            sys.executable,
+            "-I",
+            str(pathlib.Path(__file__).resolve()),
+            "--due",
+            "true",
+            "--app-slug",
+            "vmafx-release-bot",
+            "--branch",
+            "main-fix",
+            "--repository",
+            repo_name,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=SUBPROCESS_TIMEOUT_S,
         env=env,
     )
-    if rc_eq != 1:
-        print(f"self-test FAIL: o9 branch==default rc={rc_eq}, want 1", file=sys.stderr)
-        return 1
-
-    rc_cli = 0
-    try:
-        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
-            rc_cli = main(
-                [
-                    "--due",
-                    "true",
-                    "--app-slug",
-                    "vmafx-release-bot",
-                    "--branch",
-                    "main-fix",
-                    "--repository",
-                    repo_name,
-                ]
-            )
-    except SystemExit as exc:
-        rc_cli = exc.code if isinstance(exc.code, int) else 1
-    if rc_cli != 2:
-        print(f"self-test FAIL: o9 branch without chore/ rc={rc_cli}, want 2", file=sys.stderr)
-        return 1
-    print("self-test ok: o9 branch validations (default branch -> rc 1, non-chore -> rc 2)")
-    return 0
+    return _case_result(
+        "o9 branch validations",
+        (
+            result[0] == 1
+            and not _forge_write_calls(stub)
+            and "cannot be the repository default branch" in result[2]
+            and cli.returncode == 2
+            and "--branch must start with" in cli.stderr
+        ),
+        result,
+    )
 
 
 def _add_unrendered_frag(
@@ -968,70 +1023,101 @@ def _add_unrendered_frag(
 
 
 def _test_o10(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o10: stub blob sha differs from git hash-object -> rc 1, no tree call."""
+    """Blob mismatch: stop after the blob write, before the tree."""
     _add_unrendered_frag(repo, env, "frag-o10")
     stub = StubForge(blob_sha_override="deadbeef00000000000000000000000000000000")
-    rc = execute_open_render_pr(
-        repo,
-        repo_name,
-        "chore/changelog-render-auto",
-        "vmafx-release-bot",
-        True,
-        stub,
-        env=env,
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o10 mismatched blob sha",
+        (
+            result[0] == 1
+            and len(_forge_write_calls(stub)) == 1
+            and len(_calls(stub, "POST", "git/blobs")) == 1
+            and not _calls(stub, "POST", "git/trees")
+            and "differs from git hash-object" in result[2]
+        ),
+        result,
     )
-    tree_calls = [c for c in stub.calls if "git/trees" in " ".join(c[0])]
-    if rc != 1 or tree_calls:
-        print(f"self-test FAIL: o10 rc={rc}, tree_calls={tree_calls}", file=sys.stderr)
-        return 1
-    print("self-test ok: o10 mismatched blob sha -> rc 1, no tree call")
-    return 0
 
 
 def _test_o11(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Test case o11: existing branch with stale parent -> commit + PATCH git/refs."""
+    """Stale branch: create a commit and force-update the ref."""
     _add_unrendered_frag(repo, env, "frag-o11")
     stub = StubForge(
         existing_branch_sha="stalebranchhead123",
         head_commit_parents=["stale-parent-0000000000000000000000000000"],
         head_commit_tree="old-tree-0000000000000000000000000000000000",
     )
-    rc = execute_open_render_pr(
-        repo,
-        repo_name,
-        "chore/changelog-render-auto",
-        "vmafx-release-bot",
-        True,
-        stub,
-        env=env,
+    result = _capture_execute(repo, env, repo_name, stub)
+    patches = _calls(stub, "PATCH", "git/refs/heads")
+    payload = (
+        json.loads(patches[0][1])
+        if len(patches) == 1 and patches[0][1] is not None
+        else {}
     )
-    patch_call = next(
-        (c for c in stub.calls if "PATCH" in c[0] and "git/refs/heads" in " ".join(c[0])),
-        None,
+    return _case_result(
+        "o11 existing branch stale parent",
+        (
+            result[0] == 0
+            and len(_forge_write_calls(stub)) == 6
+            and len(_calls(stub, "POST", "git/commits")) == 1
+            and payload.get("force") is True
+            and "opened render pull request #42" in result[1]
+        ),
+        result,
     )
-    if patch_call is None or not patch_call[1]:
-        print("self-test FAIL: o11 missing PATCH call for ref", file=sys.stderr)
-        return 1
-    payload = json.loads(patch_call[1])
-    if payload.get("force") is not True:
-        print(f"self-test FAIL: o11 PATCH force != True: {payload}", file=sys.stderr)
-        return 1
-    if rc != 0:
-        print(f"self-test FAIL: o11 rc={rc}, want 0", file=sys.stderr)
-        return 1
-    print("self-test ok: o11 existing branch stale parent -> commit + PATCH force: true")
-    return 0
+
+
+def _test_o12(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
+    """Ignore fork and deleted-fork PRs, then open our own PR."""
+    stub = StubForge(
+        open_pulls=[
+            {
+                "number": 120,
+                "user": {"login": "someone"},
+                "head": {"repo": {"full_name": "someone/pelorus"}},
+            },
+            {"number": 121, "user": {"login": "someone"}, "head": {"repo": None}},
+        ]
+    )
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o12 fork and deleted fork ignored",
+        (
+            result[0] == 0
+            and _opened_contract(stub, repo_name)
+            and "opened render pull request #42" in result[1]
+        ),
+        result,
+    )
+
+
+def _test_o13(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
+    """Reject an invalid bot ID before any forge write."""
+    stub = StubForge(bot_id="null")
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o13 nonnumeric bot id",
+        (
+            result[0] == 1
+            and not _forge_write_calls(stub)
+            and "bot user id for vmafx-release-bot[bot] is not numeric: null"
+            in result[2]
+        ),
+        result,
+    )
 
 
 def _run_open_pr_cases(
     repo: pathlib.Path,
     env: dict[str, str],
-    now: int,
     repo_name: str,
 ) -> int:
-    """Run opener self-test cases o1 through o11 in isolated fixture branches."""
+    """Run opener self-test cases o1 through o13 in isolated fixture branches."""
     # Reset fixture with unrendered fragment for tests
-    (repo / "changelog.d/added/test-frag.md").write_text("- Fragment.\n", encoding="utf-8")
+    (repo / "changelog.d/added/test-frag.md").write_text(
+        "- Fragment.\n", encoding="utf-8"
+    )
     run_git(["add", "changelog.d/added/test-frag.md"], repo, env=env)
     run_git(
         [
@@ -1062,6 +1148,8 @@ def _run_open_pr_cases(
         lambda: _test_o9(repo, env, repo_name),
         lambda: _test_o10(repo, env, repo_name),
         lambda: _test_o11(repo, env, repo_name),
+        lambda: _test_o12(repo, env, repo_name),
+        lambda: _test_o13(repo, env, repo_name),
     ]
     for case in cases:
         if case() != 0:
@@ -1088,7 +1176,7 @@ def run_self_test(repo_root: pathlib.Path) -> int:
         init_repo(fixture_repo, env, script_source, now)
         repo_name = "VMAFx/pelorus"
 
-        if _run_open_pr_cases(fixture_repo, env, now, repo_name) != 0:
+        if _run_open_pr_cases(fixture_repo, env, repo_name) != 0:
             return 1
 
     print("self-test passed")

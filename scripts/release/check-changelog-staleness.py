@@ -370,29 +370,44 @@ def decide_render_pr(
 
     sha, committer_time, is_hand_edited = _last_render_commit(repo, ref, env=env)
     if not sha:
-        print(f"error: no commits touching CHANGELOG.md found in {ref}", file=sys.stderr)
+        print(
+            f"error: no commits touching CHANGELOG.md found in {ref}", file=sys.stderr
+        )
         return 1
 
     if now is None:
         now = int(time.time())
     if is_hand_edited:
-        print(f"CHANGELOG.md hand-edited or stale at {sha}; render it with --write", file=sys.stderr)
+        print(
+            f"CHANGELOG.md hand-edited or stale at {sha}; render it with --write",
+            file=sys.stderr,
+        )
         age_seconds = max(0, now - (committer_time or now))
         age_hours = f"{age_seconds / 3600:.1f}"
-        _emit_decision(current=False, is_open=True, owed_since=sha, owed_hours=age_hours)
+        _emit_decision(
+            current=False, is_open=True, owed_since=sha, owed_hours=age_hours
+        )
         return 0
 
     first_sha, first_ct = _first_owed_commit(repo, sha, ref, env=env)
     if not first_sha or first_ct is None:
-        print(f"render owed on {ref}, but no changelog.d/ commits found since {sha}", file=sys.stderr)
+        print(
+            f"render owed on {ref}, but no changelog.d/ commits found since {sha}",
+            file=sys.stderr,
+        )
         return 1
 
     age_seconds = max(0, now - first_ct)
     age_hours = f"{age_seconds / 3600:.1f}"
     is_open = age_seconds >= open_after_hours * 3600
     msg = f"render owed for {age_hours} h since {first_sha} (threshold {open_after_hours} h): "
-    print(msg + ("render PR is due" if is_open else "render PR not yet due"), file=sys.stderr)
-    _emit_decision(current=False, is_open=is_open, owed_since=first_sha, owed_hours=age_hours)
+    print(
+        msg + ("render PR is due" if is_open else "render PR not yet due"),
+        file=sys.stderr,
+    )
+    _emit_decision(
+        current=False, is_open=is_open, owed_since=first_sha, owed_hours=age_hours
+    )
     return 0
 
 

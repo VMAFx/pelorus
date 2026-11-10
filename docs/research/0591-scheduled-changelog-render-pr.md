@@ -5,11 +5,11 @@
 
 **Decision:** [ADR-0252](../adr/0252-scheduled-changelog-render-pull-request.md).
 
-**Scope:** scheduled changelog render pull request workflow `.github/workflows/changelog-render-pr.yml`, `scripts/release/open-render-pr.py`, `scripts/release/check-changelog-staleness.py`, and `scripts/check-build-config.py`, measured on `c219f15`, issue #591.
+**Scope:** scheduled changelog render pull request workflow `.github/workflows/changelog-render-pr.yml`, `scripts/release/open-render-pr.py`, `scripts/release/check-changelog-staleness.py`, and `scripts/check-build-config.py`, baseline `c219f15`, round-1 fixes on `e979dc3`, issue #591.
 
 ## Verdict
 
-The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.yml`) runs hourly and on `workflow_dispatch` to resolve changelog render debt without manual intervention. It invokes `check-changelog-staleness.py --open-after-hours 6` to determine whether a render is owed. When due, `actions/create-github-app-token` mints an installation token for `vmafx-release-bot`, and `open-render-pr.py` constructs a render-only commit via the GitHub REST Git Database API (without author, committer, or signature keys) so GitHub cryptographically signs and verifies it. The script arms squash auto-merge on the pull request and verifies DCO trailers via `scripts/check-dco.py`. When the base branch renders current, the workflow automatically closes any open bot render pull request and deletes its branch. The workflow and its contract are guarded by 16 planted mutants in `scripts/check-build-config.py`.
+The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.yml`) runs hourly and on `workflow_dispatch` to resolve changelog render debt without manual intervention. It invokes `check-changelog-staleness.py --open-after-hours 6` to determine whether a render is owed. When due, `actions/create-github-app-token` mints an installation token for `vmafx-release-bot`, and `open-render-pr.py` constructs a render-only commit via the GitHub REST Git Database API (without author, committer, or signature keys) so GitHub cryptographically signs and verifies it. The script arms squash auto-merge on the pull request and verifies DCO trailers via `scripts/check-dco.py`. When the base branch renders current, the workflow automatically closes any open bot render pull request and deletes its branch. The workflow and its contract are guarded by 26 regression cases (25 rejected mutants and one accepted pin bump) in `scripts/check-build-config.py`.
 
 ## Measurements
 
@@ -31,8 +31,8 @@ The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.
 | Self-test s1: release-bot settings present | exit 0; `CLIENT_ID` set, `HAS_KEY=true` |
 | Self-test s2: release-bot missing client id | exit 1; reports missing `RELEASE_BOT_CLIENT_ID` |
 | Self-test s3: release-bot key flag false | exit 1; reports missing `RELEASE_BOT_PRIVATE_KEY` |
-| Self-test o1: fragments owed, no branch, no PR | exit 0; creates blob, tree, verified API commit (`message`, `tree`, `parents` only), refs POST, pulls POST, arms squash auto-merge with DCO trailer |
-| Self-test o2: base current (`--due false`), own PR open | exit 0; calls `pr close <n> --comment ... --delete-branch`, zero forge write calls |
+| Self-test o1: fragments owed, no branch, no PR | exit 0; creates blob, tree, verified API commit (`message`, `tree`, `parents` only), refs POST, pulls POST, arms squash auto-merge with subject `docs(changelog): render unreleased fragments (#N)` and DCO trailer |
+| Self-test o2: base current (`--due false`), own PR open | exit 0; calls only `pr close <n> --comment ... --delete-branch --repo VMAFx/pelorus`; zero other forge writes |
 | Self-test o3: base current, no PR | exit 0; stdout `no render pull request to close`, zero forge write calls |
 | Self-test o4: branch head current (parent==tip, tree==new tree) | exit 0; skips commit and ref (`render branch already current`), re-arms auto-merge |
 | Self-test o5: unverified API commit (`verification.verified: false`) | exit 1; ref and pull request creation skipped |
@@ -42,6 +42,10 @@ The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.
 | Self-test o9: branch validation | exit 1 for default branch match; exit 2 for non-`chore/` branch prefix |
 | Self-test o10: blob sha mismatch vs `git hash-object` | exit 1; tree creation skipped |
 | Self-test o11: existing branch with stale parent | exit 0; creates commit and updates ref with `PATCH git/refs/heads/<branch>` with `force: true` |
+| Self-test o12: fork and deleted-fork PRs | exit 0; ignores `someone/pelorus` and `head.repo: null`, then creates the own pull request with all six writes |
+| Self-test o13: bot user ID `null` | exit 1; stderr `is not numeric`; zero forge writes |
+| Default status check | GitHub expressions documentation, read 2026-11-10: an implicit `success()` applies without a status-check function; a failing settings step therefore skips mint and opener |
+| Required check contexts | Measured 2026-11-10 with `gh api repos/VMAFx/pelorus/rules/branches/master`: 16 required contexts; job `Open the changelog render pull request` is absent, so this scheduled job is not a required PR check |
 | Build config regression R1: schedule block removed | rejected with `must define a schedule trigger` |
 | Build config regression R2: daily cron `'41 3 * * *'` | rejected with `schedule cron must be hourly` |
 | Build config regression R3: workflow_dispatch removed | rejected with `must include workflow_dispatch trigger` |
@@ -58,10 +62,22 @@ The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.
 | Build config regression R13: mint step `if:` changed to `always()` | rejected with `mint step must carry the exact if: condition` |
 | Build config regression R14: opener step moved before mint | rejected with `steps must be in order checkout < decide < settings < mint < opener` |
 | Build config regression R15: workflow file missing | rejected with `missing` |
+| Build config regression R16 (W1): extra top-level `actions: write` | rejected with `top-level permissions must be exactly contents: read` |
+| Build config regression R17 (W11): `pull_request_target` trigger | rejected with `on: must be exactly schedule and workflow_dispatch` |
+| Build config regression R18 (W3): sixth step reads App output | rejected with `render job must have exactly 5 steps (checkout, decide, settings, mint, opener)` |
+| Build config regression R19 (W5): `RENDER_DUE` uses `current` | rejected with `opener step must match the ADR-0252 contract` |
+| Build config regression R20 (W6): opener uses `github.token` | rejected with `opener step must match the ADR-0252 contract` |
+| Build config regression R21 (W7): settings use `vars.OTHER` | rejected with `settings step must match the ADR-0252 contract` |
+| Build config regression R22 (W8): checkout persists authentication | rejected with `checkout step must match the ADR-0252 contract` |
+| Build config regression R23 (W10): mint uses `secrets.OTHER_KEY` | rejected with `mint step must match the ADR-0252 contract` |
+| Build config regression R24 (W12): checkout uses `github.head_ref` | rejected with `checkout step must match the ADR-0252 contract` |
+| Build config regression R25: both action digests and versions bumped | accepted; 40-hex pins with `# v9.9.9` normalise to the same step contract |
 
 ## Sources
 
 - [ADR-0252](../adr/0252-scheduled-changelog-render-pull-request.md) (A scheduled workflow opens the changelog render pull request as a signed bot commit).
 - [ADR-0251](../adr/0251-changelog-render-owed-on-pull-requests.md) (Pull requests fail while the default branch owes a changelog render for more than 20 h).
 - [ADR-0245](../adr/0245-changelog-render-at-landing.md) (Changelog render moves to landing and release cut).
+- `scripts/release/open-render-pr.py --self-test` (o1–o13, s1–s3); `scripts/check-build-config.py --self-test` (R1–R25, including R6b).
+- [GitHub expressions: status check functions](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions) (read 2026-11-10); required-context measurement with `gh api repos/VMAFx/pelorus/rules/branches/master`, 2026-11-10.
 - Issue #591.

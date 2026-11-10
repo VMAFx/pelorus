@@ -5123,6 +5123,44 @@ RENDER_PR_MINT_USES_RE = re.compile(
 )
 
 
+RENDER_PR_STEP_TEXT = {
+    "checkout": """      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+""",
+    "decide": """      - name: Decide whether the render pull request is due
+        id: decide
+        run: python3 -I scripts/release/check-changelog-staleness.py --open-after-hours 6 >> "$GITHUB_OUTPUT"
+""",
+    "settings": """      - name: Release-bot settings are present
+        if: steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'
+        env:
+          CLIENT_ID: ${{ vars.RELEASE_BOT_CLIENT_ID }}
+          HAS_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
+        run: python3 -I scripts/release/open-render-pr.py --check-settings
+""",
+    "mint": """      - name: Mint the release-bot installation token
+        id: app-token
+        if: steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+""",
+    "opener": """      - name: Render and open, or close, the render pull request
+        if: steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          RENDER_DUE: ${{ steps.decide.outputs.open }}
+        run: python3 -I scripts/release/open-render-pr.py --due "$RENDER_DUE" --app-slug "$APP_SLUG" --branch chore/changelog-render-auto
+""",
+}
+
+
 def _validate_render_pr_top(relative: str, text: str) -> list[str]:
     """Validate top-level keys, permissions, and triggers of changelog-render-pr.yml."""
     errors: list[str] = []
@@ -5133,8 +5171,15 @@ def _validate_render_pr_top(relative: str, text: str) -> list[str]:
     for repeated in _repeated_keys(top_keys):
         errors.append(f"{relative}: top-level sets {repeated} more than once")
 
-    if not re.search(r"^permissions:\n  contents: read(?:\n|$)", text, re.MULTILINE):
+    permissions = re.search(r"^permissions:\n(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
+    permission_text = permissions.group(1) if permissions else ""
+    if _mapping_keys(permission_text, 2) != ["contents"] or permission_text.strip() != "contents: read":
         errors.append(f"{relative}: top-level permissions must be exactly contents: read")
+
+    on = re.search(r"^on:\n(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
+    on_keys = _mapping_keys(on.group(1), 2) if on else []
+    if len(on_keys) != 2 or set(on_keys) != {"schedule", "workflow_dispatch"}:
+        errors.append(f"{relative}: on: must be exactly schedule and workflow_dispatch")
 
     if not re.search(r"^  workflow_dispatch:\s*$", text, re.MULTILINE):
         errors.append(f"{relative}: must include workflow_dispatch trigger")
@@ -5252,7 +5297,6 @@ def _validate_render_pr_mint_and_opener(
 
 def _validate_render_pr_step_order_and_gated_if(
     relative: str,
-    steps: list[tuple[int, str]],
     step_map: dict[str, tuple[int, str]],
 ) -> list[str]:
     """Validate execution order and gated step if: conditions."""
@@ -5277,6 +5321,29 @@ def _validate_render_pr_step_order_and_gated_if(
     return errors
 
 
+def _validate_render_pr_step_text(
+    relative: str, step_map: dict[str, tuple[int, str]]
+) -> list[str]:
+    """Compare every step with its contract, allowing action pin updates."""
+    errors: list[str] = []
+    pin = r"@[0-9a-f]{40} # v\d+\.\d+\.\d+"
+    for name, expected in RENDER_PR_STEP_TEXT.items():
+        actual = step_map.get(name, (0, ""))[1]
+        expected_lines = re.sub(pin, "@<pin>", expected).rstrip("\n").splitlines()
+        actual_lines = re.sub(pin, "@<pin>", actual).rstrip("\n").splitlines()
+        if expected_lines == actual_lines:
+            continue
+        for index in range(max(len(expected_lines), len(actual_lines))):
+            want = expected_lines[index] if index < len(expected_lines) else "<missing>"
+            got = actual_lines[index] if index < len(actual_lines) else "<missing>"
+            if want != got:
+                errors.append(
+                    f"{relative}: {name} step must match the ADR-0252 contract; first difference: {want} != {got}"
+                )
+                break
+    return errors
+
+
 def validate_render_pr_workflow_text(relative: str, text: str) -> list[str]:
     """Shape of the scheduled changelog render pull request workflow (ADR-0252)."""
     if not text.strip():
@@ -5292,6 +5359,8 @@ def validate_render_pr_workflow_text(relative: str, text: str) -> list[str]:
     errors.extend(_validate_render_pr_job(relative, job_block))
 
     steps = _job_steps(job_block)
+    if len(steps) != 5:
+        errors.append(f"{relative}: render job must have exactly 5 steps (checkout, decide, settings, mint, opener)")
     errors.extend(_validate_render_pr_step_overrides(relative, steps))
 
     step_map: dict[str, tuple[int, str]] = {}
@@ -5322,7 +5391,8 @@ def validate_render_pr_workflow_text(relative: str, text: str) -> list[str]:
             step_map.get("opener", (None, None))[1],
         )
     )
-    errors.extend(_validate_render_pr_step_order_and_gated_if(relative, steps, step_map))
+    errors.extend(_validate_render_pr_step_order_and_gated_if(relative, step_map))
+    errors.extend(_validate_render_pr_step_text(relative, step_map))
     return errors
 
 
@@ -5439,10 +5509,79 @@ def _render_pr_workflow_cases_steps(source: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _render_pr_workflow_cases_contract(source: str) -> dict[str, tuple[str, str]]:
+    """Planted guard gaps R16 through R24; change exactly one contract value."""
+    mutations = [
+        (
+            "R16 W1 extra permission",
+            "  contents: read\n",
+            "  contents: read\n  actions: write\n",
+            "top-level permissions must be exactly contents: read",
+        ),
+        (
+            "R17 W11 unsafe trigger",
+            "  workflow_dispatch:\n",
+            "  workflow_dispatch:\n  pull_request_target:\n",
+            "on: must be exactly schedule and workflow_dispatch",
+        ),
+        (
+            "R18 W3 sixth step",
+            source,
+            source + "      - run: echo '${{ steps.app-token.outputs.token }}'\n",
+            "render job must have exactly 5 steps (checkout, decide, settings, mint, opener)",
+        ),
+        (
+            "R19 W5 wrong due output",
+            "RENDER_DUE: ${{ steps.decide.outputs.open }}",
+            "RENDER_DUE: ${{ steps.decide.outputs.current }}",
+            "opener step must match the ADR-0252 contract",
+        ),
+        (
+            "R20 W6 wrong opener authentication",
+            "${{ steps.app-token.outputs.token }}",
+            "${{ github.token }}",
+            "opener step must match the ADR-0252 contract",
+        ),
+        (
+            "R21 W7 wrong client setting",
+            "CLIENT_ID: ${{ vars.RELEASE_BOT_CLIENT_ID }}",
+            "CLIENT_ID: ${{ vars.OTHER }}",
+            "settings step must match the ADR-0252 contract",
+        ),
+        (
+            "R22 W8 persisted checkout authentication",
+            "persist-credentials: false",
+            "persist-credentials: true",
+            "checkout step must match the ADR-0252 contract",
+        ),
+        (
+            "R23 W10 wrong private key setting",
+            "private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}",
+            "private-key: ${{ secrets.OTHER_KEY }}",
+            "mint step must match the ADR-0252 contract",
+        ),
+        (
+            "R24 W12 untrusted checkout ref",
+            "          fetch-depth: 0\n",
+            "          fetch-depth: 0\n          ref: ${{ github.head_ref }}\n",
+            "checkout step must match the ADR-0252 contract",
+        ),
+    ]
+    return {name: (source.replace(old, new), msg) for name, old, new, msg in mutations}
+
+
+def _render_pr_pin_bump(source: str) -> str:
+    """R25: permit digest and version bumps for both existing actions."""
+    return re.sub(
+        r"@[0-9a-f]{40} # v\d+\.\d+\.\d+", "@" + "a" * 40 + " # v9.9.9", source
+    )
+
+
 def _render_pr_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
     """Planted mutations of changelog-render-pr.yml (ADR-0252)."""
     cases = _render_pr_workflow_cases_top(source)
     cases.update(_render_pr_workflow_cases_steps(source))
+    cases.update(_render_pr_workflow_cases_contract(source))
     return cases
 
 
@@ -7170,7 +7309,6 @@ def workflow_validator_regressions() -> list[str]:
             expected in e for e in validate_load_config_action_text(action_rel, mutated)
         ):
             failures.append(f"workflow regression: {name} was accepted")
-
     render_pr_rel = RENDER_PR_WORKFLOW.relative_to(ROOT).as_posix()
     render_pr_src = RENDER_PR_WORKFLOW.read_text(encoding="utf-8")
     if validate_render_pr_workflow_text(render_pr_rel, render_pr_src):
@@ -7182,6 +7320,8 @@ def workflow_validator_regressions() -> list[str]:
             expected in e for e in validate_render_pr_workflow_text(render_pr_rel, mutated)
         ):
             failures.append(f"workflow regression: {name} was accepted")
+    if validate_render_pr_workflow_text(render_pr_rel, _render_pr_pin_bump(render_pr_src)):
+        failures.append("workflow regression: R25 valid pin bump was rejected")
     return failures
 
 
