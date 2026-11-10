@@ -8035,6 +8035,11 @@ def _python_floor_pin_errors(step: str, step_id: str, floor: str) -> list[str]:
     return errors
 
 
+def _floor_step_id(step: str) -> str:
+    """The step's id: value with YAML quotes removed, empty when absent."""
+    return (_step_key(step, "id") or "").strip("'\"")
+
+
 def validate_python_floor_text(ci_source: str, doc_text: str) -> list[str]:
     """Check floor steps against documentation, independent of Renovate rules."""
     floor, errors = documented_python_floor(doc_text)
@@ -8046,11 +8051,7 @@ def validate_python_floor_text(ci_source: str, doc_text: str) -> list[str]:
         for _, step in _job_steps(job)
     ]
     for step_id in PYTHON_FLOOR_STEP_IDS:
-        matches = [
-            step
-            for step in steps
-            if (_step_key(step, "id") or "").strip("'\"") == step_id
-        ]
+        matches = [step for step in steps if _floor_step_id(step) == step_id]
         if len(matches) != 1:
             errors.append(
                 f"{CI_RELATIVE}: expected one step with id {step_id} "
@@ -8093,7 +8094,7 @@ def _mutate_python_floor_step(
     """Mutate one actual step, leaving other setup-python versions alone."""
     for job in workflow_job_blocks(ci_source).values():
         for _, step in _job_steps(job):
-            if _step_key(step, "id") == step_id:
+            if _floor_step_id(step) == step_id:
                 return ci_source.replace(step, mutate(step), 1)
     return ci_source
 
@@ -8129,7 +8130,11 @@ def _python_floor_step_cases(ci: str, doc: str, floor: str, raised: str) -> dict
             (f"step floor-py-scripts pins python-version '{raised}'",),
         ),
         "p3 script floor id renamed": (
-            ci.replace("id: floor-py-scripts", "id: floor-py-script", 1),
+            _mutate_python_floor_step(
+                ci,
+                "floor-py-scripts",
+                lambda s: s.replace("floor-py-scripts", "floor-py-script", 1),
+            ),
             doc,
             ("expected one step with id floor-py-scripts (found 0)",),
         ),
@@ -8234,8 +8239,21 @@ def _raise_python_floor(ci: str, doc: str, floor: str, raised: str) -> tuple[str
     return ci, re.sub(PYTHON_FLOOR_PATTERN, f"Python {raised} or newer", doc, count=1)
 
 
+def _quote_floor_step_ids(ci: str) -> str:
+    """The same workflow with each floor step's id: value double-quoted."""
+    for step_id in PYTHON_FLOOR_STEP_IDS:
+        ci = re.sub(
+            rf"^([ ]*(?:- )?id:[ ]*){re.escape(step_id)}[ ]*$",
+            rf'\g<1>"{step_id}"',
+            ci,
+            count=1,
+            flags=re.MULTILINE,
+        )
+    return ci
+
+
 def python_floor_regressions() -> list[str]:
-    """Run the floor cases on the real tree, a consistent raise and the other quote style."""
+    """Run the floor cases on the real tree and three valid variants of it."""
     ci = (ROOT / CI_RELATIVE).read_text(encoding="utf-8")
     doc = PYTHON_FLOOR_DOC.read_text(encoding="utf-8")
     failures = python_floor_regressions_text(ci, doc)
@@ -8245,7 +8263,13 @@ def python_floor_regressions() -> list[str]:
     variants = {
         "consistent raise": _raise_python_floor(ci, doc, floor, _raised_minor(floor)),
         "other quote style": _python_floor_passing_cases(ci, doc, floor)["other quote style"],
+        "quoted ids": (_quote_floor_step_ids(ci), doc),
     }
+    failures.extend(
+        f"Python floor regression: {name} tree: mutation changed nothing"
+        for name, variant in variants.items()
+        if variant == (ci, doc)
+    )
     for name, (variant_ci, variant_doc) in variants.items():
         prefix = "Python floor regression: "
         failures.extend(
