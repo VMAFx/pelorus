@@ -143,6 +143,9 @@ ACTIONLINT_RUN = re.compile(
     re.MULTILINE,
 )
 CI_RELATIVE = ".github/workflows/ci.yml"
+PYTHON_FLOOR_DOC = ROOT / "docs/development/build.md"
+PYTHON_FLOOR_STEP_IDS = ("floor-py", "floor-py-scripts")
+PYTHON_FLOOR_PATTERN = r"Python\s+(\d+\.\d+)\s+or\s+newer"
 ACTIONLINT_RENOVATE_TEMPLATES = {
     "depNameTemplate": ACTIONLINT_MODULE,
     "datasourceTemplate": "go",
@@ -3928,21 +3931,21 @@ def validate_workflows() -> list[str]:
 LOAD_CONFIG_ACTION_TARGET = "./.github/actions/load-build-config"
 
 
-def _step_key(step: str, key: str) -> str | None:
-    """Value of the step's own top-level key (e.g. if:), or None when absent.
+def _step_key_span(step: str, key: str) -> tuple[int, int] | None:
+    """Line index and value column of the step's own top-level key, or None.
 
     Keys nested under with: or env: sit deeper than the step's own keys and
-    do not count; a trailing " #" comment is dropped.
+    do not count.
     """
     lines = step.splitlines()
     if not lines:
         return None
     prefix = f"{key}:"
-    head = lines[0].strip()
+    head = lines[0].lstrip()
     if head.startswith(f"- {prefix}"):
-        return head[len(prefix) + 2 :].split(" #", 1)[0].strip()
+        return 0, len(lines[0]) - len(head) + len(prefix) + 2
     step_indent: int | None = None
-    for line in lines[1:]:
+    for index, line in enumerate(lines[1:], start=1):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -3950,8 +3953,20 @@ def _step_key(step: str, key: str) -> str | None:
         if step_indent is None:
             step_indent = indent
         if indent == step_indent and stripped.startswith(prefix):
-            return stripped[len(prefix) :].split(" #", 1)[0].strip()
+            return index, len(line) - len(line.lstrip()) + len(prefix)
     return None
+
+
+def _step_key(step: str, key: str) -> str | None:
+    """Value of the step's own top-level key (e.g. if:), or None when absent.
+
+    A trailing " #" comment is dropped.
+    """
+    span = _step_key_span(step, key)
+    if span is None:
+        return None
+    index, start = span
+    return step.splitlines()[index][start:].split(" #", 1)[0].strip()
 
 
 JOB_STEPS_LINE = re.compile(r"^    steps:", re.MULTILINE)
@@ -8000,6 +8015,347 @@ def validate_renovate_text(text: str, config_source: str, ci_source: str) -> lis
     return errors + _validate_actionlint_manager(managers, ci_source)
 
 
+def documented_python_floor(doc_text: str) -> tuple[str | None, list[str]]:
+    """Read the single declared minimum without copying its version here."""
+    matches = re.findall(PYTHON_FLOOR_PATTERN, doc_text)
+    if len(matches) != 1:
+        return None, [
+            'docs/development/build.md: expected one "Python X.Y or newer" '
+            f"minimum (found {len(matches)})"
+        ]
+    return matches[0], []
+
+
+def _python_floor_pin_errors(step: str, step_id: str, floor: str) -> list[str]:
+    """Require a setup-python step with a quoted minimum-version input."""
+    prefix = f"{CI_RELATIVE}: step {step_id}"
+    errors: list[str] = []
+    uses = _step_key(step, "uses") or ""
+    if not uses.strip("'\"").startswith("actions/setup-python@"):
+        errors.append(f"{prefix} must use actions/setup-python@ (found {uses!r})")
+    value = _step_mapping(step, "with").get("python-version")
+    quoted = re.fullmatch(r"(['\"])(.*?)\1", value or "")
+    if quoted is None:
+        errors.append(
+            f"{prefix} python-version must be quoted (found {value!r}, "
+            f"declared minimum is {floor})"
+        )
+    elif quoted.group(2) != floor:
+        errors.append(
+            f"{prefix} pins python-version {value}, declared minimum is {floor}"
+        )
+    return errors
+
+
+def _strip_yaml_quotes(value: str) -> str:
+    """A YAML scalar with its surrounding quotes removed."""
+    return value.strip("'\"")
+
+
+def _floor_step_id(step: str) -> str:
+    """The step's id: value with YAML quotes removed, empty when absent."""
+    return _strip_yaml_quotes(_step_key(step, "id") or "")
+
+
+def validate_python_floor_text(ci_source: str, doc_text: str) -> list[str]:
+    """Check floor steps against documentation, independent of Renovate rules."""
+    floor, errors = documented_python_floor(doc_text)
+    if floor is None:
+        return errors
+    steps = [
+        step
+        for job in workflow_job_blocks(ci_source).values()
+        for _, step in _job_steps(job)
+    ]
+    for step_id in PYTHON_FLOOR_STEP_IDS:
+        matches = [step for step in steps if _floor_step_id(step) == step_id]
+        if len(matches) != 1:
+            errors.append(
+                f"{CI_RELATIVE}: expected one step with id {step_id} "
+                f"(found {len(matches)})"
+            )
+            continue
+        errors.extend(_python_floor_pin_errors(matches[0], step_id, floor))
+    consumers = [
+        step
+        for step in steps
+        if any(
+            "steps.floor-py-scripts.outputs.python-path" in value
+            for value in [*_step_mapping(step, "env").values(), *_step_commands(step)]
+        )
+    ]
+    expected_name = f"Python {floor} script floor (declared minimum)"
+    if len(consumers) != 1:
+        errors.append(
+            f"{CI_RELATIVE}: expected one script floor consumer (found {len(consumers)})"
+        )
+    elif _step_name(consumers[0]) != expected_name:
+        errors.append(
+            f"{CI_RELATIVE}: script floor step name {_step_name(consumers[0])!r}, "
+            f"expected {expected_name!r}"
+        )
+    return errors
+
+
+def validate_python_floor() -> list[str]:
+    """Read only the workflow and the documented Python minimum."""
+    return validate_python_floor_text(
+        (ROOT / CI_RELATIVE).read_text(encoding="utf-8"),
+        PYTHON_FLOOR_DOC.read_text(encoding="utf-8"),
+    )
+
+
+def _mutate_python_floor_step(
+    ci_source: str, step_id: str, mutate: Callable[[str], str]
+) -> str:
+    """Mutate one actual step, leaving other setup-python versions alone."""
+    for job in workflow_job_blocks(ci_source).values():
+        for _, step in _job_steps(job):
+            if _floor_step_id(step) == step_id:
+                return ci_source.replace(step, mutate(step), 1)
+    return ci_source
+
+
+def _set_floor_pin(step: str, value: str) -> str:
+    """Replace one step's python-version value, whatever its quoting."""
+    return re.sub(
+        r"(python-version:[ ]*)\S+", lambda match: match.group(1) + value, step, count=1
+    )
+
+
+def _raised_minor(floor: str) -> str:
+    """The next minor version after the declared minimum."""
+    major, minor = floor.split(".")
+    return f"{major}.{int(minor) + 1}"
+
+
+def _python_floor_step_cases(ci: str, doc: str, floor: str, raised: str) -> dict:
+    """Workflow mutations and the diagnostics each must produce."""
+    return {
+        "p1 Meson floor bumped": (
+            _mutate_python_floor_step(
+                ci, "floor-py", lambda s: _set_floor_pin(s, f"'{raised}'")
+            ),
+            doc,
+            (f"step floor-py pins python-version '{raised}', declared minimum is {floor}",),
+        ),
+        "p2 script floor bumped": (
+            _mutate_python_floor_step(
+                ci, "floor-py-scripts", lambda s: _set_floor_pin(s, f"'{raised}'")
+            ),
+            doc,
+            (f"step floor-py-scripts pins python-version '{raised}'",),
+        ),
+        "p3 script floor id renamed": (
+            _mutate_python_floor_step(
+                ci,
+                "floor-py-scripts",
+                lambda s: s.replace("floor-py-scripts", "floor-py-script", 1),
+            ),
+            doc,
+            ("expected one step with id floor-py-scripts (found 0)",),
+        ),
+        "p4 duplicate Meson floor": (
+            _mutate_python_floor_step(ci, "floor-py", lambda s: s + s),
+            doc,
+            ("expected one step with id floor-py (found 2)",),
+        ),
+        "p5 unquoted floor": (
+            _mutate_python_floor_step(ci, "floor-py", lambda s: _set_floor_pin(s, floor)),
+            doc,
+            ("must be quoted",),
+        ),
+        "p9 script floor name drift": (
+            ci.replace(f"Python {floor} script floor", f"Python {raised} script floor", 1),
+            doc,
+            (f"script floor step name 'Python {raised} script floor (declared minimum)'",),
+        ),
+        "wrong setup action": (
+            _mutate_python_floor_step(
+                ci,
+                "floor-py",
+                lambda s: s.replace("actions/setup-python@", "other/setup@"),
+            ),
+            doc,
+            ("step floor-py must use actions/setup-python@",),
+        ),
+    }
+
+
+def _python_floor_doc_cases(ci: str, doc: str, floor: str, raised: str) -> dict:
+    """Missing, ambiguous and changed documentation must fail closed."""
+    return {
+        "p6 minimum removed": (
+            ci,
+            re.sub(PYTHON_FLOOR_PATTERN, "Python", doc, count=1),
+            ('expected one "Python X.Y or newer" minimum (found 0)',),
+        ),
+        "p7 minimum duplicated": (
+            ci,
+            doc + f"\nPython {floor} or newer\n",
+            ('expected one "Python X.Y or newer" minimum (found 2)',),
+        ),
+        "p8 minimum raised": (
+            ci,
+            re.sub(PYTHON_FLOOR_PATTERN, f"Python {raised} or newer", doc, count=1),
+            (
+                "step floor-py pins python-version",
+                "step floor-py-scripts pins python-version",
+                f"declared minimum is {raised}",
+            ),
+        ),
+    }
+
+
+def _python_floor_passing_cases(ci: str, doc: str, floor: str) -> dict:
+    """The other YAML quote style and a wrapped minimum sentence both pass."""
+    single, double = f"python-version: '{floor}'", f'python-version: "{floor}"'
+    other_quotes = ci.replace(single, double) if single in ci else ci.replace(double, single)
+    wrapped = re.sub(PYTHON_FLOOR_PATTERN, f"Python {floor} or\nnewer", doc, count=1)
+    return {"other quote style": (other_quotes, doc), "wrapped minimum": (ci, wrapped)}
+
+
+def python_floor_regressions_text(ci: str, doc: str) -> list[str]:
+    """Prove floor drift fails, with every case built from the declared minimum."""
+    floor, doc_errors = documented_python_floor(doc)
+    if floor is None:
+        return [f"Python floor regression: real tree: {error}" for error in doc_errors]
+    failures = [
+        f"Python floor regression: real tree: {error}"
+        for error in validate_python_floor_text(ci, doc)
+    ]
+    raised = _raised_minor(floor)
+    for name, (mutated_ci, mutated_doc) in _python_floor_passing_cases(ci, doc, floor).items():
+        if (mutated_ci, mutated_doc) == (ci, doc):
+            failures.append(f"Python floor regression: {name}: mutation changed nothing")
+            continue
+        failures.extend(
+            f"Python floor regression: {name}: {error}"
+            for error in validate_python_floor_text(mutated_ci, mutated_doc)
+        )
+    cases = _python_floor_step_cases(ci, doc, floor, raised)
+    cases |= _python_floor_doc_cases(ci, doc, floor, raised)
+    for name, (mutated_ci, mutated_doc, expected) in cases.items():
+        if (mutated_ci, mutated_doc) == (ci, doc):
+            failures.append(f"Python floor regression: {name}: mutation changed nothing")
+            continue
+        errors = validate_python_floor_text(mutated_ci, mutated_doc)
+        failures.extend(
+            f"Python floor regression: {name} was accepted (missing {substring!r})"
+            for substring in expected
+            if not any(substring in error for error in errors)
+        )
+    return failures
+
+
+def _raise_python_floor(ci: str, doc: str, floor: str, raised: str) -> tuple[str, str]:
+    """A consistent one-PR raise: both pins, the step name and the documented minimum."""
+    for step_id in PYTHON_FLOOR_STEP_IDS:
+        ci = _mutate_python_floor_step(ci, step_id, lambda s: _set_floor_pin(s, f"'{raised}'"))
+    ci = ci.replace(f"Python {floor} script floor", f"Python {raised} script floor", 1)
+    return ci, re.sub(PYTHON_FLOOR_PATTERN, f"Python {raised} or newer", doc, count=1)
+
+
+def _edit_step_id_line(step: str, edit: Callable[[str, str], str]) -> str:
+    """The step with edit(value, comment) applied on the line its id is read from."""
+    span = _step_key_span(step, "id")
+    if span is None:
+        return step
+    index, start = span
+    lines = step.splitlines(keepends=True)
+    rest = lines[index][start:]
+    body = rest.rstrip("\r\n")
+    value, mark, comment = body.partition(" #")
+    lines[index] = (
+        lines[index][:start] + edit(value, mark + comment) + rest[len(body) :]
+    )
+    return "".join(lines)
+
+
+def _flip_quotes(value: str, comment: str) -> str:
+    """The id value quoted if bare, bare if quoted; spacing and comment kept."""
+    core = value.strip()
+    bare = _strip_yaml_quotes(core)
+    lead, tail = value.split(core, 1) if core else (value, "")
+    return lead + (bare if core != bare else f'"{bare}"') + tail + comment
+
+
+def _flip_floor_step_id_quotes(ci: str) -> str:
+    """The same workflow with each floor step id quoted if bare, bare if quoted."""
+    for step_id in PYTHON_FLOOR_STEP_IDS:
+        ci = _mutate_python_floor_step(
+            ci, step_id, lambda step: _edit_step_id_line(step, _flip_quotes)
+        )
+    return ci
+
+
+def _comment_floor_step_ids(ci: str) -> str:
+    """The same workflow with a trailing comment on each floor step id line."""
+    for step_id in PYTHON_FLOOR_STEP_IDS:
+        ci = _mutate_python_floor_step(
+            ci,
+            step_id,
+            lambda step: _edit_step_id_line(
+                step, lambda value, comment: f"{value}{comment}  # floor step"
+            ),
+        )
+    return ci
+
+
+def _without_quotes(text: str) -> str:
+    """The text with every YAML quote character removed."""
+    return text.translate(str.maketrans("", "", "'\""))
+
+
+def _id_flip_failures(base: str, doc: str, name: str) -> list[str]:
+    """Flipping must change only quotes, and flipping back must change them again and pass."""
+    flipped = _flip_floor_step_id_quotes(base)
+    back = _flip_floor_step_id_quotes(flipped)
+    if flipped == base or back == flipped:
+        return [f"Python floor regression: {name} tree: id flip changed nothing"]
+    plain = _without_quotes(base)
+    if _without_quotes(flipped) != plain or _without_quotes(back) != plain:
+        return [
+            f"Python floor regression: {name} tree: id flip changed more than quotes"
+        ]
+    return [
+        f"Python floor regression: {name} tree flipped back: {error}"
+        for error in validate_python_floor_text(back, doc)
+    ]
+
+
+def python_floor_regressions() -> list[str]:
+    """Run the floor cases on the real tree and five valid variants of it."""
+    ci = (ROOT / CI_RELATIVE).read_text(encoding="utf-8")
+    doc = PYTHON_FLOOR_DOC.read_text(encoding="utf-8")
+    failures = python_floor_regressions_text(ci, doc)
+    floor, _ = documented_python_floor(doc)
+    if floor is None:
+        return failures
+    commented = _comment_floor_step_ids(ci)
+    variants = {
+        "consistent raise": _raise_python_floor(ci, doc, floor, _raised_minor(floor)),
+        "other quote style": _python_floor_passing_cases(ci, doc, floor)["other quote style"],
+        "other id quoting": (_flip_floor_step_id_quotes(ci), doc),
+        "id comments": (commented, doc),
+        "id comments, other id quoting": (_flip_floor_step_id_quotes(commented), doc),
+    }
+    failures.extend(
+        f"Python floor regression: {name} tree: mutation changed nothing"
+        for name, variant in variants.items()
+        if variant == (ci, doc)
+    )
+    failures.extend(_id_flip_failures(ci, doc, "other id quoting"))
+    failures.extend(_id_flip_failures(commented, doc, "id comments, other id quoting"))
+    for name, (variant_ci, variant_doc) in variants.items():
+        prefix = "Python floor regression: "
+        failures.extend(
+            failure.replace(prefix, f"{prefix}{name} tree: ", 1)
+            for failure in python_floor_regressions_text(variant_ci, variant_doc)
+        )
+    return failures
+
+
 def validate_renovate() -> list[str]:
     """Validate the checked-in Renovate config against this checker."""
     if not RENOVATE_CONFIG.is_file():
@@ -8997,6 +9353,7 @@ def main(argv: list[str] | None = None) -> int:
     errors = validate_config(config_text)
     errors.extend(validate_consumers())
     errors.extend(validate_renovate())
+    errors.extend(validate_python_floor())
     errors.extend(validate_tester_publish())
     errors.extend(validate_render_pr_workflow())
     errors.extend(validate_dev_image())
@@ -9027,6 +9384,7 @@ def main(argv: list[str] | None = None) -> int:
         errors.extend(windows_tester_regressions())
         errors.extend(renovate_pattern_regressions())
         errors.extend(renovate_validator_regressions())
+        errors.extend(python_floor_regressions())
         errors.extend(go_pin_regressions())
 
     if errors:

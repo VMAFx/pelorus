@@ -130,6 +130,20 @@
         "cordanaLLM/praetor/**"
       ],
       "enabled": false
+    },
+    {
+      "description": "Python floor pins in ci.yml (steps floor-py and floor-py-scripts) test the declared minimum in docs/development/build.md; they move by hand with that minimum, never by Renovate",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchFileNames": [
+        ".github/workflows/ci.yml"
+      ],
+      "matchDepNames": [
+        "python"
+      ],
+      "matchCurrentValue": "3.10",
+      "enabled": false
     }
   ]
 }

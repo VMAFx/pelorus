@@ -1249,6 +1249,17 @@ either would leave a copied value behind:
   carries no version for the same reason
   ([ADR-0151](../adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
 
+The two `actions/setup-python` floor pins test the declared Python minimum
+named in [Git hooks](#git-hooks-opt-in-per-clone): `floor-py` covers the Meson
+floor and `floor-py-scripts` covers the script floor. `renovate.json` disables
+Renovate's `python` update in `.github/workflows/ci.yml` for the value that
+matches its `matchCurrentValue`, the minimum. The checker
+fails when either pin, or the script floor step name, differs from the
+documented minimum, so a Renovate PR that bumps a floor goes red: the
+[ADR-0152 detection point](../adr/0152-renovate-guard-enforcement-scope.md).
+Raising the minimum takes one PR changing the minimum sentence, both pins,
+the script floor step name and the rule's `matchCurrentValue`.
+
 The Windows job's `msys2/setup-msys2` action is bumped by Renovate's
 github-actions manager like every other action (digest plus `# vX.Y.Z`
 comment). The checker holds no copy of that pin. It checks only its shape:
