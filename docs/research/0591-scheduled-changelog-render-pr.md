@@ -3,13 +3,13 @@
 
 **Date:** 2026-11-10
 
-**Decision:** [ADR-0252](../adr/0252-scheduled-changelog-render-pull-request.md).
+**Decision:** [ADR-0252](../adr/0252-scheduled-changelog-render-pull-request.md), amended by [ADR-0253](../adr/0253-render-settings-step-fails-only-when-due.md).
 
 **Scope:** scheduled changelog render pull request workflow `.github/workflows/changelog-render-pr.yml`, `scripts/release/open-render-pr.py`, `scripts/release/check-changelog-staleness.py`, and `scripts/check-build-config.py`, baseline `c219f15`, round-1 fixes on `e979dc3`, issue #591.
 
 ## Verdict
 
-The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.yml`) runs hourly and on `workflow_dispatch` to resolve changelog render debt without manual intervention. It invokes `check-changelog-staleness.py --open-after-hours 6` to determine whether a render is owed. When due, `actions/create-github-app-token` mints an installation token for `vmafx-release-bot`, and `open-render-pr.py` constructs a render-only commit via the GitHub REST Git Database API (without author, committer, or signature keys) so GitHub cryptographically signs and verifies it, then moves the branch with one GraphQL `updateRefs` compare-and-swap so a push made after the branch was read is never overwritten. The script checks with `has_dco_trailer` from `scripts/check-dco.py` that the render commit message and the squash body carry the bot's `Signed-off-by:` trailer, then arms squash auto-merge on the pull request. When the base branch renders current, the workflow automatically closes any open bot render pull request and deletes its branch. The workflow and its contract are guarded by 27 regression cases (26 rejected mutants and one accepted pin bump) in `scripts/check-build-config.py`.
+The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.yml`) runs hourly and on `workflow_dispatch` to resolve changelog render debt without manual intervention. It invokes `check-changelog-staleness.py --open-after-hours 6` to determine whether a render is owed. When due, `actions/create-github-app-token` mints an installation token for `vmafx-release-bot`, and `open-render-pr.py` constructs a render-only commit via the GitHub REST Git Database API (without author, committer, or signature keys) so GitHub cryptographically signs and verifies it, then moves the branch with one GraphQL `updateRefs` compare-and-swap so a push made after the branch was read is never overwritten. The script checks with `has_dco_trailer` from `scripts/check-dco.py` that the render commit message and the squash body carry the bot's `Signed-off-by:` trailer, then arms squash auto-merge on the pull request. When the base branch renders current and both release-bot settings are present, the workflow automatically closes any open bot render pull request and deletes its branch. With missing settings it emits a notice naming both settings and skips mint and open-or-close; when a render is due, each missing setting fails by name (ADR-0253). The workflow and its contract are guarded by 35 regression cases (34 rejected mutants and one accepted pin bump) in `scripts/check-build-config.py`.
 
 ## Measurements
 
@@ -33,9 +33,16 @@ The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.
 | Self-test h: push check, render script changed, no fragment commit since the last render | exit 1 at once; stderr `no changelog.d/ commits found`; a planted grace for that state fails h |
 | Self-test p28: pull request check, base hand-edited 1 h ago with a fragment since | exit 1 at once; stderr `hand-edited or stale`; with g and h skipped, the same two planted mutants fail p28 |
 | Self-test p29: pull request check, base changed the render script, no fragment since | exit 1 at once; stderr `no changelog.d/ commits found`; with g and h skipped, the planted grace fails p29 |
-| Self-test s1: release-bot settings present | exit 0; `CLIENT_ID` set, `HAS_KEY=true` |
-| Self-test s2: release-bot missing client id | exit 1; reports missing `RELEASE_BOT_CLIENT_ID` |
-| Self-test s3: release-bot key flag false | exit 1; reports missing `RELEASE_BOT_PRIVATE_KEY` |
+| Amendment ADR-0253 | Baseline `1f434b4`, run 42856098380 (2026-11-10T16:35:46Z): `current=true`, settings step failed naming missing `RELEASE_BOT_CLIENT_ID`; settings added at 18:16Z, run 42873719398 passed at 18:17Z and opened PR #595 |
+| Self-test s1: both settings present, due true | exit 0; stdout exactly `present=true` (newline); stderr empty |
+| Self-test s2: both settings present, due false | exit 0; stdout exactly `present=true` (newline); stderr empty |
+| Self-test s3: client id blank, due true | exit 1; no stdout; only missing `RELEASE_BOT_CLIENT_ID` error |
+| Self-test s4: key flag false, due true | exit 1; no stdout; only missing `RELEASE_BOT_PRIVATE_KEY` error |
+| Self-test s5: both settings missing, due true | exit 1; no stdout; both missing-setting errors |
+| Self-test s6: both settings missing, due false | exit 0; stdout `present=false`; notice names both as `not set`, says mint and open-or-close skipped; no error |
+| Self-test s7: key missing only, due false | exit 0; stdout `present=false`; notice names client id `set` and key `not set` |
+| Self-test s8: --check-settings without --due | exit 2; stderr `requires --due` |
+| Self-test s9: --due maybe | exit 2; argparse rejects invalid choice |
 | Self-test o1: fragments owed, no branch, no PR | exit 0; creates blob, tree, verified API commit (`message`, `tree`, `parents` only), `updateRefs` with a `beforeOid` of 40 zeros, pulls POST, arms squash auto-merge with subject `docs(changelog): render unreleased fragments (#N)` and DCO trailer |
 | Self-test o2: base current (`--due false`), own PR open | exit 0; calls only `pr close <n> --comment ... --delete-branch --repo VMAFx/pelorus`; zero other forge writes |
 | Self-test o3: base current, no PR | exit 0; stdout `no render pull request to close`, zero forge write calls |
@@ -83,12 +90,20 @@ The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.
 | Build config regression R23 (W10): mint uses `secrets.OTHER_KEY` | rejected with `mint step must match the ADR-0252 contract` |
 | Build config regression R24 (W12): checkout uses `github.head_ref` | rejected with `checkout step must match the ADR-0252 contract` |
 | Build config regression R25: both action digests and versions bumped | accepted; 40-hex pins with `# v9.9.9` normalise to the same step contract |
+| Build config regression R26: settings drops open half | rejected with `settings step must carry the exact if: condition` |
+| Build config regression R27: settings omits --due | rejected with `exact settings command` |
+| Build config regression R28: settings RENDER_DUE uses current | rejected with `settings step must match the ADR-0252 contract` |
+| Build config regression R29: settings omits output redirect | rejected with `exact settings command` |
+| Build config regression R30: settings id removed | rejected with `id: settings` |
+| Build config regression R31: mint uses decide condition | rejected with `mint step must carry the exact if: condition` |
+| Build config regression R32: opener uses decide condition | rejected with `opener step must carry the exact if: condition` |
+| Build config regression R33: settings piped through tee | rejected with `exact settings command` |
 
 ## Sources
 
 - [ADR-0252](../adr/0252-scheduled-changelog-render-pull-request.md) (A scheduled workflow opens the changelog render pull request as a signed bot commit).
 - [ADR-0251](../adr/0251-changelog-render-owed-on-pull-requests.md) (Pull requests fail while the default branch owes a changelog render for more than 20 h).
 - [ADR-0245](../adr/0245-changelog-render-at-landing.md) (Changelog render moves to landing and release cut).
-- `scripts/release/open-render-pr.py --self-test` (o1–o17, s1–s3); `scripts/release/check-changelog-staleness.py --self-test` (a–h, p1–p29, d1–d7); `scripts/check-build-config.py --self-test` (R1–R25, including R6b and R9b).
+- `scripts/release/open-render-pr.py --self-test` (o1–o17, s1–s9); `scripts/release/check-changelog-staleness.py --self-test` (a–h, p1–p29, d1–d7); `scripts/check-build-config.py --self-test` (R1–R33, including R6b and R9b).
 - [GitHub expressions: status check functions](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions) (read 2026-11-10); required-context measurement with `gh api repos/VMAFx/pelorus/rules/branches/master`, 2026-11-10.
 - Issue #591.

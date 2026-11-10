@@ -30,14 +30,16 @@ jobs:
         id: decide
         run: python3 -I scripts/release/check-changelog-staleness.py --open-after-hours 6 >> "$GITHUB_OUTPUT"
       - name: Release-bot settings are present
+        id: settings
         if: steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'
         env:
           CLIENT_ID: ${{ vars.RELEASE_BOT_CLIENT_ID }}
           HAS_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
-        run: python3 -I scripts/release/open-render-pr.py --check-settings
+          RENDER_DUE: ${{ steps.decide.outputs.open }}
+        run: python3 -I scripts/release/open-render-pr.py --check-settings --due "$RENDER_DUE" >> "$GITHUB_OUTPUT"
       - name: Mint the release-bot installation token
         id: app-token
-        if: steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'
+        if: steps.settings.outputs.present == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
@@ -45,7 +47,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
       - name: Render and open, or close, the render pull request
-        if: steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'
+        if: steps.settings.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}

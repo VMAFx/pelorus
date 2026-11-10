@@ -5126,7 +5126,11 @@ RENDER_PR_GATED_IF = (
     "steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'"
 )
 RENDER_PR_DECIDE_CMD = 'python3 -I scripts/release/check-changelog-staleness.py --open-after-hours 6 >> "$GITHUB_OUTPUT"'
-RENDER_PR_SETTINGS_CMD = "python3 -I scripts/release/open-render-pr.py --check-settings"
+RENDER_PR_SETTINGS_GATED_IF = "steps.settings.outputs.present == 'true'"
+RENDER_PR_SETTINGS_CMD = (
+    'python3 -I scripts/release/open-render-pr.py --check-settings '
+    '--due "$RENDER_DUE" >> "$GITHUB_OUTPUT"'
+)
 RENDER_PR_OPENER_CMD = (
     'python3 -I scripts/release/open-render-pr.py --due "$RENDER_DUE" '
     '--app-slug "$APP_SLUG" --branch chore/changelog-render-auto'
@@ -5147,15 +5151,17 @@ RENDER_PR_STEP_TEXT = {
         run: python3 -I scripts/release/check-changelog-staleness.py --open-after-hours 6 >> "$GITHUB_OUTPUT"
 """,
     "settings": """      - name: Release-bot settings are present
+        id: settings
         if: steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'
         env:
           CLIENT_ID: ${{ vars.RELEASE_BOT_CLIENT_ID }}
           HAS_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
-        run: python3 -I scripts/release/open-render-pr.py --check-settings
+          RENDER_DUE: ${{ steps.decide.outputs.open }}
+        run: python3 -I scripts/release/open-render-pr.py --check-settings --due "$RENDER_DUE" >> "$GITHUB_OUTPUT"
 """,
     "mint": """      - name: Mint the release-bot installation token
         id: app-token
-        if: steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'
+        if: steps.settings.outputs.present == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
@@ -5164,7 +5170,7 @@ RENDER_PR_STEP_TEXT = {
           permission-pull-requests: write
 """,
     "opener": """      - name: Render and open, or close, the render pull request
-        if: steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'
+        if: steps.settings.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
@@ -5276,18 +5282,20 @@ def _validate_render_pr_decide_and_settings(
         errors.append(f"{relative}: missing settings step")
     else:
         s_keys = [k.split(":", 1)[0].strip() for k in _step_keys(settings)]
-        if set(s_keys) != {"name", "if", "env", "run"}:
+        if set(s_keys) != {"name", "id", "if", "env", "run"}:
             errors.append(
-                f"{relative}: settings step keys must be exactly name, if, env, run"
+                f"{relative}: settings step keys must be exactly name, id, if, env, run"
             )
+        if "id: settings" not in _step_keys(settings):
+            errors.append(f"{relative}: settings step must set id: settings")
         if _step_commands(settings) != [RENDER_PR_SETTINGS_CMD]:
             errors.append(
                 f"{relative}: settings step must run exact settings command {RENDER_PR_SETTINGS_CMD!r}"
             )
         env_keys = set(re.findall(r"^\s+([A-Z_]+):", settings, re.MULTILINE))
-        if env_keys != {"CLIENT_ID", "HAS_KEY"}:
+        if env_keys != {"CLIENT_ID", "HAS_KEY", "RENDER_DUE"}:
             errors.append(
-                f"{relative}: settings step env keys must be exactly CLIENT_ID, HAS_KEY"
+                f"{relative}: settings step env keys must be exactly CLIENT_ID, HAS_KEY, RENDER_DUE"
             )
     return errors
 
@@ -5370,9 +5378,10 @@ def _validate_render_pr_step_order_and_gated_if(
             step_text = step_map[name][1]
             if_match = re.search(r"^\s+if:\s*(.*)$", step_text, re.MULTILINE)
             step_if = if_match.group(1).strip() if if_match else ""
-            if step_if != RENDER_PR_GATED_IF:
+            condition = RENDER_PR_GATED_IF if name == "settings" else RENDER_PR_SETTINGS_GATED_IF
+            if step_if != condition:
                 errors.append(
-                    f"{relative}: {name} step must carry the exact if: condition {RENDER_PR_GATED_IF!r}"
+                    f"{relative}: {name} step must carry the exact if: condition {condition!r}"
                 )
     return errors
 
@@ -5583,7 +5592,7 @@ def _render_pr_workflow_cases_steps(source: str) -> dict[str, tuple[str, str]]:
         ),
         "R13 mint step if: changed to always()": (
             source.replace(
-                "        id: app-token\n        if: steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'",
+                "        id: app-token\n        if: steps.settings.outputs.present == 'true'",
                 "        id: app-token\n        if: always()",
             ),
             "mint step must carry the exact if: condition",
@@ -5667,11 +5676,49 @@ def _render_pr_pin_bump(source: str) -> str:
     )
 
 
+def _render_pr_workflow_cases_settings(source: str) -> dict[str, tuple[str, str]]:
+    """Planted settings/output gating defects R26-R33 (ADR-0253)."""
+    step_map = _render_pr_step_map(_job_steps(workflow_job_blocks(source)["render"]))
+    changes = (
+        ("R26 settings drops open half", "settings",
+         f"if: {RENDER_PR_GATED_IF}", "if: steps.decide.outputs.current == 'true'",
+         "settings step must carry the exact if: condition"),
+        ("R27 settings omits --due", "settings",
+         RENDER_PR_SETTINGS_CMD, RENDER_PR_SETTINGS_CMD.replace(' --due "$RENDER_DUE"', ''),
+         "exact settings command"),
+        ("R28 settings uses current output", "settings",
+         "RENDER_DUE: ${{ steps.decide.outputs.open }}",
+         "RENDER_DUE: ${{ steps.decide.outputs.current }}",
+         "settings step must match the ADR-0252 contract"),
+        ("R29 settings omits output redirect", "settings",
+         RENDER_PR_SETTINGS_CMD, RENDER_PR_SETTINGS_CMD.replace(' >> "$GITHUB_OUTPUT"', ''),
+         "exact settings command"),
+        ("R30 settings id removed", "settings", "        id: settings\n", "",
+         "id: settings"),
+        ("R31 mint uses decide condition", "mint",
+         f"if: {RENDER_PR_SETTINGS_GATED_IF}", f"if: {RENDER_PR_GATED_IF}",
+         "mint step must carry the exact if: condition"),
+        ("R32 opener uses decide condition", "opener",
+         f"if: {RENDER_PR_SETTINGS_GATED_IF}", f"if: {RENDER_PR_GATED_IF}",
+         "opener step must carry the exact if: condition"),
+        ("R33 settings piped through tee", "settings",
+         RENDER_PR_SETTINGS_CMD,
+         RENDER_PR_SETTINGS_CMD.replace('>> "$GITHUB_OUTPUT"', '| tee -a "$GITHUB_OUTPUT"'),
+         "exact settings command"),
+    )
+    cases = {}
+    for name, step, old, new, expected in changes:
+        block = step_map[step][1]
+        cases[name] = (source.replace(block, block.replace(old, new, 1), 1), expected)
+    return cases
+
+
 def _render_pr_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
     """Planted mutations of changelog-render-pr.yml (ADR-0252)."""
     cases = _render_pr_workflow_cases_top(source)
     cases.update(_render_pr_workflow_cases_steps(source))
     cases.update(_render_pr_workflow_cases_contract(source))
+    cases.update(_render_pr_workflow_cases_settings(source))
     return cases
 
 
@@ -7404,7 +7451,7 @@ def workflow_validator_regressions() -> list[str]:
 
 
 def render_pr_workflow_regressions() -> list[str]:
-    """Prove the ADR-0252 render workflow guard refuses R1-R24, R6b and R9b; accepts R25."""
+    """Prove the ADR-0252 render workflow guard refuses R1-R24, R26-R33, R6b and R9b; accepts R25."""
     failures: list[str] = []
     render_pr_rel = RENDER_PR_WORKFLOW.relative_to(ROOT).as_posix()
     render_pr_src = RENDER_PR_WORKFLOW.read_text(encoding="utf-8")
@@ -7418,10 +7465,14 @@ def render_pr_workflow_regressions() -> list[str]:
             for e in validate_render_pr_workflow_text(render_pr_rel, mutated)
         ):
             failures.append(f"workflow regression: {name} was accepted")
+        else:
+            print(f"self-test ok: {name} refused")
     if validate_render_pr_workflow_text(
         render_pr_rel, _render_pr_pin_bump(render_pr_src)
     ):
         failures.append("workflow regression: R25 valid pin bump was rejected")
+    if not failures:
+        print("self-test ok: render workflow R1-R24, R26-R33, R6b and R9b refused; R25 and current file accepted")
     return failures
 
 

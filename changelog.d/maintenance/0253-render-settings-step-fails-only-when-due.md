@@ -1,0 +1,1 @@
+- The scheduled render workflow now fails at its settings step only when a render is due; on a current base it names the missing settings in a notice and skips the token mint and open-or-close step ([ADR-0253](docs/adr/0253-render-settings-step-fails-only-when-due.md)).

@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0252: A scheduled workflow opens the changelog render pull request as a signed bot commit
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by [ADR-0253](0253-render-settings-step-fails-only-when-due.md) (the settings step fails only when a render is due)
 - **Date**: 2026-11-10
 - **Deciders**: Lusoris
 - **Tags**: `release`, `docs`, `ci`

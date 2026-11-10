@@ -5,7 +5,7 @@
 
 Usage:
     open-render-pr.py --due <true|false> --app-slug <slug> --branch <name> [--repo <path>] [--repository <owner/name>]
-    open-render-pr.py --check-settings
+    open-render-pr.py --check-settings --due <true|false>
     open-render-pr.py --self-test
 """
 
@@ -56,22 +56,35 @@ def _load_dco_checker() -> Callable[[str], bool]:
     return cast(Callable[[str], bool], checker)
 
 
-def check_settings(env: dict[str, str]) -> int:
-    """Validate that repository release-bot settings are present (ADR-0252)."""
-    client_id = env.get("CLIENT_ID", "").strip()
-    if not client_id:
-        print(
-            "::error::repository variable RELEASE_BOT_CLIENT_ID is not set (ADR-0252)",
-            file=sys.stderr,
-        )
+def check_settings(env: dict[str, str], due: bool) -> int:
+    """Fail missing release-bot settings only when a render is due (ADR-0253)."""
+    settings = (
+        (
+            "repository variable RELEASE_BOT_CLIENT_ID",
+            bool(env.get("CLIENT_ID", "").strip()),
+        ),
+        (
+            "repository secret RELEASE_BOT_PRIVATE_KEY",
+            env.get("HAS_KEY", "").strip() == "true",
+        ),
+    )
+    missing = [name for name, present in settings if not present]
+    if not missing:
+        print("present=true")
+        return 0
+    if due:
+        for name in missing:
+            print(f"::error::{name} is not set (ADR-0252)", file=sys.stderr)
         return 1
-    has_key = env.get("HAS_KEY", "").strip()
-    if has_key != "true":
-        print(
-            "::error::repository secret RELEASE_BOT_PRIVATE_KEY is not set (ADR-0252)",
-            file=sys.stderr,
-        )
-        return 1
+    states = ", ".join(
+        f"{name} {'set' if present else 'not set'}" for name, present in settings
+    )
+    print(
+        f"::notice::release-bot settings absent: {states}; the base renders current, "
+        "so the token mint and the open-or-close step are skipped (ADR-0253)",
+        file=sys.stderr,
+    )
+    print("present=false")
     return 0
 
 
@@ -729,25 +742,150 @@ class StubForge:
         raise RuntimeError(f"unhandled stub call: {call_str}")
 
 
-def _test_s1_s2_s3() -> int:
-    """Test release-bot settings check cases s1, s2, s3."""
-    rc_s1 = check_settings({"CLIENT_ID": "12345", "HAS_KEY": "true"})
-    if rc_s1 != 0:
-        print(f"self-test FAIL: s1 failed: rc={rc_s1}, want 0", file=sys.stderr)
+def _test_settings_case(
+    case: str, env: dict[str, str], due: bool, rc: int, out: str, err: str
+) -> int:
+    """Require exact exit status and both streams for one settings case."""
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        actual = check_settings(env, due)
+    if (actual, stdout.getvalue(), stderr.getvalue()) != (rc, out, err):
+        print(
+            f"self-test FAIL: {case}: rc={actual}, stdout={stdout.getvalue()!r}, "
+            f"stderr={stderr.getvalue()!r}",
+            file=sys.stderr,
+        )
         return 1
-    print("self-test ok: s1 both settings present -> rc 0")
+    print(f"self-test ok: {case}")
+    return 0
 
-    rc_s2 = check_settings({"CLIENT_ID": "", "HAS_KEY": "true"})
-    if rc_s2 != 1:
-        print(f"self-test FAIL: s2 failed: rc={rc_s2}, want 1", file=sys.stderr)
-        return 1
-    print("self-test ok: s2 client id empty -> rc 1")
 
-    rc_s3 = check_settings({"CLIENT_ID": "12345", "HAS_KEY": "false"})
-    if rc_s3 != 1:
-        print(f"self-test FAIL: s3 failed: rc={rc_s3}, want 1", file=sys.stderr)
-        return 1
-    print("self-test ok: s3 key flag false -> rc 1")
+def _test_settings_present() -> int:
+    """Test s1-s2: both settings present, for either due value."""
+    cases = (
+        (
+            "s1 both present, due true -> rc 0",
+            "12345",
+            "true",
+            True,
+            0,
+            "present=true\n",
+            "",
+        ),
+        (
+            "s2 both present, due false -> rc 0",
+            "12345",
+            "true",
+            False,
+            0,
+            "present=true\n",
+            "",
+        ),
+    )
+    for name, client, key, due, rc, out, err in cases:
+        if _test_settings_case(
+            name, {"CLIENT_ID": client, "HAS_KEY": key}, due, rc, out, err
+        ):
+            return 1
+    return 0
+
+
+def _test_settings_due() -> int:
+    """Test s3-s5: each due-render missing combination."""
+    client_error = (
+        "::error::repository variable RELEASE_BOT_CLIENT_ID is not set (ADR-0252)\n"
+    )
+    key_error = (
+        "::error::repository secret RELEASE_BOT_PRIVATE_KEY is not set (ADR-0252)\n"
+    )
+    cases = (
+        (
+            "s3 client id blank, due true -> rc 1",
+            " ",
+            "true",
+            True,
+            1,
+            "",
+            client_error,
+        ),
+        (
+            "s4 key flag false, due true -> rc 1",
+            "12345",
+            "false",
+            True,
+            1,
+            "",
+            key_error,
+        ),
+        (
+            "s5 both missing, due true -> rc 1",
+            "",
+            "false",
+            True,
+            1,
+            "",
+            client_error + key_error,
+        ),
+    )
+    for name, client, key, due, rc, out, err in cases:
+        if _test_settings_case(
+            name, {"CLIENT_ID": client, "HAS_KEY": key}, due, rc, out, err
+        ):
+            return 1
+    return 0
+
+
+def _test_settings_current() -> int:
+    """Test s6-s7: current bases name both settings and skip App operations."""
+    suffix = (
+        "; the base renders current, so the token mint and the open-or-close step "
+        "are skipped (ADR-0253)\n"
+    )
+    cases = (
+        ("s6 both missing, due false -> notice, rc 0", "", "not set"),
+        ("s7 key missing only, due false -> notice, rc 0", "12345", "set"),
+    )
+    for name, client, state in cases:
+        notice = (
+            f"::notice::release-bot settings absent: repository variable RELEASE_BOT_CLIENT_ID {state}, "
+            "repository secret RELEASE_BOT_PRIVATE_KEY not set" + suffix
+        )
+        if _test_settings_case(
+            name,
+            {"CLIENT_ID": client, "HAS_KEY": "false"},
+            False,
+            0,
+            "present=false\n",
+            notice,
+        ):
+            return 1
+    return 0
+
+
+def _test_settings_cli() -> int:
+    """Test s8-s9: --check-settings requires a boolean --due argument."""
+    cases = (
+        ("s8 missing --due -> rc 2", ["--check-settings"], "requires --due"),
+        (
+            "s9 invalid --due -> rc 2",
+            ["--check-settings", "--due", "maybe"],
+            "invalid choice",
+        ),
+    )
+    for name, argv, expected in cases:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                rc = run_check_settings(parse_args(argv), {})
+            except SystemExit as exc:
+                rc = exc.code
+        if rc != 2 or stdout.getvalue() or expected not in stderr.getvalue():
+            print(
+                f"self-test FAIL: {name}: rc={rc}, stderr={stderr.getvalue()!r}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"self-test ok: {name}")
     return 0
 
 
@@ -1335,8 +1473,14 @@ def _run_open_pr_cases(
 
 def run_self_test(repo_root: pathlib.Path) -> int:
     """Run full self-test suite for open-render-pr.py."""
-    if _test_s1_s2_s3() != 0:
-        return 1
+    for test in (
+        _test_settings_present,
+        _test_settings_due,
+        _test_settings_current,
+        _test_settings_cli,
+    ):
+        if test() != 0:
+            return 1
 
     script_source = repo_root / "scripts/release/concat-changelog-fragments.sh"
     if not script_source.is_file():
@@ -1401,13 +1545,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def run_check_settings(args: argparse.Namespace, env: dict[str, str]) -> int:
+    """Run --check-settings, which needs --due to tell a due render from a current base (ADR-0253)."""
+    if args.due is None:
+        print(
+            "error: --check-settings requires --due (true or false)",
+            file=sys.stderr,
+        )
+        return 2
+    return check_settings(env, args.due == "true")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for open-render-pr.py."""
     args = parse_args(argv)
     if args.self_test:
         return run_self_test(args.repo)
     if args.check_settings:
-        return check_settings(dict(os.environ))
+        return run_check_settings(args, dict(os.environ))
 
     if args.due is None:
         print("error: --due is required (true or false)", file=sys.stderr)
