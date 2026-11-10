@@ -737,6 +737,57 @@ def init_fixture_repo(
     return script_dest
 
 
+def _change_fixture_render_script(repo: pathlib.Path, placeholder: str) -> None:
+    """Change the fixture render script's empty-block placeholder; keep it read-only."""
+    script = repo / "scripts/release/concat-changelog-fragments.sh"
+    script.chmod(0o600)
+    script.write_text(
+        script.read_text(encoding="utf-8").replace(
+            "_No unreleased changes._", placeholder
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(0o500)
+
+
+def _hand_edit_fixture_changelog(repo: pathlib.Path, entry: str) -> None:
+    """Replace the rendered empty-block placeholder in CHANGELOG.md by hand."""
+    cl = repo / "CHANGELOG.md"
+    cl.write_text(
+        cl.read_text(encoding="utf-8").replace("_No unreleased changes._", entry),
+        encoding="utf-8",
+    )
+
+
+def _test_cases_g_h(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    now: int,
+) -> int:
+    """Cases g and h: a hand edit or a render script change fails at once."""
+    # case g: hand edit, then a fragment 1 h ago -> 1 (no 24 h grace)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-g", "master")
+    _hand_edit_fixture_changelog(repo, "Hand edited entry in g.")
+    commit_in_fixture(repo, env, "Hand edit CHANGELOG for g", now - 3600)
+    (repo / "changelog.d/added/0005-g.md").write_text("- Add g.\n", encoding="utf-8")
+    commit_in_fixture(repo, env, "Add fragment g 1h ago", now - 3600)
+    rc_g, _, err_g = _run_captured(check_staleness, repo, "branch-g", 24, env=env)
+    if rc_g != 1 or "hand-edited or stale" not in err_g:
+        print(f"self-test FAIL: case g: rc={rc_g}, err={err_g!r}", file=sys.stderr)
+        return 1
+
+    # case h: render script changed, no fragment since the last render -> 1
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-h", "master")
+    _change_fixture_render_script(repo, "_Nothing unreleased in h._")
+    commit_in_fixture(repo, env, "Change the render script for h", now)
+    rc_h, _, err_h = _run_captured(check_staleness, repo, "branch-h", 24, env=env)
+    if rc_h != 1 or "no changelog.d/ commits found" not in err_h:
+        print(f"self-test FAIL: case h: rc={rc_h}, err={err_h!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: g hand edit and h render script change -> rc 1 at once")
+    return 0
+
+
 def _test_cases_b_c_d(
     repo: pathlib.Path,
     env: dict[str, str],
@@ -1688,6 +1739,62 @@ def _test_pr_p27(
     return 0
 
 
+def _merge_fragment_pr(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    case: str,
+    now: int,
+) -> tuple[int, str]:
+    """Merge a fragment-only pull request into base-<case>; return the PR check rc and stderr."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", f"pr-{case}", f"base-{case}")
+    (repo / f"changelog.d/added/{case}-pr.md").write_text(
+        f"- PR {case}.\n", encoding="utf-8"
+    )
+    commit_in_fixture(repo, env, f"Add pr {case}", now)
+    _fixture_git(repo, env, "checkout", "-q", "-b", f"merge-{case}", f"base-{case}")
+    merge_in_fixture(repo, env, f"pr-{case}", f"Merge pr-{case} into base-{case}", now)
+    rc, _, err = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
+    return rc, err
+
+
+def _test_pr_p28(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    now: int,
+) -> int:
+    """Test pull request case p28 (base hand-edited 1 h ago, fragment since: fails at once)."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p28", "master")
+    _hand_edit_fixture_changelog(repo, "Hand edited entry in p28.")
+    commit_in_fixture(repo, env, "Hand edit CHANGELOG for p28", now - 3600)
+    (repo / "changelog.d/added/p28-base.md").write_text(
+        "- Base p28.\n", encoding="utf-8"
+    )
+    commit_in_fixture(repo, env, "Add base p28 1h ago", now - 3600)
+    rc28, err28 = _merge_fragment_pr(repo, env, "p28", now)
+    if rc28 != 1 or "hand-edited or stale" not in err28:
+        print(f"self-test FAIL: p28 failed: rc={rc28}, err={err28!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p28 base hand-edited 1 h ago -> rc 1 at once")
+    return 0
+
+
+def _test_pr_p29(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    now: int,
+) -> int:
+    """Test pull request case p29 (base changed the render script, no fragment since: fails at once)."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p29", "master")
+    _change_fixture_render_script(repo, "_Nothing unreleased in p29._")
+    commit_in_fixture(repo, env, "Change the render script for p29", now)
+    rc29, err29 = _merge_fragment_pr(repo, env, "p29", now)
+    if rc29 != 1 or "no changelog.d/ commits found" not in err29:
+        print(f"self-test FAIL: p29 failed: rc={rc29}, err={err29!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p29 base render script changed, no fragment -> rc 1 at once")
+    return 0
+
+
 def _run_pr_self_tests(
     repo: pathlib.Path,
     env: dict[str, str],
@@ -1695,7 +1802,7 @@ def _run_pr_self_tests(
     now: int,
     repo_root: pathlib.Path,
 ) -> int:
-    """Run pull request self-test cases p1 through p27."""
+    """Run pull request self-test cases p1 through p29."""
     cases: list[Callable[[], int]] = [
         lambda: _test_pr_p1(repo, env, now),
         lambda: _test_pr_p2(repo, env, now),
@@ -1724,6 +1831,8 @@ def _run_pr_self_tests(
         lambda: _test_pr_p25(repo, env, script_dest, now),
         _test_pr_p26,
         lambda: _test_pr_p27(repo, env, script_dest, now),
+        lambda: _test_pr_p28(repo, env, now),
+        lambda: _test_pr_p29(repo, env, now),
     ]
     for case in cases:
         if case() != 0:
@@ -1754,6 +1863,9 @@ def run_self_test(repo_root: pathlib.Path) -> int:
             return 1
 
         if _test_cases_readme_boundary(repo, env, now) != 0:
+            return 1
+
+        if _test_cases_g_h(repo, env, now) != 0:
             return 1
 
         # case e: after (c), render-only commit -> 0
@@ -1888,15 +2000,7 @@ def _test_decide_d7(repo: pathlib.Path, env: dict[str, str], now: int) -> int:
     """Test case d7: render script changed, no new fragment -> open=true at once."""
     _fixture_git(repo, env, "checkout", "-q", "-b", "branch-d7", "master")
     base = run_git_log(repo, ["-1", "--format=%H", "master"], env=env)
-    script = repo / "scripts/release/concat-changelog-fragments.sh"
-    script.chmod(0o600)
-    script.write_text(
-        script.read_text(encoding="utf-8").replace(
-            "_No unreleased changes._", "_Nothing unreleased yet._"
-        ),
-        encoding="utf-8",
-    )
-    script.chmod(0o500)
+    _change_fixture_render_script(repo, "_Nothing unreleased yet._")
     commit_in_fixture(repo, env, "Change the render script for d7", now)
     rc, lines = _run_decide(repo, "branch-d7", 6, env, now=now)
     expected = ["current=false", "open=true", f"owed_since={base}", "owed_hours=50.0"]

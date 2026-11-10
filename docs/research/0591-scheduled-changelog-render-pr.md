@@ -29,6 +29,10 @@ The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.
 | Self-test d5: hand-edited UNRELEASED block | exit 0; stdout `current=false open=true owed_hours=0.0` |
 | Self-test d6: `--open-after-hours 0` | exit 2 (argparse validation rejects `< 1`) |
 | Self-test d7: render script changed, no fragment commit since the last render | exit 0; stdout `current=false open=true owed_since=<last render sha> owed_hours=50.0`; before the fix the checker exited 1 here, and the planted revert fails d7 |
+| Self-test g: push check, hand-edited `CHANGELOG.md` with a fragment 1 h later | exit 1 at once; stderr `hand-edited or stale`; a planted 24 h grace for hand edits and a planted hand-edit detection bypass both fail g |
+| Self-test h: push check, render script changed, no fragment commit since the last render | exit 1 at once; stderr `no changelog.d/ commits found`; a planted grace for that state fails h |
+| Self-test p28: pull request check, base hand-edited 1 h ago with a fragment since | exit 1 at once; stderr `hand-edited or stale`; with g and h skipped, the same two planted mutants fail p28 |
+| Self-test p29: pull request check, base changed the render script, no fragment since | exit 1 at once; stderr `no changelog.d/ commits found`; with g and h skipped, the planted grace fails p29 |
 | Self-test s1: release-bot settings present | exit 0; `CLIENT_ID` set, `HAS_KEY=true` |
 | Self-test s2: release-bot missing client id | exit 1; reports missing `RELEASE_BOT_CLIENT_ID` |
 | Self-test s3: release-bot key flag false | exit 1; reports missing `RELEASE_BOT_PRIVATE_KEY` |
@@ -85,6 +89,6 @@ The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.
 - [ADR-0252](../adr/0252-scheduled-changelog-render-pull-request.md) (A scheduled workflow opens the changelog render pull request as a signed bot commit).
 - [ADR-0251](../adr/0251-changelog-render-owed-on-pull-requests.md) (Pull requests fail while the default branch owes a changelog render for more than 20 h).
 - [ADR-0245](../adr/0245-changelog-render-at-landing.md) (Changelog render moves to landing and release cut).
-- `scripts/release/open-render-pr.py --self-test` (o1–o17, s1–s3); `scripts/release/check-changelog-staleness.py --self-test` (d1–d7); `scripts/check-build-config.py --self-test` (R1–R25, including R6b and R9b).
+- `scripts/release/open-render-pr.py --self-test` (o1–o17, s1–s3); `scripts/release/check-changelog-staleness.py --self-test` (a–h, p1–p29, d1–d7); `scripts/check-build-config.py --self-test` (R1–R25, including R6b and R9b).
 - [GitHub expressions: status check functions](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions) (read 2026-11-10); required-context measurement with `gh api repos/VMAFx/pelorus/rules/branches/master`, 2026-11-10.
 - Issue #591.
