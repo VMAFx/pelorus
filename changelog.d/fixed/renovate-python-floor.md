@@ -1,0 +1,1 @@
+- Renovate bumped the declared Python 3.10 floor pins to 3.15, where the minimum Meson version crashes. A Renovate rule now keeps those pins at the declared minimum, and the build-config checker rejects either pin or the script floor step name when it differs from the documented minimum.
