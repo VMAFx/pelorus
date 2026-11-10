@@ -5110,9 +5110,7 @@ RENDER_PR_JOB_ALLOWED_KEYS = ("name", "if", "runs-on", "timeout-minutes", "steps
 RENDER_PR_GATED_IF = (
     "steps.decide.outputs.open == 'true' || steps.decide.outputs.current == 'true'"
 )
-RENDER_PR_DECIDE_CMD = (
-    'python3 -I scripts/release/check-changelog-staleness.py --open-after-hours 6 >> "$GITHUB_OUTPUT"'
-)
+RENDER_PR_DECIDE_CMD = 'python3 -I scripts/release/check-changelog-staleness.py --open-after-hours 6 >> "$GITHUB_OUTPUT"'
 RENDER_PR_SETTINGS_CMD = "python3 -I scripts/release/open-render-pr.py --check-settings"
 RENDER_PR_OPENER_CMD = (
     'python3 -I scripts/release/open-render-pr.py --due "$RENDER_DUE" '
@@ -5171,10 +5169,17 @@ def _validate_render_pr_top(relative: str, text: str) -> list[str]:
     for repeated in _repeated_keys(top_keys):
         errors.append(f"{relative}: top-level sets {repeated} more than once")
 
-    permissions = re.search(r"^permissions:\n(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
+    permissions = re.search(
+        r"^permissions:\n(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL
+    )
     permission_text = permissions.group(1) if permissions else ""
-    if _mapping_keys(permission_text, 2) != ["contents"] or permission_text.strip() != "contents: read":
-        errors.append(f"{relative}: top-level permissions must be exactly contents: read")
+    if (
+        _mapping_keys(permission_text, 2) != ["contents"]
+        or permission_text.strip() != "contents: read"
+    ):
+        errors.append(
+            f"{relative}: top-level permissions must be exactly contents: read"
+        )
 
     on = re.search(r"^on:\n(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
     on_keys = _mapping_keys(on.group(1), 2) if on else []
@@ -5184,7 +5189,9 @@ def _validate_render_pr_top(relative: str, text: str) -> list[str]:
     if not re.search(r"^  workflow_dispatch:\s*$", text, re.MULTILINE):
         errors.append(f"{relative}: must include workflow_dispatch trigger")
 
-    sched = re.search(r"^  schedule:\n((?:    - cron: '[^']+'\n?)+)", text, re.MULTILINE)
+    sched = re.search(
+        r"^  schedule:\n((?:    - cron: '[^']+'\n?)+)", text, re.MULTILINE
+    )
     if not sched:
         errors.append(f"{relative}: must define a schedule trigger")
     else:
@@ -5192,7 +5199,9 @@ def _validate_render_pr_top(relative: str, text: str) -> list[str]:
         if len(crons) != 1:
             errors.append(f"{relative}: schedule must have exactly one cron entry")
         elif not re.match(r"^\d{1,2} \* \* \* \*$", crons[0]):
-            errors.append(f"{relative}: schedule cron must be hourly (got {crons[0]!r})")
+            errors.append(
+                f"{relative}: schedule cron must be hourly (got {crons[0]!r})"
+            )
     return errors
 
 
@@ -5206,8 +5215,12 @@ def _validate_render_pr_job(relative: str, job_block: str) -> list[str]:
     for repeated in _repeated_keys(job_keys):
         errors.append(f"{relative}: render job sets {repeated} more than once")
 
-    if not re.search(r"^    if: github\.repository == 'VMAFx/pelorus'\s*$", job_block, re.MULTILINE):
-        errors.append(f"{relative}: render job must set if: github.repository == 'VMAFx/pelorus'")
+    if not re.search(
+        r"^    if: github\.repository == 'VMAFx/pelorus'\s*$", job_block, re.MULTILINE
+    ):
+        errors.append(
+            f"{relative}: render job must set if: github.repository == 'VMAFx/pelorus'"
+        )
     return errors
 
 
@@ -5240,19 +5253,27 @@ def _validate_render_pr_decide_and_settings(
         if "|" in decide:
             errors.append(f"{relative}: decide step must not contain pipe")
         if _step_commands(decide) != [RENDER_PR_DECIDE_CMD]:
-            errors.append(f"{relative}: decide step must run exact decide command {RENDER_PR_DECIDE_CMD!r}")
+            errors.append(
+                f"{relative}: decide step must run exact decide command {RENDER_PR_DECIDE_CMD!r}"
+            )
 
     if settings is None:
         errors.append(f"{relative}: missing settings step")
     else:
         s_keys = [k.split(":", 1)[0].strip() for k in _step_keys(settings)]
         if set(s_keys) != {"name", "if", "env", "run"}:
-            errors.append(f"{relative}: settings step keys must be exactly name, if, env, run")
+            errors.append(
+                f"{relative}: settings step keys must be exactly name, if, env, run"
+            )
         if _step_commands(settings) != [RENDER_PR_SETTINGS_CMD]:
-            errors.append(f"{relative}: settings step must run exact settings command {RENDER_PR_SETTINGS_CMD!r}")
+            errors.append(
+                f"{relative}: settings step must run exact settings command {RENDER_PR_SETTINGS_CMD!r}"
+            )
         env_keys = set(re.findall(r"^\s+([A-Z_]+):", settings, re.MULTILINE))
         if env_keys != {"CLIENT_ID", "HAS_KEY"}:
-            errors.append(f"{relative}: settings step env keys must be exactly CLIENT_ID, HAS_KEY")
+            errors.append(
+                f"{relative}: settings step env keys must be exactly CLIENT_ID, HAS_KEY"
+            )
     return errors
 
 
@@ -5266,19 +5287,33 @@ def _validate_render_pr_mint_and_opener(
     else:
         m_keys = [k.split(":", 1)[0].strip() for k in _step_keys(mint)]
         if set(m_keys) != {"name", "id", "if", "uses", "with"}:
-            errors.append(f"{relative}: mint step keys must be exactly name, id, if, uses, with")
+            errors.append(
+                f"{relative}: mint step keys must be exactly name, id, if, uses, with"
+            )
         uses_match = re.search(r"uses:\s*(\S+.*)$", mint, re.MULTILINE)
         uses_val = uses_match.group(1).strip() if uses_match else ""
         if not RENDER_PR_MINT_USES_RE.match(uses_val):
-            errors.append(f"{relative}: mint step uses must pin create-github-app-token by 40-hex digest with version comment")
+            errors.append(
+                f"{relative}: mint step uses must pin create-github-app-token by 40-hex digest with version comment"
+            )
         with_match = re.search(r"with:\n((?:\s+[\w-]+:[^\n]*\n?)+)", mint)
         with_text = with_match.group(1) if with_match else ""
         with_keys = set(re.findall(r"^\s+([\w-]+):", with_text, re.MULTILINE))
         if "app-id" in with_keys:
             errors.append(f"{relative}: mint step must not set app-id")
-        if with_keys != {"client-id", "private-key", "permission-contents", "permission-pull-requests"}:
-            errors.append(f"{relative}: mint step with keys must be exactly client-id, private-key, permission-contents, permission-pull-requests")
-        if "permission-contents: write" not in mint or "permission-pull-requests: write" not in mint:
+        if with_keys != {
+            "client-id",
+            "private-key",
+            "permission-contents",
+            "permission-pull-requests",
+        }:
+            errors.append(
+                f"{relative}: mint step with keys must be exactly client-id, private-key, permission-contents, permission-pull-requests"
+            )
+        if (
+            "permission-contents: write" not in mint
+            or "permission-pull-requests: write" not in mint
+        ):
             errors.append(f"{relative}: mint step permissions must both be write")
 
     if opener is None:
@@ -5286,12 +5321,18 @@ def _validate_render_pr_mint_and_opener(
     else:
         o_keys = [k.split(":", 1)[0].strip() for k in _step_keys(opener)]
         if set(o_keys) != {"name", "if", "env", "run"}:
-            errors.append(f"{relative}: opener step keys must be exactly name, if, env, run")
+            errors.append(
+                f"{relative}: opener step keys must be exactly name, if, env, run"
+            )
         if _step_commands(opener) != [RENDER_PR_OPENER_CMD]:
-            errors.append(f"{relative}: opener step must run exact opener command {RENDER_PR_OPENER_CMD!r}")
+            errors.append(
+                f"{relative}: opener step must run exact opener command {RENDER_PR_OPENER_CMD!r}"
+            )
         env_keys = set(re.findall(r"^\s+([A-Z_]+):", opener, re.MULTILINE))
         if env_keys != {"GH_TOKEN", "APP_SLUG", "RENDER_DUE"}:
-            errors.append(f"{relative}: opener step env keys must be exactly GH_TOKEN, APP_SLUG, RENDER_DUE")
+            errors.append(
+                f"{relative}: opener step env keys must be exactly GH_TOKEN, APP_SLUG, RENDER_DUE"
+            )
     return errors
 
 
@@ -5344,6 +5385,37 @@ def _validate_render_pr_step_text(
     return errors
 
 
+_RENDER_PR_STEP_KEYS = (
+    ("decide", "Decide whether the render pull request is due", "id: decide"),
+    (
+        "settings",
+        "Release-bot settings are present",
+        "open-render-pr.py --check-settings",
+    ),
+    ("mint", "Mint the release-bot installation token", "id: app-token"),
+    (
+        "opener",
+        "Render and open, or close, the render pull request",
+        "open-render-pr.py --due",
+    ),
+)
+
+
+def _render_pr_step_map(steps: list[tuple[int, str]]) -> dict[str, tuple[int, str]]:
+    """Map each ADR-0252 step key to its (index, text), by step name or marker."""
+    step_map: dict[str, tuple[int, str]] = {}
+    for idx, (_, step) in enumerate(steps):
+        if "uses: actions/checkout" in step:
+            step_map["checkout"] = (idx, step)
+            continue
+        sname = _step_name(step)
+        for key, name, marker in _RENDER_PR_STEP_KEYS:
+            if sname == name or marker in step:
+                step_map[key] = (idx, step)
+                break
+    return step_map
+
+
 def validate_render_pr_workflow_text(relative: str, text: str) -> list[str]:
     """Shape of the scheduled changelog render pull request workflow (ADR-0252)."""
     if not text.strip():
@@ -5360,23 +5432,12 @@ def validate_render_pr_workflow_text(relative: str, text: str) -> list[str]:
 
     steps = _job_steps(job_block)
     if len(steps) != 5:
-        errors.append(f"{relative}: render job must have exactly 5 steps (checkout, decide, settings, mint, opener)")
+        errors.append(
+            f"{relative}: render job must have exactly 5 steps (checkout, decide, settings, mint, opener)"
+        )
     errors.extend(_validate_render_pr_step_overrides(relative, steps))
 
-    step_map: dict[str, tuple[int, str]] = {}
-    for idx, (_, step) in enumerate(steps):
-        sname = _step_name(step)
-        if "uses: actions/checkout" in step:
-            step_map["checkout"] = (idx, step)
-        elif sname == "Decide whether the render pull request is due" or "id: decide" in step:
-            step_map["decide"] = (idx, step)
-        elif sname == "Release-bot settings are present" or "open-render-pr.py --check-settings" in step:
-            step_map["settings"] = (idx, step)
-        elif sname == "Mint the release-bot installation token" or "id: app-token" in step:
-            step_map["mint"] = (idx, step)
-        elif sname == "Render and open, or close, the render pull request" or "open-render-pr.py --due" in step:
-            step_map["opener"] = (idx, step)
-
+    step_map = _render_pr_step_map(steps)
     errors.extend(
         _validate_render_pr_decide_and_settings(
             relative,
@@ -5398,7 +5459,9 @@ def validate_render_pr_workflow_text(relative: str, text: str) -> list[str]:
 
 def validate_render_pr_workflow() -> list[str]:
     """ADR-0252: validate changelog-render-pr.yml against its contract."""
-    return _validate_checked_files(((RENDER_PR_WORKFLOW, validate_render_pr_workflow_text),))
+    return _validate_checked_files(
+        ((RENDER_PR_WORKFLOW, validate_render_pr_workflow_text),)
+    )
 
 
 def _swap_mint_and_opener(source: str) -> str:
@@ -5446,7 +5509,7 @@ def _render_pr_workflow_cases_top(source: str) -> dict[str, tuple[str, str]]:
             source.replace('>> "$GITHUB_OUTPUT"', '>> "$GITHUB_OUTPUT" || true'),
             "decide step must not contain pipe",
         ),
-        "R6b decide piped through | tee -a \"$GITHUB_OUTPUT\"": (
+        'R6b decide piped through | tee -a "$GITHUB_OUTPUT"': (
             source.replace('>> "$GITHUB_OUTPUT"', '| tee -a "$GITHUB_OUTPUT"'),
             "decide step must not contain pipe",
         ),
@@ -5464,7 +5527,10 @@ def _render_pr_workflow_cases_steps(source: str) -> dict[str, tuple[str, str]]:
     """Planted mutations R8 through R15 of changelog-render-pr.yml."""
     return {
         "R8 app-id: in place of client-id:": (
-            source.replace("client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}", "app-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}"),
+            source.replace(
+                "client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}",
+                "app-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}",
+            ),
             "mint step must not set app-id",
         ),
         "R9 opener step removed": (
@@ -5476,10 +5542,19 @@ def _render_pr_workflow_cases_steps(source: str) -> dict[str, tuple[str, str]]:
             ),
             "missing opener step",
         ),
+        "R9b settings step removed": (
+            re.sub(
+                r"      - name: Release-bot settings are present\n.*?(?=      - name:|\Z)",
+                "",
+                source,
+                flags=re.DOTALL,
+            ),
+            "missing settings step",
+        ),
         "R10 continue-on-error: true on opener": (
             source.replace(
-                "        run: python3 -I scripts/release/open-render-pr.py --due \"$RENDER_DUE\" --app-slug \"$APP_SLUG\" --branch chore/changelog-render-auto\n",
-                "        continue-on-error: true\n        run: python3 -I scripts/release/open-render-pr.py --due \"$RENDER_DUE\" --app-slug \"$APP_SLUG\" --branch chore/changelog-render-auto\n",
+                '        run: python3 -I scripts/release/open-render-pr.py --due "$RENDER_DUE" --app-slug "$APP_SLUG" --branch chore/changelog-render-auto\n',
+                '        continue-on-error: true\n        run: python3 -I scripts/release/open-render-pr.py --due "$RENDER_DUE" --app-slug "$APP_SLUG" --branch chore/changelog-render-auto\n',
             ),
             "step must not set continue-on-error",
         ),
@@ -7309,6 +7384,13 @@ def workflow_validator_regressions() -> list[str]:
             expected in e for e in validate_load_config_action_text(action_rel, mutated)
         ):
             failures.append(f"workflow regression: {name} was accepted")
+    failures.extend(render_pr_workflow_regressions())
+    return failures
+
+
+def render_pr_workflow_regressions() -> list[str]:
+    """Prove the ADR-0252 render workflow guard refuses R1-R24, R6b and R9b; accepts R25."""
+    failures: list[str] = []
     render_pr_rel = RENDER_PR_WORKFLOW.relative_to(ROOT).as_posix()
     render_pr_src = RENDER_PR_WORKFLOW.read_text(encoding="utf-8")
     if validate_render_pr_workflow_text(render_pr_rel, render_pr_src):
@@ -7317,10 +7399,13 @@ def workflow_validator_regressions() -> list[str]:
         if mutated == render_pr_src:
             failures.append(f"workflow regression: {name} mutation changed nothing")
         elif not any(
-            expected in e for e in validate_render_pr_workflow_text(render_pr_rel, mutated)
+            expected in e
+            for e in validate_render_pr_workflow_text(render_pr_rel, mutated)
         ):
             failures.append(f"workflow regression: {name} was accepted")
-    if validate_render_pr_workflow_text(render_pr_rel, _render_pr_pin_bump(render_pr_src)):
+    if validate_render_pr_workflow_text(
+        render_pr_rel, _render_pr_pin_bump(render_pr_src)
+    ):
         failures.append("workflow regression: R25 valid pin bump was rejected")
     return failures
 

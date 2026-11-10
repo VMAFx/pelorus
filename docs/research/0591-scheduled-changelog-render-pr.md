@@ -56,6 +56,7 @@ The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.
 | Build config regression R7: `permission-administration: write` added | rejected with `mint step with keys must be exactly` |
 | Build config regression R8: `app-id:` in place of `client-id:` | rejected with `mint step must not set app-id` |
 | Build config regression R9: opener step removed | rejected with `missing opener step` |
+| Build config regression R9b: settings step removed | rejected with `missing settings step` |
 | Build config regression R10: `continue-on-error: true` on opener | rejected with `step must not set continue-on-error` |
 | Build config regression R11: job `if:` dropped | rejected with `render job must set if: github.repository == 'VMAFx/pelorus'` |
 | Build config regression R12: `permissions: write-all` | rejected with `top-level permissions must be exactly contents: read` |
@@ -78,6 +79,6 @@ The scheduled changelog render workflow (`.github/workflows/changelog-render-pr.
 - [ADR-0252](../adr/0252-scheduled-changelog-render-pull-request.md) (A scheduled workflow opens the changelog render pull request as a signed bot commit).
 - [ADR-0251](../adr/0251-changelog-render-owed-on-pull-requests.md) (Pull requests fail while the default branch owes a changelog render for more than 20 h).
 - [ADR-0245](../adr/0245-changelog-render-at-landing.md) (Changelog render moves to landing and release cut).
-- `scripts/release/open-render-pr.py --self-test` (o1–o13, s1–s3); `scripts/check-build-config.py --self-test` (R1–R25, including R6b).
+- `scripts/release/open-render-pr.py --self-test` (o1–o13, s1–s3); `scripts/check-build-config.py --self-test` (R1–R25, including R6b and R9b).
 - [GitHub expressions: status check functions](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions) (read 2026-11-10); required-context measurement with `gh api repos/VMAFx/pelorus/rules/branches/master`, 2026-11-10.
 - Issue #591.
