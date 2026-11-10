@@ -684,6 +684,9 @@ jobs:
       - name: Changelog staleness check self-test
         if: github.event_name == 'pull_request'
         run: python3 -I scripts/release/check-changelog-staleness.py --self-test
+      - name: Changelog render pull request opener self-test
+        if: github.event_name == 'pull_request'
+        run: python3 -I scripts/release/open-render-pr.py --self-test
       - name: Changelog render owed at most 20 h on pull requests
         if: github.event_name == 'pull_request'
         run: python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20
@@ -753,6 +756,7 @@ jobs:
           "$PY310" -I scripts/check-ci-test-wiring.py --self-test
           "$PY310" -I scripts/check-cochange.py --self-test
           "$PY310" -I scripts/release/check-changelog-staleness.py --self-test
+          "$PY310" -I scripts/release/open-render-pr.py --self-test
           "$PY310" -I ffmpeg-patches/test/doc-recipes-smoke.py --self-test
           "$PY310" -I tools/tester/pelorus_tester_report.py --self-test
           "$PY310" -I scripts/hardware-reports/check-reports.py --self-test
