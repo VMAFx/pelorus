@@ -2632,7 +2632,7 @@ WORKFLOW_JOB_START = re.compile(r"  ([A-Za-z0-9_-]+):\s*(?:#.*)?\n?")
 
 
 def _jobs_section(lines: list[str]) -> range:
-    """Line indices inside the first top-level `jobs:` mapping (empty without one)."""
+    """Line indices inside the first top-level `jobs:` mapping; comments stay inside."""
     first = next(
         (index + 1 for index, line in enumerate(lines) if line.rstrip() == "jobs:"),
         None,
@@ -2641,7 +2641,7 @@ def _jobs_section(lines: list[str]) -> range:
         return range(0)
     for index in range(first, len(lines)):
         line = lines[index]
-        if line.strip() and not line.startswith((" ", "\t")):
+        if line.strip() and not line.startswith((" ", "\t", "#")):
             return range(first, index)
     return range(first, len(lines))
 
@@ -2677,14 +2677,15 @@ def workflow_job_blocks(text: str) -> dict[str, str]:
     """Extract top-level workflow job blocks without executing YAML."""
     lines = text.splitlines(keepends=True)
     starts: list[tuple[str, int]] = []
-    for index in _jobs_section(lines):
+    section = _jobs_section(lines)
+    for index in section:
         match = WORKFLOW_JOB_START.fullmatch(lines[index])
         if match:
             starts.append((match.group(1), index))
 
     blocks: dict[str, str] = {}
     for position, (name, start) in enumerate(starts):
-        end = starts[position + 1][1] if position + 1 < len(starts) else len(lines)
+        end = starts[position + 1][1] if position + 1 < len(starts) else section.stop
         blocks[name] = "".join(lines[start:end])
     return blocks
 
@@ -6209,6 +6210,21 @@ def _docs_pr_render_repeat_cases(
     }
 
 
+def _docs_pr_render_comment_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations proving column-0 comments do not truncate the jobs map."""
+    return {
+        "pr render docs job after column-0 comment": (
+            source
+            + "# planted comment\n  docs:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: true\n",
+            "sets job docs more than once",
+        ),
+        "pr render quoted job key after column-0 comment": (
+            source + '# planted comment\n  "docs":\n    runs-on: ubuntu-24.04\n',
+            "must be a plain",
+        ),
+    }
+
+
 def _docs_pr_render_cases(source: str) -> dict[str, tuple[str, str]]:
     """Planted mutations of the docs job PR changelog render step (ADR-0251)."""
     step_block = (
@@ -6221,6 +6237,7 @@ def _docs_pr_render_cases(source: str) -> dict[str, tuple[str, str]]:
     cases.update(_docs_pr_render_command_cases(source, step_block))
     cases.update(_docs_pr_render_wrapper_cases(source, step_block))
     cases.update(_docs_pr_render_repeat_cases(source, step_block))
+    cases.update(_docs_pr_render_comment_cases(source))
     return cases
 
 
@@ -6580,6 +6597,32 @@ def run_key_scope_regression() -> list[str]:
     return []
 
 
+def job_blocks_reader_regression() -> list[str]:
+    """Prove workflow_job_blocks scans past comments and stops at jobs section end."""
+    failures: list[str] = []
+    positive = "jobs:\n  a:\n    runs-on: x\n# c\n  b:\n    runs-on: y\nenv:\n  Z: 1\n"
+    expected_positive = {
+        "a": "  a:\n    runs-on: x\n# c\n",
+        "b": "  b:\n    runs-on: y\n",
+    }
+    got_positive = workflow_job_blocks(positive)
+    if got_positive != expected_positive:
+        failures.append(
+            f"workflow regression: job blocks reader positive got {got_positive!r}"
+        )
+    if workflow_job_blocks("env:\n  Z: 1\n") != {}:
+        failures.append("workflow regression: job blocks reader negative got non-empty")
+    if workflow_job_blocks("jobs:\n") != {}:
+        failures.append(
+            "workflow regression: job blocks reader boundary empty got non-empty"
+        )
+    if workflow_job_blocks("jobs:\n  a:\n") != {"a": "  a:\n"}:
+        failures.append(
+            "workflow regression: job blocks reader boundary bodyless got unexpected"
+        )
+    return failures
+
+
 def sei_fit_qualifying_jobs(source: str) -> list[str]:
     """Return CI job names whose check-test-skips invocation carries pelorus:sei-fit requires."""
     jobs = workflow_job_blocks(source)
@@ -6760,6 +6803,7 @@ def workflow_validator_regressions() -> list[str]:
             failures.append(f"workflow regression: {name} was accepted")
 
     failures.extend(run_key_scope_regression())
+    failures.extend(job_blocks_reader_regression())
     msvc_errors = [
         err
         for err in validate_workflow_text(relative, source)
