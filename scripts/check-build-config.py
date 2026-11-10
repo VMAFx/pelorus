@@ -145,6 +145,7 @@ ACTIONLINT_RUN = re.compile(
 CI_RELATIVE = ".github/workflows/ci.yml"
 PYTHON_FLOOR_DOC = ROOT / "docs/development/build.md"
 PYTHON_FLOOR_STEP_IDS = ("floor-py", "floor-py-scripts")
+PYTHON_FLOOR_PATTERN = r"Python\s+(\d+\.\d+)\s+or\s+newer"
 ACTIONLINT_RENOVATE_TEMPLATES = {
     "depNameTemplate": ACTIONLINT_MODULE,
     "datasourceTemplate": "go",
@@ -8004,7 +8005,7 @@ def validate_renovate_text(text: str, config_source: str, ci_source: str) -> lis
 
 def documented_python_floor(doc_text: str) -> tuple[str | None, list[str]]:
     """Read the single declared minimum without copying its version here."""
-    matches = re.findall(r"Python\s+(\d+\.\d+)\s+or\s+newer", doc_text)
+    matches = re.findall(PYTHON_FLOOR_PATTERN, doc_text)
     if len(matches) != 1:
         return None, [
             'docs/development/build.md: expected one "Python X.Y or newer" '
@@ -8097,22 +8098,35 @@ def _mutate_python_floor_step(
     return ci_source
 
 
-def _python_floor_step_cases(ci: str, doc: str) -> dict:
+def _set_floor_pin(step: str, value: str) -> str:
+    """Replace one step's python-version value, whatever its quoting."""
+    return re.sub(
+        r"(python-version:[ ]*)\S+", lambda match: match.group(1) + value, step, count=1
+    )
+
+
+def _raised_minor(floor: str) -> str:
+    """The next minor version after the declared minimum."""
+    major, minor = floor.split(".")
+    return f"{major}.{int(minor) + 1}"
+
+
+def _python_floor_step_cases(ci: str, doc: str, floor: str, raised: str) -> dict:
     """Workflow mutations and the diagnostics each must produce."""
     return {
         "p1 Meson floor bumped": (
             _mutate_python_floor_step(
-                ci, "floor-py", lambda s: s.replace("'3.10'", "'3.15'", 1)
+                ci, "floor-py", lambda s: _set_floor_pin(s, f"'{raised}'")
             ),
             doc,
-            ("step floor-py pins python-version '3.15', declared minimum is 3.10",),
+            (f"step floor-py pins python-version '{raised}', declared minimum is {floor}",),
         ),
         "p2 script floor bumped": (
             _mutate_python_floor_step(
-                ci, "floor-py-scripts", lambda s: s.replace("'3.10'", "'3.15'", 1)
+                ci, "floor-py-scripts", lambda s: _set_floor_pin(s, f"'{raised}'")
             ),
             doc,
-            ("step floor-py-scripts pins python-version '3.15'",),
+            (f"step floor-py-scripts pins python-version '{raised}'",),
         ),
         "p3 script floor id renamed": (
             ci.replace("id: floor-py-scripts", "id: floor-py-script", 1),
@@ -8125,16 +8139,14 @@ def _python_floor_step_cases(ci: str, doc: str) -> dict:
             ("expected one step with id floor-py (found 2)",),
         ),
         "p5 unquoted floor": (
-            _mutate_python_floor_step(
-                ci, "floor-py", lambda s: s.replace("'3.10'", "3.10", 1)
-            ),
+            _mutate_python_floor_step(ci, "floor-py", lambda s: _set_floor_pin(s, floor)),
             doc,
             ("must be quoted",),
         ),
         "p9 script floor name drift": (
-            ci.replace("Python 3.10 script floor", "Python 3.11 script floor", 1),
+            ci.replace(f"Python {floor} script floor", f"Python {raised} script floor", 1),
             doc,
-            ("script floor step name 'Python 3.11 script floor (declared minimum)'",),
+            (f"script floor step name 'Python {raised} script floor (declared minimum)'",),
         ),
         "wrong setup action": (
             _mutate_python_floor_step(
@@ -8148,71 +8160,98 @@ def _python_floor_step_cases(ci: str, doc: str) -> dict:
     }
 
 
-def _python_floor_doc_cases(ci: str, doc: str) -> dict:
+def _python_floor_doc_cases(ci: str, doc: str, floor: str, raised: str) -> dict:
     """Missing, ambiguous and changed documentation must fail closed."""
     return {
         "p6 minimum removed": (
             ci,
-            doc.replace("Python 3.10 or newer", "Python", 1),
+            re.sub(PYTHON_FLOOR_PATTERN, "Python", doc, count=1),
             ('expected one "Python X.Y or newer" minimum (found 0)',),
         ),
         "p7 minimum duplicated": (
             ci,
-            doc + "\nPython 3.10 or newer\n",
+            doc + f"\nPython {floor} or newer\n",
             ('expected one "Python X.Y or newer" minimum (found 2)',),
         ),
         "p8 minimum raised": (
             ci,
-            doc.replace("Python 3.10 or newer", "Python 3.11 or newer", 1),
+            re.sub(PYTHON_FLOOR_PATTERN, f"Python {raised} or newer", doc, count=1),
             (
-                "step floor-py pins python-version '3.10', declared minimum is 3.11",
-                "step floor-py-scripts pins python-version '3.10', declared minimum is 3.11",
+                "step floor-py pins python-version",
+                "step floor-py-scripts pins python-version",
+                f"declared minimum is {raised}",
             ),
         ),
     }
 
 
-def python_floor_regressions() -> list[str]:
-    """Prove real floor drift fails and both YAML string quote styles pass."""
-    ci = (ROOT / CI_RELATIVE).read_text(encoding="utf-8")
-    doc = PYTHON_FLOOR_DOC.read_text(encoding="utf-8")
+def _python_floor_passing_cases(ci: str, doc: str, floor: str) -> dict:
+    """The other YAML quote style and a wrapped minimum sentence both pass."""
+    single, double = f"python-version: '{floor}'", f'python-version: "{floor}"'
+    other_quotes = ci.replace(single, double) if single in ci else ci.replace(double, single)
+    wrapped = re.sub(PYTHON_FLOOR_PATTERN, f"Python {floor} or\nnewer", doc, count=1)
+    return {"other quote style": (other_quotes, doc), "wrapped minimum": (ci, wrapped)}
+
+
+def python_floor_regressions_text(ci: str, doc: str) -> list[str]:
+    """Prove floor drift fails, with every case built from the declared minimum."""
+    floor, doc_errors = documented_python_floor(doc)
+    if floor is None:
+        return [f"Python floor regression: real tree: {error}" for error in doc_errors]
     failures = [
         f"Python floor regression: real tree: {error}"
         for error in validate_python_floor_text(ci, doc)
     ]
-    passing = {
-        "double quotes": (
-            ci.replace("python-version: '3.10'", 'python-version: "3.10"'),
-            doc,
-        ),
-        "wrapped minimum": (
-            ci,
-            doc.replace("Python 3.10 or newer", "Python 3.10 or\nnewer", 1),
-        ),
-    }
-    for name, (mutated_ci, mutated_doc) in passing.items():
+    raised = _raised_minor(floor)
+    for name, (mutated_ci, mutated_doc) in _python_floor_passing_cases(ci, doc, floor).items():
         if (mutated_ci, mutated_doc) == (ci, doc):
-            failures.append(
-                f"Python floor regression: {name}: mutation changed nothing"
-            )
+            failures.append(f"Python floor regression: {name}: mutation changed nothing")
             continue
         failures.extend(
             f"Python floor regression: {name}: {error}"
             for error in validate_python_floor_text(mutated_ci, mutated_doc)
         )
-    cases = _python_floor_step_cases(ci, doc) | _python_floor_doc_cases(ci, doc)
+    cases = _python_floor_step_cases(ci, doc, floor, raised)
+    cases |= _python_floor_doc_cases(ci, doc, floor, raised)
     for name, (mutated_ci, mutated_doc, expected) in cases.items():
         if (mutated_ci, mutated_doc) == (ci, doc):
-            failures.append(
-                f"Python floor regression: {name}: mutation changed nothing"
-            )
+            failures.append(f"Python floor regression: {name}: mutation changed nothing")
             continue
         errors = validate_python_floor_text(mutated_ci, mutated_doc)
-        for substring in expected:
-            if not any(substring in error for error in errors):
-                failures.append(
-                    f"Python floor regression: {name} was accepted (missing {substring!r})"
-                )
+        failures.extend(
+            f"Python floor regression: {name} was accepted (missing {substring!r})"
+            for substring in expected
+            if not any(substring in error for error in errors)
+        )
+    return failures
+
+
+def _raise_python_floor(ci: str, doc: str, floor: str, raised: str) -> tuple[str, str]:
+    """A consistent one-PR raise: both pins, the step name and the documented minimum."""
+    for step_id in PYTHON_FLOOR_STEP_IDS:
+        ci = _mutate_python_floor_step(ci, step_id, lambda s: _set_floor_pin(s, f"'{raised}'"))
+    ci = ci.replace(f"Python {floor} script floor", f"Python {raised} script floor", 1)
+    return ci, re.sub(PYTHON_FLOOR_PATTERN, f"Python {raised} or newer", doc, count=1)
+
+
+def python_floor_regressions() -> list[str]:
+    """Run the floor cases on the real tree, a consistent raise and the other quote style."""
+    ci = (ROOT / CI_RELATIVE).read_text(encoding="utf-8")
+    doc = PYTHON_FLOOR_DOC.read_text(encoding="utf-8")
+    failures = python_floor_regressions_text(ci, doc)
+    floor, _ = documented_python_floor(doc)
+    if floor is None:
+        return failures
+    variants = {
+        "consistent raise": _raise_python_floor(ci, doc, floor, _raised_minor(floor)),
+        "other quote style": _python_floor_passing_cases(ci, doc, floor)["other quote style"],
+    }
+    for name, (variant_ci, variant_doc) in variants.items():
+        prefix = "Python floor regression: "
+        failures.extend(
+            failure.replace(prefix, f"{prefix}{name} tree: ", 1)
+            for failure in python_floor_regressions_text(variant_ci, variant_doc)
+        )
     return failures
 
 
