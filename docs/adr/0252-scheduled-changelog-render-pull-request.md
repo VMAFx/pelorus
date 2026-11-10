@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0252: A scheduled workflow opens the changelog render pull request as a signed bot commit
 
-- **Status**: Proposed
-- **Implementation**: pending (#591)
+- **Status**: Accepted
 - **Date**: 2026-11-10
 - **Deciders**: Lusoris
 - **Tags**: `release`, `docs`, `ci`

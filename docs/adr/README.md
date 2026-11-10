@@ -164,4 +164,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0249](0249-tool-cli-transcript-tests.md) | CLI demonstrators carry golden transcripts run by an in-repo driver | Accepted |
 | [0250](0250-devcontainer-toolchain-smoke.md) | Run the offline native gate inside the dev container image before it is pushed | Accepted |
 | [0251](0251-changelog-render-owed-on-pull-requests.md) | Pull requests fail while the default branch owes a changelog render for more than 20 h | Accepted |
-| [0252](0252-scheduled-changelog-render-pull-request.md) | A scheduled workflow opens the changelog render pull request as a signed bot commit | Proposed |
+| [0252](0252-scheduled-changelog-render-pull-request.md) | A scheduled workflow opens the changelog render pull request as a signed bot commit | Accepted |
