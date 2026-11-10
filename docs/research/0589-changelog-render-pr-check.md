@@ -43,6 +43,13 @@ Pull request CI fails in the `docs` job when the default branch owes a changelog
 | Self-test p18: base owes 21 h, non-render PR deletes owed base fragment only | exit 1; stderr contains `limit 20 h` and `land the render PR first` |
 | Self-test p19: base owes 19 h, non-render PR deletes owed base fragment only | exit 0; stdout contains `warning: render owed since`; stdout does not contain `changelog render current` |
 | Self-test p20: base renders current, non-render PR adds code only (`src/p20.c`) | exit 0; stdout contains `changelog render current` |
+| Self-test p21: release cut deleting `changelog.d/README.md` | exit 1; stderr contains `changelog.d/README.md (D)` |
+| Self-test p22: release cut deleting `changelog.d/unknown/p22.md` (dir not in SECTIONS) | exit 1; stderr contains `changelog.d/unknown/p22.md (D)` |
+| Self-test p23: release cut deleting nested fragment (`changelog.d/added/sub/p23.md`) | exit 1; stderr contains `changelog.d/added/sub/p23.md (D)` |
+| Self-test p24: release cut deleting `changelog.d/added/.gitkeep` (not `.md`) | exit 1; stderr contains `changelog.d/added/.gitkeep (D)` |
+| Self-test p25: release cut deleting `changelog.d/maintenance/p25.md` (last SECTIONS entry) | exit 0; stdout contains `changelog render current` |
+| Self-test p26: sections loader on real script and invalid shapes | exit 0; verifies real SECTIONS order and RuntimeError on missing file, no SECTIONS, multiple SECTIONS, invalid syntax, non-UTF-8 bytes |
+| Self-test p27: release cut deleting `docs/added/p27.md` (section-named directory outside `changelog.d/`) | exit 1; stderr contains `docs/added/p27.md (D)` |
 | `scripts/check-build-config.py` planted cases | 31 planted mutations refused: step removed, step renamed, step duplicated, `if:` inverted to `!=`, `if:` dropped, `continue-on-error: true` added, step shell, step working-directory, step env, job continue-on-error, job if, job defaults, job quoted `"continue-on-error"`, workflow top-level defaults, workflow top-level env, `--pull-request` dropped, `--max-age-hours 24`, `\|\| true` appended, command in echo, command in comment, exit 0 before command, exit 0 after command, heredoc wrapper, if-false wrapper, step run duplicated, job steps duplicated, top-level jobs duplicated, docs job duplicated, job quoted key, docs job after column-0 comment, quoted job key after column-0 comment |
 
 ## Sources

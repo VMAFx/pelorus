@@ -17,6 +17,7 @@ import importlib.util
 import io
 import os
 import pathlib
+import re
 import shutil
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
@@ -65,6 +66,43 @@ def _load_version_sites() -> tuple[str, ...]:
     if not isinstance(sites, tuple) or not all(isinstance(s, str) for s in sites):
         raise RuntimeError(f"cannot load VERSION_SITES: {path} has no tuple of paths")
     return sites
+
+
+def _load_changelog_sections(
+    path: pathlib.Path | None = None,
+) -> tuple[str, ...]:
+    """Load SECTIONS from concat-changelog-fragments.sh; raise RuntimeError on failure."""
+    target = (
+        path
+        if path is not None
+        else (pathlib.Path(__file__).resolve().parent / "concat-changelog-fragments.sh")
+    )
+    try:
+        content = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RuntimeError(
+            f"cannot load changelog sections from {target}: {exc}"
+        ) from exc
+    matches = re.findall(r"^SECTIONS=\(([a-z]+(?: [a-z]+)*)\)$", content, re.MULTILINE)
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"cannot load changelog sections: {target} has {len(matches)} SECTIONS lines"
+        )
+    return tuple(matches[0].split())
+
+
+def _is_fragment_path(path: str, sections: tuple[str, ...]) -> bool:
+    """Return True if path is a changelog fragment (changelog.d/<section>/<name>.md).
+
+    Matches concat-changelog-fragments.sh: SECTIONS and find -maxdepth 1 -name '*.md'.
+    """
+    parts = path.split("/")
+    return (
+        len(parts) == 3
+        and parts[0] == "changelog.d"
+        and parts[1] in sections
+        and parts[-1].endswith(".md")
+    )
 
 
 def _run_git_step(cmd: list[str], env: dict[str, str], what: str) -> None:
@@ -302,6 +340,7 @@ def _check_render_pr_scope(
     if is_release_cut:
         try:
             version_sites = _load_version_sites()
+            sections = _load_changelog_sections()
         except RuntimeError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return True, 1
@@ -314,10 +353,9 @@ def _check_render_pr_scope(
         offending = [
             (status, path)
             for status, path in diff_entries
-            if (
-                status != "D"
-                if path.startswith("changelog.d/")
-                else not (status == "M" and path in release_files)
+            if not (
+                (status == "D" and _is_fragment_path(path, sections))
+                or (status == "M" and path in release_files)
             )
         ]
         if offending:
@@ -926,6 +964,33 @@ def _setup_release_pr(
     _fixture_render(repo, env, script_dest)
 
 
+def _release_cut_deleting(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+    tag: str,
+    victim: str,
+) -> tuple[int, str, str]:
+    """Set up and run check_pull_request on a release cut deleting victim."""
+    _setup_release_pr(
+        repo,
+        env,
+        f"base-{tag}",
+        f"pr-{tag}",
+        f"{tag}.md",
+        script_dest,
+        now,
+        base_files={victim: "- Victim.\n"},
+    )
+    _fixture_git(repo, env, "rm", "-q", victim)
+    _fixture_render(repo, env, script_dest)
+    commit_in_fixture(repo, env, f"Release cut deleting {victim}", now)
+    _fixture_git(repo, env, "checkout", "-q", "-b", f"merge-{tag}", f"base-{tag}")
+    merge_in_fixture(repo, env, f"pr-{tag}", f"Merge release cut {tag}", now)
+    return _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
+
+
 def _test_pr_p7(
     repo: pathlib.Path,
     env: dict[str, str],
@@ -1352,6 +1417,164 @@ def _test_pr_p20(
     return 0
 
 
+def _test_pr_p21(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+) -> int:
+    """Test pull request case p21 (release cut deleting changelog.d/README.md)."""
+    rc21, _, err21 = _release_cut_deleting(
+        repo, env, script_dest, now, "p21", "changelog.d/README.md"
+    )
+    if rc21 != 1 or "changelog.d/README.md (D)" not in err21:
+        print(f"self-test FAIL: p21 failed: rc={rc21}, err={err21!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p21 release cut deletes changelog.d/README.md -> rc 1")
+    return 0
+
+
+def _test_pr_p22(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+) -> int:
+    """Test pull request case p22 (release cut deleting unknown section fragment)."""
+    rc22, _, err22 = _release_cut_deleting(
+        repo, env, script_dest, now, "p22", "changelog.d/unknown/p22.md"
+    )
+    if rc22 != 1 or "changelog.d/unknown/p22.md (D)" not in err22:
+        print(f"self-test FAIL: p22 failed: rc={rc22}, err={err22!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p22 release cut deletes unknown section fragment -> rc 1")
+    return 0
+
+
+def _test_pr_p23(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+) -> int:
+    """Test pull request case p23 (release cut deleting nested fragment)."""
+    rc23, _, err23 = _release_cut_deleting(
+        repo, env, script_dest, now, "p23", "changelog.d/added/sub/p23.md"
+    )
+    if rc23 != 1 or "changelog.d/added/sub/p23.md (D)" not in err23:
+        print(f"self-test FAIL: p23 failed: rc={rc23}, err={err23!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p23 release cut deletes nested fragment -> rc 1")
+    return 0
+
+
+def _test_pr_p24(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+) -> int:
+    """Test pull request case p24 (release cut deleting non-markdown file)."""
+    rc24, _, err24 = _release_cut_deleting(
+        repo, env, script_dest, now, "p24", "changelog.d/added/.gitkeep"
+    )
+    if rc24 != 1 or "changelog.d/added/.gitkeep (D)" not in err24:
+        print(f"self-test FAIL: p24 failed: rc={rc24}, err={err24!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p24 release cut deletes non-markdown file -> rc 1")
+    return 0
+
+
+def _test_pr_p25(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+) -> int:
+    """Test pull request case p25 (release cut deleting maintenance fragment)."""
+    rc25, out25, _ = _release_cut_deleting(
+        repo, env, script_dest, now, "p25", "changelog.d/maintenance/p25.md"
+    )
+    if rc25 != 0 or "changelog render current" not in out25:
+        print(f"self-test FAIL: p25 failed: rc={rc25}, out={out25!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p25 release cut deletes maintenance fragment -> rc 0")
+    return 0
+
+
+def _sections_loader_refuses(path: pathlib.Path) -> bool:
+    """Return True when the sections loader fails closed (RuntimeError) on path."""
+    try:
+        _load_changelog_sections(path)
+    except RuntimeError:
+        return True
+    except UnicodeDecodeError:
+        return False
+    return False
+
+
+def _test_pr_p26() -> int:
+    """Test pull request case p26 (sections loader on real script and invalid files)."""
+    try:
+        real_sections = _load_changelog_sections()
+    except RuntimeError as exc:
+        print(f"self-test FAIL: p26 real script: {exc}", file=sys.stderr)
+        return 1
+    expected = (
+        "added",
+        "changed",
+        "deprecated",
+        "removed",
+        "fixed",
+        "security",
+        "maintenance",
+    )
+    if real_sections != expected:
+        print(
+            f"self-test FAIL: p26 real sections mismatch: {real_sections!r} != {expected!r}",
+            file=sys.stderr,
+        )
+        return 1
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = pathlib.Path(tmpdir)
+        bad_cases = [
+            ("no_sections", b"#!/bin/bash\necho hi\n"),
+            ("two_sections", b"SECTIONS=(added)\nSECTIONS=(fixed)\n"),
+            ("invalid_syntax", b"SECTIONS=(added $(x))\n"),
+            ("not_utf8", b"SECTIONS=(added)\n\xff\n"),
+        ]
+        for name, content in bad_cases:
+            (tmp / f"{name}.sh").write_bytes(content)
+        for name in [name for name, _ in bad_cases] + ["missing"]:
+            if not _sections_loader_refuses(tmp / f"{name}.sh"):
+                print(
+                    f"self-test FAIL: p26 {name} did not fail closed", file=sys.stderr
+                )
+                return 1
+
+    print("self-test ok: p26 changelog sections loader -> ok")
+    return 0
+
+
+def _test_pr_p27(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+) -> int:
+    """Test pull request case p27 (release cut deleting section-named path outside changelog.d/)."""
+    rc27, _, err27 = _release_cut_deleting(
+        repo, env, script_dest, now, "p27", "docs/added/p27.md"
+    )
+    if rc27 != 1 or "docs/added/p27.md (D)" not in err27:
+        print(f"self-test FAIL: p27 failed: rc={rc27}, err={err27!r}", file=sys.stderr)
+        return 1
+    print(
+        "self-test ok: p27 release cut deletes section-named path outside changelog.d -> rc 1"
+    )
+    return 0
+
+
 def _run_pr_self_tests(
     repo: pathlib.Path,
     env: dict[str, str],
@@ -1359,47 +1582,39 @@ def _run_pr_self_tests(
     now: int,
     repo_root: pathlib.Path,
 ) -> int:
-    """Run pull request self-test cases p1 through p20."""
-    if _test_pr_p1(repo, env, now) != 0:
-        return 1
-    if _test_pr_p2(repo, env, now) != 0:
-        return 1
-    if _test_pr_p3(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p4(repo, env, now) != 0:
-        return 1
-    if _test_pr_p5(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p6(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p7(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p8(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p9(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p10(repo, env) != 0:
-        return 1
-    if _test_pr_p11() != 0:
-        return 1
-    if _test_pr_p12(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p13(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p14(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p15(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p16(repo, env, script_dest, now) != 0:
-        return 1
-    if _test_pr_p17(repo_root) != 0:
-        return 1
-    if _test_pr_p18(repo, env, now) != 0:
-        return 1
-    if _test_pr_p19(repo, env, now) != 0:
-        return 1
-    if _test_pr_p20(repo, env, now) != 0:
-        return 1
+    """Run pull request self-test cases p1 through p27."""
+    cases: list[Callable[[], int]] = [
+        lambda: _test_pr_p1(repo, env, now),
+        lambda: _test_pr_p2(repo, env, now),
+        lambda: _test_pr_p3(repo, env, script_dest, now),
+        lambda: _test_pr_p4(repo, env, now),
+        lambda: _test_pr_p5(repo, env, script_dest, now),
+        lambda: _test_pr_p6(repo, env, script_dest, now),
+        lambda: _test_pr_p7(repo, env, script_dest, now),
+        lambda: _test_pr_p8(repo, env, script_dest, now),
+        lambda: _test_pr_p9(repo, env, script_dest, now),
+        lambda: _test_pr_p10(repo, env),
+        _test_pr_p11,
+        lambda: _test_pr_p12(repo, env, script_dest, now),
+        lambda: _test_pr_p13(repo, env, script_dest, now),
+        lambda: _test_pr_p14(repo, env, script_dest, now),
+        lambda: _test_pr_p15(repo, env, script_dest, now),
+        lambda: _test_pr_p16(repo, env, script_dest, now),
+        lambda: _test_pr_p17(repo_root),
+        lambda: _test_pr_p18(repo, env, now),
+        lambda: _test_pr_p19(repo, env, now),
+        lambda: _test_pr_p20(repo, env, now),
+        lambda: _test_pr_p21(repo, env, script_dest, now),
+        lambda: _test_pr_p22(repo, env, script_dest, now),
+        lambda: _test_pr_p23(repo, env, script_dest, now),
+        lambda: _test_pr_p24(repo, env, script_dest, now),
+        lambda: _test_pr_p25(repo, env, script_dest, now),
+        _test_pr_p26,
+        lambda: _test_pr_p27(repo, env, script_dest, now),
+    ]
+    for case in cases:
+        if case() != 0:
+            return 1
     return 0
 
 
