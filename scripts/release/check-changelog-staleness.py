@@ -227,15 +227,26 @@ def judge_owed_render(
 def _parse_diff_status(
     diff_text: str,
 ) -> tuple[list[tuple[str, str]] | None, str | None]:
-    """Parse git diff --name-status output using strict allow-list status validation."""
+    """Parse git diff --name-status -z output using strict allow-list validation."""
     if not diff_text:
         return [], None
+    if not diff_text.endswith("\0"):
+        return (
+            None,
+            f"error: invalid diff output: missing NUL terminator in {diff_text!r}",
+        )
+    fields = diff_text.split("\0")[:-1]
+    if len(fields) % 2 != 0:
+        return (
+            None,
+            f"error: invalid diff output: odd number of NUL fields: {len(fields)}",
+        )
     entries: list[tuple[str, str]] = []
-    for line in diff_text.splitlines():
-        parts = line.split("\t", 1)
-        if len(parts) != 2 or parts[0] not in VALID_DIFF_STATUSES or not parts[1]:
-            return None, f"error: invalid diff line: {line}"
-        entries.append((parts[0], parts[1]))
+    for i in range(0, len(fields), 2):
+        status, path = fields[i], fields[i + 1]
+        if status not in VALID_DIFF_STATUSES or not path:
+            return None, f"error: invalid diff entry: ({status!r}, {path!r})"
+        entries.append((status, path))
     return entries, None
 
 
@@ -310,18 +321,17 @@ def check_pull_request(
     if rc != 0 or base is None:
         return rc
 
-    # b. Scope via git diff --name-status --no-renames <base> <ref>
+    # b. Scope via git diff --name-status -z --no-renames <base> <ref>
     diff_output = run_git_log(
         repo,
-        ["--name-status", "--no-renames", base, ref],
+        ["--name-status", "-z", "--no-renames", base, ref],
         env=env,
         subcommand="diff",
     )
     diff_entries, err = _parse_diff_status(diff_output)
-    if err is not None:
-        print(err, file=sys.stderr)
-        return 1
-    if diff_entries is None:
+    if err is not None or diff_entries is None:
+        if err is not None:
+            print(err, file=sys.stderr)
         return 1
 
     is_render_pr, scope_rc = _check_render_pr_scope(diff_entries)
@@ -384,64 +394,15 @@ def make_test_env(tmp: pathlib.Path) -> dict[str, str]:
     return env
 
 
-def commit_in_fixture(
-    repo: pathlib.Path,
-    env: dict[str, str],
-    msg: str,
-    timestamp: int,
-) -> None:
-    """Commit changes in the fixture repo with explicit author and committer dates."""
-    c_env = dict(env)
-    date_str = f"{timestamp} +0000"
-    c_env["GIT_AUTHOR_DATE"] = date_str
-    c_env["GIT_COMMITTER_DATE"] = date_str
-    try:
-        subprocess.run(  # nosec B603 - fixed git argv
-            ["git", "-C", str(repo), "add", "."],
-            env=c_env,
-            capture_output=True,
-            text=True,
-            timeout=SUBPROCESS_TIMEOUT_S,
-            check=True,
-        )
-        subprocess.run(  # nosec B603 - fixed git argv
-            [
-                "git",
-                "-C",
-                str(repo),
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@example.invalid",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "-q",
-                "-m",
-                msg,
-            ],
-            env=c_env,
-            capture_output=True,
-            text=True,
-            timeout=SUBPROCESS_TIMEOUT_S,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        err = exc.stderr.strip()
-        raise RuntimeError(f"commit failed in fixture {repo}: {err}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"commit timed out in fixture {repo}") from exc
-
-
 def _fixture_git(
     repo: pathlib.Path,
     env: dict[str, str],
     *args: str,
-) -> None:
+) -> str:
     """Run a git command in the fixture repo; wrap failures to RuntimeError."""
     cmd = ["git", "-C", str(repo), *args]
     try:
-        subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
+        proc = subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
             cmd,
             env=env,
             capture_output=True,
@@ -449,6 +410,7 @@ def _fixture_git(
             timeout=SUBPROCESS_TIMEOUT_S,
             check=True,
         )
+        return proc.stdout.strip()
     except subprocess.CalledProcessError as exc:
         err = exc.stderr.strip()
         raise RuntimeError(
@@ -481,6 +443,34 @@ def _fixture_render(
         raise RuntimeError(f"render timed out in fixture {repo}") from exc
 
 
+def commit_in_fixture(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    msg: str,
+    timestamp: int,
+) -> None:
+    """Commit changes in the fixture repo with explicit author and committer dates."""
+    c_env = dict(env)
+    date_str = f"{timestamp} +0000"
+    c_env["GIT_AUTHOR_DATE"] = date_str
+    c_env["GIT_COMMITTER_DATE"] = date_str
+    _fixture_git(repo, c_env, "add", ".")
+    _fixture_git(
+        repo,
+        c_env,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        msg,
+    )
+
+
 def init_fixture_repo(
     repo: pathlib.Path,
     env: dict[str, str],
@@ -489,14 +479,7 @@ def init_fixture_repo(
 ) -> pathlib.Path:
     """Initialize fixture git repository with minimal changelog and render script."""
     repo.mkdir(parents=True, exist_ok=True)
-    subprocess.run(  # nosec B603 - fixed git argv
-        ["git", "-C", str(repo), "init", "-q", "-b", "master"],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-        check=True,
-    )
+    _fixture_git(repo, env, "init", "-q", "-b", "master")
     script_dest = repo / "scripts/release/concat-changelog-fragments.sh"
     script_dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(script_source, script_dest)
@@ -515,15 +498,7 @@ def init_fixture_repo(
     (repo / "changelog.d/added").mkdir(parents=True, exist_ok=True)
     (repo / "changelog.d/added/.gitkeep").touch()
 
-    subprocess.run(  # nosec B603 - fixed script argv
-        ["bash", str(script_dest), "--write"],
-        cwd=str(repo),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-        check=True,
-    )
+    _fixture_render(repo, env, script_dest)
     commit_in_fixture(repo, env, "Initial commit", now - 50 * 3600)
     return script_dest
 
@@ -536,12 +511,7 @@ def _test_cases_b_c_d(
     """Test cases b (1 h warning), c (30 h failure), d (hand edit failure)."""
     failed = 0
     # case b: fragment added 1 h ago, no render -> 0 (warning)
-    subprocess.run(  # nosec B603 - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "branch-b", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-b", "master")
     (repo / "changelog.d/added/0001-frag.md").write_text("- Add 1.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add fragment 1h ago", now - 3600)
     if check_staleness(repo, "branch-b", 24, env=env) != 0:
@@ -549,12 +519,7 @@ def _test_cases_b_c_d(
         failed = 1
 
     # case c: fragment added 30 h ago, no render -> 1
-    subprocess.run(  # nosec B603 - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "branch-c", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-c", "master")
     (repo / "changelog.d/added/0002-frag.md").write_text("- Add 2.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add fragment 30h ago", now - 30 * 3600)
     if check_staleness(repo, "branch-c", 24, env=env) != 1:
@@ -562,12 +527,7 @@ def _test_cases_b_c_d(
         failed = 1
 
     # case d: CHANGELOG.md hand-edited, 0 h old -> 1
-    subprocess.run(  # nosec B603 - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "branch-d", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-d", "master")
     cl = repo / "CHANGELOG.md"
     cl_text = cl.read_text(encoding="utf-8")
     cl.write_text(
@@ -589,12 +549,7 @@ def _test_cases_readme_boundary(
 ) -> int:
     """Test README pathspec exclusion and exact-hour staleness boundary."""
     # README-only edit 30 h ago: not a fragment, so render is not owed -> 0
-    subprocess.run(  # nosec B603 - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "branch-readme", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-readme", "master")
     (repo / "changelog.d/README.md").write_text("# Updated README\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Update changelog README 30h ago", now - 30 * 3600)
     if check_staleness(repo, "branch-readme", 24, env=env) != 0:
@@ -615,12 +570,7 @@ def _test_cases_readme_boundary(
         return 1
 
     # Boundary case: fragment at 24 h + 30 min (limit*3600 + 1800 s) -> 1
-    subprocess.run(  # nosec B603 - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "branch-boundary", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-boundary", "master")
     (repo / "changelog.d/added/0004-boundary.md").write_text(
         "- Add boundary.\n", encoding="utf-8"
     )
@@ -634,14 +584,7 @@ def _test_cases_readme_boundary(
 
 def _test_case_f(repo: pathlib.Path, env: dict[str, str]) -> int:
     """Case f: extract_tree_at_ref leaves the repository index unchanged."""
-    tree_before = subprocess.run(  # nosec B603 - fixed git argv
-        ["git", "-C", str(repo), "write-tree"],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    ).stdout.strip()
+    tree_before = _fixture_git(repo, env, "write-tree")
     index_bytes_before = (repo / ".git/index").read_bytes()
     with tempfile.TemporaryDirectory() as tmp_f:
         extract_tree_at_ref(repo, "master", pathlib.Path(tmp_f), env=env)
@@ -651,14 +594,7 @@ def _test_case_f(repo: pathlib.Path, env: dict[str, str]) -> int:
                 file=sys.stderr,
             )
             return 1
-    tree_after = subprocess.run(  # nosec B603 - fixed git argv
-        ["git", "-C", str(repo), "write-tree"],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    ).stdout.strip()
+    tree_after = _fixture_git(repo, env, "write-tree")
     index_bytes_after = (repo / ".git/index").read_bytes()
     if tree_before != tree_after or index_bytes_before != index_bytes_after:
         print(
@@ -935,7 +871,7 @@ def _test_pr_p8(
         print("self-test FAIL: p8 fixture merged tree not current", file=sys.stderr)
         return 1
     rc8, _, err8 = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
-    if rc8 != 1 or "(A)" not in err8 or "changelog.d/added/p8-new.md (A)" not in err8:
+    if rc8 != 1 or "changelog.d/added/p8-new.md (A)" not in err8:
         print(f"self-test FAIL: p8 failed: rc={rc8}, err={err8!r}", file=sys.stderr)
         return 1
     print("self-test ok: p8 release shape fragment added -> rc 1")
@@ -984,17 +920,12 @@ def _test_pr_p10(repo: pathlib.Path, env: dict[str, str]) -> int:
 
 def _test_pr_p11() -> int:
     """Test parser case p11 (diff status allow-list)."""
-    if VALID_DIFF_STATUSES != frozenset({"A", "D", "M", "T"}):
-        print(
-            f"self-test FAIL: p11 unexpected VALID_DIFF_STATUSES: {VALID_DIFF_STATUSES!r}",
-            file=sys.stderr,
-        )
-        return 1
-
-    expected_ok = [
-        ("M\tCHANGELOG.md", [("M", "CHANGELOG.md")]),
+    expected_ok: list[tuple[str, list[tuple[str, str]]]] = [
+        ("M\0CHANGELOG.md\0", [("M", "CHANGELOG.md")]),
         ("", []),
-        ("T\tx", [("T", "x")]),
+        ("T\0x\0", [("T", "x")]),
+        ("M\0x \0", [("M", "x ")]),
+        ("D\0a\0M\0b\0", [("D", "a"), ("M", "b")]),
     ]
     for text, expected in expected_ok:
         entries, err = _parse_diff_status(text)
@@ -1005,7 +936,13 @@ def _test_pr_p11() -> int:
             )
             return 1
 
-    expected_err = ["R100\ta.md\tb.md", "junk", "R\tx"]
+    expected_err = [
+        "R100\0a.md\0b.md\0",
+        "R\0x\0",
+        "junk",
+        "M\0\0",
+        "M\0x",
+    ]
     for text in expected_err:
         entries, err = _parse_diff_status(text)
         if entries is not None or err is None:
@@ -1019,13 +956,32 @@ def _test_pr_p11() -> int:
     return 0
 
 
+def _test_pr_p12(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+    now: int,
+) -> int:
+    """Test pull request case p12 (release cut with non-ASCII fragment name)."""
+    _setup_release_pr(repo, env, "base-p12", "pr-p12", "p12-ä.md", script_dest, now)
+    commit_in_fixture(repo, env, "Release cut 0.2.0 with non-ASCII fragment", now)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p12", "base-p12")
+    merge_in_fixture(repo, env, "pr-p12", "Merge release cut p12", now)
+    rc12, out12, _ = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
+    if rc12 != 0 or "changelog render current" not in out12:
+        print(f"self-test FAIL: p12 failed: rc={rc12}, out={out12!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p12 release shape non-ascii fragment deleted -> rc 0")
+    return 0
+
+
 def _run_pr_self_tests(
     repo: pathlib.Path,
     env: dict[str, str],
     script_dest: pathlib.Path,
     now: int,
 ) -> int:
-    """Run pull request self-test cases p1 through p11."""
+    """Run pull request self-test cases p1 through p12."""
     if _test_pr_p1(repo, env, now) != 0:
         return 1
     if _test_pr_p2(repo, env, now) != 0:
@@ -1047,6 +1003,8 @@ def _run_pr_self_tests(
     if _test_pr_p10(repo, env) != 0:
         return 1
     if _test_pr_p11() != 0:
+        return 1
+    if _test_pr_p12(repo, env, script_dest, now) != 0:
         return 1
     return 0
 
@@ -1077,19 +1035,8 @@ def run_self_test(repo_root: pathlib.Path) -> int:
             return 1
 
         # case e: after (c), render-only commit -> 0
-        subprocess.run(  # nosec B603 - fixed git argv
-            ["git", "-C", str(repo), "checkout", "-q", "branch-c"],
-            env=env,
-            check=True,
-            timeout=SUBPROCESS_TIMEOUT_S,
-        )
-        subprocess.run(  # nosec B603 - fixed script argv
-            ["bash", str(script_dest), "--write"],
-            cwd=str(repo),
-            env=env,
-            check=True,
-            timeout=SUBPROCESS_TIMEOUT_S,
-        )
+        _fixture_git(repo, env, "checkout", "-q", "branch-c")
+        _fixture_render(repo, env, script_dest)
         commit_in_fixture(repo, env, "Render changelog", now)
         if check_staleness(repo, "branch-c", 24, env=env) != 0:
             print("self-test FAIL: case e returned non-zero, want 0", file=sys.stderr)

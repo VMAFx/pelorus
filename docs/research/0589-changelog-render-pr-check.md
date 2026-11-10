@@ -33,7 +33,8 @@ Pull request CI fails in the `docs` job when the default branch owes a changelog
 | Self-test p8: release cut + added fragment (merged tree renders current) | exit 1; stderr names `changelog.d/added/p8-new.md (A)` |
 | Self-test p9: render PR whose merge tree is stale | exit 1; stderr contains `merge the default branch and run concat-changelog-fragments.sh --write again` |
 | Self-test p10: ref with 1 parent (base tip itself) | exit 1; stderr contains `is not a merge commit with two parents` |
-| Self-test p11: diff status allow-list strict parser | exit 0; pure-function validation of A, D, M, T allow-list and rejection of R100, junk |
+| Self-test p11: diff status NUL-field allow-list strict parser | exit 0; pure-function validation of A, D, M, T allow-list and rejection of R100, junk, missing NUL |
+| Self-test p12: release cut with non-ASCII fragment (`p12-ä.md`) | exit 0; `-z` byte shape avoids octal escaping of unusual characters |
 | `scripts/check-build-config.py` planted cases | 11 planted mutations refused: step removed, step renamed, step duplicated, `if:` inverted to `!=`, `if:` dropped, `continue-on-error: true` added, `--pull-request` dropped, `--max-age-hours 24`, `\|\| true` appended, command in echo, command in comment |
 
 ## Sources

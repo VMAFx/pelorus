@@ -39,7 +39,7 @@
     "scripts/release/check-changelog-staleness.py": {
       "b404": 0,
       "b603": 0,
-      "semgrep": 16
+      "semgrep": 3
     },
     "scripts/release/release_notes.py": {
       "b404": 1,

@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0251: Pull requests fail while the default branch owes a changelog render for more than 20 h
 
-- **Status**: Proposed
-- **Implementation**: pending (#589)
+- **Status**: Accepted
 - **Date**: 2026-11-10
 - **Deciders**: Lusoris
 - **Tags**: `release`, `docs`, `ci`
