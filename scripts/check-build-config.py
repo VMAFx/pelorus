@@ -2628,22 +2628,57 @@ def validate_qsv_replay_text(replay: str) -> list[str]:
     return errors
 
 
+WORKFLOW_JOB_START = re.compile(r"  ([A-Za-z0-9_-]+):\s*(?:#.*)?\n?")
+
+
+def _jobs_section(lines: list[str]) -> range:
+    """Line indices inside the first top-level `jobs:` mapping (empty without one)."""
+    first = next(
+        (index + 1 for index, line in enumerate(lines) if line.rstrip() == "jobs:"),
+        None,
+    )
+    if first is None:
+        return range(0)
+    for index in range(first, len(lines)):
+        line = lines[index]
+        if line.strip() and not line.startswith((" ", "\t")):
+            return range(first, index)
+    return range(first, len(lines))
+
+
+def _validate_job_names(relative: str, text: str) -> list[str]:
+    """ADR-0251: every job key is a plain `  <name>:` line set once.
+
+    workflow_job_blocks starts a block only at such a line and keeps the last
+    block per name, so a quoted, flow-style or repeated job key would hide a
+    job from every check that reads the blocks.
+    """
+    lines = text.splitlines(keepends=True)
+    errors: list[str] = []
+    names: list[str] = []
+    for index in _jobs_section(lines):
+        line = lines[index]
+        body = line[2:]
+        if line[:2] != "  " or not body.strip() or body[0] in " #":
+            continue
+        match = WORKFLOW_JOB_START.fullmatch(line)
+        if match is None:
+            errors.append(
+                f"{relative}:{index + 1}: job key line must be a plain `  <name>:` key"
+            )
+        else:
+            names.append(match.group(1))
+    for repeated in _repeated_keys(names):
+        errors.append(f"{relative}: workflow sets job {repeated} more than once")
+    return errors
+
+
 def workflow_job_blocks(text: str) -> dict[str, str]:
     """Extract top-level workflow job blocks without executing YAML."""
     lines = text.splitlines(keepends=True)
-    try:
-        jobs_line = next(
-            index for index, line in enumerate(lines) if line.rstrip() == "jobs:"
-        )
-    except StopIteration:
-        return {}
-
     starts: list[tuple[str, int]] = []
-    for index in range(jobs_line + 1, len(lines)):
-        line = lines[index]
-        if line.strip() and not line.startswith((" ", "\t")):
-            break
-        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):\s*(?:#.*)?\n?", line)
+    for index in _jobs_section(lines):
+        match = WORKFLOW_JOB_START.fullmatch(lines[index])
         if match:
             starts.append((match.group(1), index))
 
@@ -3693,10 +3728,10 @@ def _validate_docs_pr_render_step(relative: str, docs: str) -> list[str]:
         ]
     step = matching[0]
     commands = _step_commands(step)
-    if DOCS_PR_RENDER_COMMAND not in commands:
+    if commands != [DOCS_PR_RENDER_COMMAND]:
         errors.append(
             f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} must run "
-            f"{DOCS_PR_RENDER_COMMAND!r} as a line of its own run: block"
+            f"{DOCS_PR_RENDER_COMMAND!r} as the only command of its run: key"
         )
     keys = [key.split(" #", 1)[0].strip() for key in _step_keys(step)]
     if DOCS_PR_RENDER_IF not in keys:
@@ -3704,12 +3739,16 @@ def _validate_docs_pr_render_step(relative: str, docs: str) -> list[str]:
             f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} must set "
             f"{DOCS_PR_RENDER_IF!r}"
         )
-    for raw_key in _step_keys(step):
-        k = raw_key.split(":", 1)[0].strip()
+    step_keys = [raw_key.split(":", 1)[0].strip() for raw_key in _step_keys(step)]
+    for k in step_keys:
         if k not in DOCS_PR_RENDER_ALLOWED_STEP_KEYS:
             msg = f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} must not set {k}"
             if msg not in errors:
                 errors.append(msg)
+    for repeated in _repeated_keys(step_keys):
+        errors.append(
+            f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} sets {repeated} more than once"
+        )
     errors.extend(
         _dev_image_step_conditions(
             relative, "docs", DOCS_PR_RENDER_STEP, step, allowed_if=DOCS_PR_RENDER_IF
@@ -3733,22 +3772,43 @@ def _mapping_keys(text: str, indent: int) -> list[str]:
     return keys
 
 
+def _repeated_keys(keys: Iterable[str]) -> list[str]:
+    """Keys in an iterable appearing more than once, in order of first repeat."""
+    seen: set[str] = set()
+    repeated: list[str] = []
+    for key in keys:
+        if key in seen:
+            if key not in repeated:
+                repeated.append(key)
+        else:
+            seen.add(key)
+    return repeated
+
+
 def _validate_docs_job_keys(relative: str, docs: str) -> list[str]:
     """ADR-0251: the docs job sets only its allow-listed keys (no execution overrides)."""
-    return [
+    keys = _mapping_keys("\n".join(docs.splitlines()[1:]), 4)
+    errors = [
         f"{relative}: docs job must not set {key}"
-        for key in _mapping_keys("\n".join(docs.splitlines()[1:]), 4)
+        for key in keys
         if key not in DOCS_JOB_ALLOWED_KEYS
     ]
+    for repeated in _repeated_keys(keys):
+        errors.append(f"{relative}: docs job sets {repeated} more than once")
+    return errors
 
 
 def _validate_ci_top_keys(relative: str, text: str) -> list[str]:
     """ADR-0251: ci.yml sets only its allow-listed top-level keys."""
-    return [
+    keys = _mapping_keys(text, 0)
+    errors = [
         f"{relative}: ci.yml must not set top-level {key}"
-        for key in _mapping_keys(text, 0)
+        for key in keys
         if key not in CI_WORKFLOW_ALLOWED_TOP_KEYS
     ]
+    for repeated in _repeated_keys(keys):
+        errors.append(f"{relative}: ci.yml sets top-level {repeated} more than once")
+    return errors
 
 
 def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
@@ -3827,7 +3887,8 @@ def validate_workflow_text(
     if not jobs:
         return [f"{relative}: no jobs found"]
     return (
-        _validate_workflow_structure_and_jobs(relative, text, jobs)
+        _validate_job_names(relative, text)
+        + _validate_workflow_structure_and_jobs(relative, text, jobs)
         + _validate_workflow_native_packages(relative, jobs)
         + _validate_workflow_specialized_jobs(relative, text, jobs, meson_text=meson_text)
     )
@@ -6062,41 +6123,88 @@ def _docs_pr_render_command_cases(
     source: str, step_block: str
 ) -> dict[str, tuple[str, str]]:
     """Command-line mutations of the PR render step."""
+
+    def mutate(old: str, new: str) -> str:
+        return source.replace(step_block, step_block.replace(old, new))
+
+    cmd = (
+        "run: python3 -I scripts/release/check-changelog-staleness.py "
+        "--pull-request --max-age-hours 20"
+    )
     return {
         "pr render step pull-request flag dropped": (
-            source.replace(step_block, step_block.replace(" --pull-request", "")),
+            mutate(" --pull-request", ""),
             "must run",
         ),
         "pr render step max-age-hours 24": (
-            source.replace(
-                step_block,
-                step_block.replace("--max-age-hours 20", "--max-age-hours 24"),
-            ),
+            mutate("--max-age-hours 20", "--max-age-hours 24"),
             "must run",
         ),
         "pr render step or-true appended": (
-            source.replace(
-                step_block,
-                step_block.replace("--max-age-hours 20", "--max-age-hours 20 || true"),
-            ),
+            mutate("--max-age-hours 20", "--max-age-hours 20 || true"),
             "must run",
         ),
         "pr render step command moved to echo": (
-            source.replace(
-                step_block,
-                step_block.replace("run: python3 -I", "run: echo python3 -I"),
-            ),
+            mutate("run: python3 -I", "run: echo python3 -I"),
             "must run",
         ),
         "pr render step command replaced by comment and true": (
-            source.replace(
-                step_block,
-                step_block.replace(
-                    "run: python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20",
-                    "run: |\n          # python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20\n          true",
-                ),
+            mutate(
+                cmd,
+                "run: |\n          # python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20\n          true",
             ),
             "must run",
+        ),
+    }
+
+
+def _docs_pr_render_wrapper_cases(
+    source: str, step_block: str
+) -> dict[str, tuple[str, str]]:
+    """Block run: mutations that keep the command as a line but stop it running."""
+    wrappers = {
+        "pr render step exit 0 before command": (["exit 0"], []),
+        "pr render step exit 0 after command": ([], ["exit 0"]),
+        "pr render step heredoc wrapper": (["cat <<'EOF'"], ["EOF"]),
+        "pr render step if false wrapper": (["if false; then"], ["fi"]),
+    }
+    run_line = f"run: {DOCS_PR_RENDER_COMMAND}"
+    cases: dict[str, tuple[str, str]] = {}
+    for name, (before, after) in wrappers.items():
+        body = "\n          ".join([*before, DOCS_PR_RENDER_COMMAND, *after])
+        block = step_block.replace(run_line, "run: |\n          " + body)
+        cases[name] = (source.replace(step_block, block), "must run")
+    return cases
+
+
+def _docs_pr_render_repeat_cases(
+    source: str, step_block: str
+) -> dict[str, tuple[str, str]]:
+    """Duplicate key mutations in the step, docs job, jobs map and ci.yml top level."""
+    docs = workflow_job_blocks(source)["docs"]
+    return {
+        "pr render docs job duplicated": (
+            source.replace(docs, docs.replace(step_block, "") + docs),
+            "sets job docs more than once",
+        ),
+        "pr render job quoted key": (
+            source.replace("  semgrep:\n", '  "docs":\n  semgrep:\n'),
+            "must be a plain `  <name>:` key",
+        ),
+        "pr render step run duplicated": (
+            source.replace(step_block, step_block + "        run: true\n"),
+            "sets run more than once",
+        ),
+        "pr render job steps duplicated": (
+            source.replace(
+                "  semgrep:\n",
+                "    steps:\n      - run: true\n  semgrep:\n",
+            ),
+            "docs job sets steps more than once",
+        ),
+        "pr render workflow top-level jobs duplicated": (
+            source + "\njobs:\n",
+            "sets top-level jobs more than once",
         ),
     }
 
@@ -6111,6 +6219,8 @@ def _docs_pr_render_cases(source: str) -> dict[str, tuple[str, str]]:
     cases = _docs_pr_render_structural_cases(source, step_block)
     cases.update(_docs_pr_render_override_cases(source, step_block))
     cases.update(_docs_pr_render_command_cases(source, step_block))
+    cases.update(_docs_pr_render_wrapper_cases(source, step_block))
+    cases.update(_docs_pr_render_repeat_cases(source, step_block))
     return cases
 
 

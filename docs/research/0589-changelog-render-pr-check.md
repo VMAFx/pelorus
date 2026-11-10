@@ -9,7 +9,7 @@
 
 ## Verdict
 
-Pull request CI fails in the `docs` job when the default branch owes a changelog render for more than 20 h judged on the merge commit's first parent, surfacing debt 4 h before `master` turns red at 24 h and directing authors to land the render PR first. Render pull requests are restricted to `CHANGELOG.md` only (or release files and optional fragment deletions at a release cut), preventing accidental fragment or code edits. `scripts/check-build-config.py` enforces step presence, command syntax, execution condition, and key allow-lists on the step, the `docs` job and the `ci.yml` top level, rejecting 20 planted mutations.
+Pull request CI fails in the `docs` job when the default branch owes a changelog render for more than 20 h judged on the merge commit's first parent, surfacing debt 4 h before `master` turns red at 24 h and directing authors to land the render PR first. Render pull requests are restricted to `CHANGELOG.md` only (or release files and optional fragment deletions at a release cut), preventing accidental fragment or code edits. `scripts/check-build-config.py` enforces step presence, command syntax, execution condition, and key allow-lists on the step, the `docs` job and the `ci.yml` top level, plain job keys set once in every workflow, rejecting 29 planted mutations.
 
 ## Measurements
 
@@ -40,7 +40,7 @@ Pull request CI fails in the `docs` job when the default branch owes a changelog
 | Self-test p15: release cut with no fragment deletions (v0.4.0 final shape) | exit 0; stdout contains `changelog render current` |
 | Self-test p16: release cut deleting release file (`AGENTS.md`) | exit 1; stderr names `AGENTS.md (D)` |
 | Self-test p17: release file allow-list matches real repository files and compile-context projections | exit 0; verifies `VERSION_SITES`, `CONTEXT_PROJECTIONS`, and `RELEASE_DOCS` |
-| `scripts/check-build-config.py` planted cases | 20 planted mutations refused: step removed, step renamed, step duplicated, `if:` inverted to `!=`, `if:` dropped, `continue-on-error: true` added, step shell, step working-directory, step env, job continue-on-error, job if, job defaults, job quoted `"continue-on-error"`, workflow top-level defaults, workflow top-level env, `--pull-request` dropped, `--max-age-hours 24`, `\|\| true` appended, command in echo, command in comment |
+| `scripts/check-build-config.py` planted cases | 29 planted mutations refused: step removed, step renamed, step duplicated, `if:` inverted to `!=`, `if:` dropped, `continue-on-error: true` added, step shell, step working-directory, step env, job continue-on-error, job if, job defaults, job quoted `"continue-on-error"`, workflow top-level defaults, workflow top-level env, `--pull-request` dropped, `--max-age-hours 24`, `\|\| true` appended, command in echo, command in comment, exit 0 before command, exit 0 after command, heredoc wrapper, if-false wrapper, step run duplicated, job steps duplicated, top-level jobs duplicated, docs job duplicated, job quoted key |
 
 ## Sources
 
