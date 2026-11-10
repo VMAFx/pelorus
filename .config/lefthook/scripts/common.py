@@ -840,7 +840,9 @@ def _read_session_record(record_file):
         if isinstance(data, list):
             return {str(Path(p).resolve()) for p in data if isinstance(p, str)}
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        pass
+        # An unreadable or corrupt record holds no usable paths: read it as
+        # empty, and the caller rewrites it with the worktrees this event touched.
+        return set()
     return set()
 
 
@@ -863,6 +865,8 @@ def _write_session_record(sessions_dir, record_file, paths):
             try:
                 tmp.unlink(missing_ok=True)
             except OSError:
+                # tmp is set only while the write or replace error propagates;
+                # a failed cleanup must not replace that error.
                 pass
 
 
