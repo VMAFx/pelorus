@@ -30,6 +30,14 @@ from typing import Any, Callable, cast
 
 SUBPROCESS_TIMEOUT_S = 120
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# GitHub GraphQL updateRefs: a beforeOid of 40 zeros means "the ref must not exist".
+NULL_OID = "0" * 40
+UPDATE_REFS_MUTATION = (
+    "mutation($id: ID!, $name: GitRefname!, $before: GitObjectID!, "
+    "$after: GitObjectID!) { updateRefs(input: {repositoryId: $id, refUpdates: "
+    "[{name: $name, beforeOid: $before, afterOid: $after, force: true}]}) "
+    "{ clientMutationId } }"
+)
 
 GhRunner = Callable[[list[str], bytes | None], str]
 
@@ -279,8 +287,12 @@ def _check_branch_head(
     tip: str,
     new_tree_sha: str,
     runner: GhRunner,
-) -> tuple[bool, bool, str | None]:
-    """Check if branch exists and whether its head already has tip parent and new_tree."""
+) -> tuple[bool, str | None]:
+    """Return whether the branch head already has tip parent and new_tree, and its sha.
+
+    The sha is None when the branch does not exist; it is the compare-and-swap
+    value the later ref move must still find.
+    """
     refs_json = runner(
         ["api", f"repos/{repository}/git/matching-refs/heads/{branch}"], None
     )
@@ -288,16 +300,14 @@ def _check_branch_head(
     exact_ref = f"refs/heads/{branch}"
     branch_entry = next((r for r in matching if r.get("ref") == exact_ref), None)
     if branch_entry is None:
-        return False, False, None
+        return False, None
 
     head_sha = branch_entry["object"]["sha"]
     commit_json = runner(["api", f"repos/{repository}/git/commits/{head_sha}"], None)
     head_commit = json.loads(commit_json)
     parents = [p["sha"] for p in head_commit.get("parents", [])]
     tree_sha = head_commit.get("tree", {}).get("sha", "")
-    if parents == [tip] and tree_sha == new_tree_sha:
-        return True, True, head_sha
-    return True, False, head_sha
+    return parents == [tip] and tree_sha == new_tree_sha, head_sha
 
 
 def _create_verified_commit(
@@ -347,35 +357,57 @@ def _create_verified_commit(
     return commit_sha, 0
 
 
-def _update_or_create_ref(
+def _update_refs_ok(out: str) -> bool:
+    """Accept only a GraphQL answer that carries an updateRefs result object."""
+    try:
+        payload = json.loads(out)
+    except ValueError:
+        return False
+    data = payload.get("data") if isinstance(payload, dict) else None
+    return isinstance(data, dict) and isinstance(data.get("updateRefs"), dict)
+
+
+def _move_ref(
     repository: str,
     branch: str,
     commit_sha: str,
-    branch_exists: bool,
+    before_sha: str | None,
     runner: GhRunner,
-) -> None:
-    """Update existing ref with force: true or create new ref."""
-    if branch_exists:
-        patch_in = json.dumps({"sha": commit_sha, "force": True}).encode("utf-8")
-        runner(
-            [
-                "api",
-                "--method",
-                "PATCH",
-                f"repos/{repository}/git/refs/heads/{branch}",
-                "--input",
-                "-",
-            ],
-            patch_in,
+) -> int:
+    """Point the branch at commit_sha only while it still holds before_sha.
+
+    One updateRefs call is the compare-and-swap: GitHub refuses it when the
+    ref no longer points at before_sha (NULL_OID: when the ref now exists),
+    so a push made after the branch was read is never overwritten.
+    """
+    before = before_sha if before_sha is not None else NULL_OID
+    repo_id = runner(["api", f"repos/{repository}", "--jq", ".node_id"], None).strip()
+    request = {
+        "query": UPDATE_REFS_MUTATION,
+        "variables": {
+            "id": repo_id,
+            "name": f"refs/heads/{branch}",
+            "before": before,
+            "after": commit_sha,
+        },
+    }
+    try:
+        out = runner(
+            ["api", "graphql", "--input", "-"], json.dumps(request).encode("utf-8")
         )
-    else:
-        post_in = json.dumps({"ref": f"refs/heads/{branch}", "sha": commit_sha}).encode(
-            "utf-8"
+        detail = "answer carries no updateRefs result"
+        moved = _update_refs_ok(out)
+    except RuntimeError as exc:
+        detail, moved = str(exc), False
+    if not moved:
+        print(
+            f"error: refs/heads/{branch} not moved from {before} to {commit_sha}"
+            f" ({detail}); the branch changed after it was read or the forge"
+            " refused the update, so no pull request is opened",
+            file=sys.stderr,
         )
-        runner(
-            ["api", "--method", "POST", f"repos/{repository}/git/refs", "--input", "-"],
-            post_in,
-        )
+        return 1
+    return 0
 
 
 def _ensure_pull_request(
@@ -476,6 +508,29 @@ def execute_open_render_pr(
     runner: GhRunner,
     env: dict[str, str] | None = None,
 ) -> int:
+    """Run the render PR steps; a failed call or malformed answer stops by name."""
+    try:
+        return _open_render_pr_steps(
+            repo, repository, branch, app_slug, due, runner, env
+        )
+    except (RuntimeError, ValueError, KeyError, TypeError) as exc:
+        print(
+            f"error: render pull request run stopped ({type(exc).__name__}: {exc});"
+            " no later forge write was attempted",
+            file=sys.stderr,
+        )
+        return 1
+
+
+def _open_render_pr_steps(
+    repo: pathlib.Path,
+    repository: str,
+    branch: str,
+    app_slug: str,
+    due: bool,
+    runner: GhRunner,
+    env: dict[str, str] | None,
+) -> int:
     """Execute changelog render PR workflow logic (ADR-0252)."""
     default_branch = runner(
         ["api", f"repos/{repository}", "--jq", ".default_branch"], None
@@ -509,7 +564,7 @@ def execute_open_render_pr(
     if rc_tree != 0 or new_tree_sha is None:
         return rc_tree
 
-    branch_exists, is_current, _ = _check_branch_head(
+    is_current, head_sha = _check_branch_head(
         repository, branch, tip, new_tree_sha, runner
     )
     if is_current:
@@ -520,7 +575,8 @@ def execute_open_render_pr(
         )
         if rc_commit != 0 or commit_sha is None:
             return rc_commit
-        _update_or_create_ref(repository, branch, commit_sha, branch_exists, runner)
+        if _move_ref(repository, branch, commit_sha, head_sha, runner) != 0:
+            return 1
 
     pr_number = _ensure_pull_request(repository, branch, default_branch, own_pr, runner)
     verb = "refreshed" if own_pr is not None else "opened"
@@ -564,6 +620,9 @@ class StubForge:
         head_commit_parents: list[str] | None = None,
         head_commit_tree: str | None = None,
         open_pulls: list[dict[str, Any]] | None = None,
+        moved_branch_sha: str | None = None,
+        pulls_answer: str | None = None,
+        refs_answer: str | None = None,
     ) -> None:
         self.default_branch = default_branch
         self.bot_id = bot_id
@@ -574,8 +633,28 @@ class StubForge:
         self.head_commit_parents = head_commit_parents
         self.head_commit_tree = head_commit_tree
         self.open_pulls = open_pulls if open_pulls is not None else []
+        # A push landing between the branch read and the ref move.
+        self.moved_branch_sha = moved_branch_sha
+        self.pulls_answer = pulls_answer
+        self.refs_answer = refs_answer
         self.calls: list[tuple[list[str], bytes | None]] = []
         self.merge_body = ""
+
+    def _update_refs(self, stdin: bytes | None) -> str:
+        """Act as updateRefs: apply beforeOid only when the query passes it, and
+        refuse a non-fast-forward move of an existing ref without force."""
+        request = json.loads(stdin or b"{}")
+        query = request.get("query", "")
+        variables = request.get("variables", {})
+        current = self.moved_branch_sha or self.existing_branch_sha or NULL_OID
+        failed = "gh api graphql --input - failed (exit 1): gh: "
+        if "beforeOid: $before" in query and variables.get("before") != current:
+            raise RuntimeError(failed + "ref is at another oid")
+        if current != NULL_OID and "force: true" not in query:
+            raise RuntimeError(failed + "update is not a fast forward")
+        if self.refs_answer is not None:
+            return self.refs_answer
+        return json.dumps({"data": {"updateRefs": {"clientMutationId": None}}})
 
     def _calc_blob_sha(self, stdin: bytes | None) -> str:
         """Compute sha1 of git blob payload for stub forge."""
@@ -594,6 +673,10 @@ class StubForge:
 
         if "--jq .default_branch" in call_str:
             return self.default_branch
+        if "--jq .node_id" in call_str:
+            return "R_kgDOS6YaTQ"
+        if args[:2] == ["api", "graphql"]:
+            return self._update_refs(stdin)
         if "--jq .id" in call_str:
             return self.bot_id
         if "pulls?state=open" in call_str:
@@ -639,9 +722,9 @@ class StubForge:
                     },
                 }
             )
-        if "git/refs" in call_str:
-            return json.dumps({"ref": "refs/heads/chore/changelog-render-auto"})
         if "pulls" in call_str and "--method POST" in call_str:
+            if self.pulls_answer is not None:
+                return self.pulls_answer
             return json.dumps({"number": 42})
         raise RuntimeError(f"unhandled stub call: {call_str}")
 
@@ -671,8 +754,8 @@ def _test_s1_s2_s3() -> int:
 def _calls(
     stub: StubForge, method: str, path_fragment: str = ""
 ) -> list[tuple[list[str], bytes | None]]:
-    """Match recorded API methods or PR commands against joined argv."""
-    marker = method if method.startswith("pr ") else f"--method {method}"
+    """Match recorded API methods, GraphQL or PR commands against joined argv."""
+    marker = method if method.startswith(("pr ", "api ")) else f"--method {method}"
     return [
         call
         for call in stub.calls
@@ -681,12 +764,23 @@ def _calls(
 
 
 def _forge_write_calls(stub: StubForge) -> list[tuple[list[str], bytes | None]]:
-    """Return recorded writes, excluding API reads."""
+    """Return recorded writes, excluding API reads (GraphQL here is only updateRefs)."""
     return [
         call
-        for method in ("POST", "PATCH", "pr close", "pr merge")
+        for method in ("POST", "PATCH", "api graphql", "pr close", "pr merge")
         for call in _calls(stub, method)
     ]
+
+
+def _ref_move(stub: StubForge) -> dict[str, Any]:
+    """Return the variables of the single updateRefs call, or {} when not exactly one."""
+    moves = _calls(stub, "api graphql")
+    if len(moves) != 1 or moves[0][1] is None:
+        return {}
+    request = json.loads(moves[0][1])
+    if "updateRefs(input:" not in request.get("query", ""):
+        return {}
+    return request.get("variables", {})
 
 
 def _capture_execute(
@@ -723,19 +817,15 @@ def _opened_contract(stub: StubForge, repo_name: str) -> bool:
     blobs = _calls(stub, "POST", "git/blobs")
     trees = _calls(stub, "POST", "git/trees")
     commits = _calls(stub, "POST", "git/commits")
-    refs = _calls(stub, "POST", "git/refs")
     pulls = _calls(stub, "POST", "/pulls")
     merges = _calls(stub, "pr merge")
-    if not all(
-        len(calls) == 1 for calls in (blobs, trees, commits, refs, pulls, merges)
-    ):
+    if not all(len(calls) == 1 for calls in (blobs, trees, commits, pulls, merges)):
         return False
     if len(_forge_write_calls(stub)) != 6:
         return False
     commit_body = commits[0][1]
-    ref_body = refs[0][1]
     pull_body = pulls[0][1]
-    if commit_body is None or ref_body is None or pull_body is None:
+    if commit_body is None or pull_body is None:
         return False
     commit = json.loads(commit_body)
     pull = json.loads(pull_body)
@@ -745,10 +835,12 @@ def _opened_contract(stub: StubForge, repo_name: str) -> bool:
         and _load_dco_checker()(commit["message"])
         and trailer in commit["message"]
         and trailer in stub.merge_body
-        and json.loads(ref_body)
+        and _ref_move(stub)
         == {
-            "ref": "refs/heads/chore/changelog-render-auto",
-            "sha": "commit-sha-mock-12345678901234567890",
+            "id": "R_kgDOS6YaTQ",
+            "name": "refs/heads/chore/changelog-render-auto",
+            "before": NULL_OID,
+            "after": "commit-sha-mock-12345678901234567890",
         }
         and pull["title"] == "docs(changelog): render unreleased fragments"
         and pull["head"] == "chore/changelog-render-auto"
@@ -840,8 +932,7 @@ def _test_o4(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
         (
             result[0] == 0
             and not _calls(stub, "POST", "git/commits")
-            and not _calls(stub, "POST", "git/refs")
-            and not _calls(stub, "PATCH", "git/refs")
+            and not _calls(stub, "api graphql")
             and not _calls(stub, "POST", "/pulls")
             and len(merges) == 1
             and len(_forge_write_calls(stub)) == 3
@@ -864,8 +955,7 @@ def _test_o5(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
             result[0] == 1
             and len(_forge_write_calls(stub)) == 3
             and len(_calls(stub, "POST", "git/commits")) == 1
-            and not _calls(stub, "POST", "git/refs")
-            and not _calls(stub, "PATCH", "git/refs")
+            and not _calls(stub, "api graphql")
             and not _calls(stub, "POST", "/pulls")
             and not _calls(stub, "pr merge")
             and "is not verified (bad_signature); ref not moved" in result[2]
@@ -1041,28 +1131,110 @@ def _test_o10(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
 
 
 def _test_o11(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
-    """Stale branch: create a commit and force-update the ref."""
+    """Stale branch: create a commit and move the ref from the head it read."""
     _add_unrendered_frag(repo, env, "frag-o11")
-    stub = StubForge(
-        existing_branch_sha="stalebranchhead123",
-        head_commit_parents=["stale-parent-0000000000000000000000000000"],
-        head_commit_tree="old-tree-0000000000000000000000000000000000",
-    )
+    stub = _stale_branch_stub()
     result = _capture_execute(repo, env, repo_name, stub)
-    patches = _calls(stub, "PATCH", "git/refs/heads")
-    payload = (
-        json.loads(patches[0][1])
-        if len(patches) == 1 and patches[0][1] is not None
-        else {}
-    )
+    move = _ref_move(stub)
     return _case_result(
         "o11 existing branch stale parent",
         (
             result[0] == 0
             and len(_forge_write_calls(stub)) == 6
             and len(_calls(stub, "POST", "git/commits")) == 1
-            and payload.get("force") is True
+            and move.get("before") == "stalebranchhead123"
+            and move.get("after") == "commit-sha-mock-12345678901234567890"
             and "opened render pull request #42" in result[1]
+        ),
+        result,
+    )
+
+
+def _stale_branch_stub(moved_branch_sha: str | None = None) -> StubForge:
+    """Stub whose render branch exists with a head that predates the base tip."""
+    return StubForge(
+        existing_branch_sha="stalebranchhead123",
+        head_commit_parents=["stale-parent-0000000000000000000000000000"],
+        head_commit_tree="old-tree-0000000000000000000000000000000000",
+        moved_branch_sha=moved_branch_sha,
+    )
+
+
+def _ref_refused(stub: StubForge, result: tuple[int, str, str], before: str) -> bool:
+    """A refused ref move: commit made, one updateRefs try, no pull or merge."""
+    return (
+        result[0] == 1
+        and len(_forge_write_calls(stub)) == 4
+        and len(_calls(stub, "POST", "git/commits")) == 1
+        and _ref_move(stub).get("before") == before
+        and not _calls(stub, "POST", "/pulls")
+        and not _calls(stub, "pr merge")
+        and f"refs/heads/chore/changelog-render-auto not moved from {before}"
+        in result[2]
+        and "ref is at another oid" in result[2]
+        and "no pull request is opened" in result[2]
+    )
+
+
+def _test_o14(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
+    """Branch pushed after the read: the compare-and-swap refuses, nothing opens."""
+    _add_unrendered_frag(repo, env, "frag-o14")
+    stub = _stale_branch_stub(
+        moved_branch_sha="pushed-after-read-000000000000000000000"
+    )
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o14 branch moved after read",
+        _ref_refused(stub, result, "stalebranchhead123"),
+        result,
+    )
+
+
+def _test_o15(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
+    """Branch created after the read: the must-not-exist guard refuses."""
+    _add_unrendered_frag(repo, env, "frag-o15")
+    stub = StubForge(moved_branch_sha="created-after-read-0000000000000000000")
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o15 branch created after read",
+        _ref_refused(stub, result, NULL_OID),
+        result,
+    )
+
+
+def _test_o16(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
+    """Malformed pull-create answer: stop by name before arming auto-merge."""
+    _add_unrendered_frag(repo, env, "frag-o16")
+    stub = StubForge(pulls_answer=json.dumps({"message": "Validation Failed"}))
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o16 malformed pull request answer",
+        (
+            result[0] == 1
+            and len(_forge_write_calls(stub)) == 5
+            and len(_calls(stub, "POST", "/pulls")) == 1
+            and not _calls(stub, "pr merge")
+            and "render pull request run stopped (KeyError: 'number')" in result[2]
+            and "no later forge write was attempted" in result[2]
+        ),
+        result,
+    )
+
+
+def _test_o17(repo: pathlib.Path, env: dict[str, str], repo_name: str) -> int:
+    """updateRefs answer without a result object: treat the move as failed."""
+    _add_unrendered_frag(repo, env, "frag-o17")
+    stub = StubForge(refs_answer=json.dumps({"data": {"updateRefs": None}}))
+    result = _capture_execute(repo, env, repo_name, stub)
+    return _case_result(
+        "o17 updateRefs answer without result",
+        (
+            result[0] == 1
+            and len(_forge_write_calls(stub)) == 4
+            and not _calls(stub, "POST", "/pulls")
+            and not _calls(stub, "pr merge")
+            and f"not moved from {NULL_OID}" in result[2]
+            and "answer carries no updateRefs result" in result[2]
         ),
         result,
     )
@@ -1113,7 +1285,7 @@ def _run_open_pr_cases(
     env: dict[str, str],
     repo_name: str,
 ) -> int:
-    """Run opener self-test cases o1 through o13 in isolated fixture branches."""
+    """Run opener self-test cases o1 through o17 in isolated fixture branches."""
     # Reset fixture with unrendered fragment for tests
     (repo / "changelog.d/added/test-frag.md").write_text(
         "- Fragment.\n", encoding="utf-8"
@@ -1150,6 +1322,10 @@ def _run_open_pr_cases(
         lambda: _test_o11(repo, env, repo_name),
         lambda: _test_o12(repo, env, repo_name),
         lambda: _test_o13(repo, env, repo_name),
+        lambda: _test_o14(repo, env, repo_name),
+        lambda: _test_o15(repo, env, repo_name),
+        lambda: _test_o16(repo, env, repo_name),
+        lambda: _test_o17(repo, env, repo_name),
     ]
     for case in cases:
         if case() != 0:

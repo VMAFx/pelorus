@@ -356,6 +356,14 @@ def _emit_decision(
     )
 
 
+def _emit_owed_at_render(sha: str, committer_time: int | None, now: int) -> int:
+    """Emit a due decision owed since the last render commit sha (ADR-0252)."""
+    age_seconds = max(0, now - (committer_time or now))
+    age_hours = f"{age_seconds / 3600:.1f}"
+    _emit_decision(current=False, is_open=True, owed_since=sha, owed_hours=age_hours)
+    return 0
+
+
 def decide_render_pr(
     repo: pathlib.Path,
     ref: str,
@@ -382,20 +390,16 @@ def decide_render_pr(
             f"CHANGELOG.md hand-edited or stale at {sha}; render it with --write",
             file=sys.stderr,
         )
-        age_seconds = max(0, now - (committer_time or now))
-        age_hours = f"{age_seconds / 3600:.1f}"
-        _emit_decision(
-            current=False, is_open=True, owed_since=sha, owed_hours=age_hours
-        )
-        return 0
+        return _emit_owed_at_render(sha, committer_time, now)
 
     first_sha, first_ct = _first_owed_commit(repo, sha, ref, env=env)
     if not first_sha or first_ct is None:
         print(
-            f"render owed on {ref}, but no changelog.d/ commits found since {sha}",
+            f"render owed on {ref}, but no changelog.d/ commits found since {sha}; "
+            "a render input other than a fragment changed, so the render is due now",
             file=sys.stderr,
         )
-        return 1
+        return _emit_owed_at_render(sha, committer_time, now)
 
     age_seconds = max(0, now - first_ct)
     age_hours = f"{age_seconds / 3600:.1f}"
@@ -1880,12 +1884,35 @@ def _test_decide_d6(repo: pathlib.Path) -> int:
     return 0
 
 
+def _test_decide_d7(repo: pathlib.Path, env: dict[str, str], now: int) -> int:
+    """Test case d7: render script changed, no new fragment -> open=true at once."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-d7", "master")
+    base = run_git_log(repo, ["-1", "--format=%H", "master"], env=env)
+    script = repo / "scripts/release/concat-changelog-fragments.sh"
+    script.chmod(0o600)
+    script.write_text(
+        script.read_text(encoding="utf-8").replace(
+            "_No unreleased changes._", "_Nothing unreleased yet._"
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(0o500)
+    commit_in_fixture(repo, env, "Change the render script for d7", now)
+    rc, lines = _run_decide(repo, "branch-d7", 6, env, now=now)
+    expected = ["current=false", "open=true", f"owed_since={base}", "owed_hours=50.0"]
+    if rc != 0 or lines != expected:
+        print(f"self-test FAIL: d7 failed: rc={rc}, lines={lines!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: d7 render script changed, no fragment -> open=true")
+    return 0
+
+
 def _run_decide_self_tests(
     repo: pathlib.Path,
     env: dict[str, str],
     now: int,
 ) -> int:
-    """Run scheduled render PR decide self-test cases d1 through d6."""
+    """Run scheduled render PR decide self-test cases d1 through d7."""
     cases: list[Callable[[], int]] = [
         lambda: _test_decide_d1(repo, env, now),
         lambda: _test_decide_d2(repo, env, now),
@@ -1893,6 +1920,7 @@ def _run_decide_self_tests(
         lambda: _test_decide_d4(repo, env),
         lambda: _test_decide_d5(repo, env, now),
         lambda: _test_decide_d6(repo),
+        lambda: _test_decide_d7(repo, env, now),
     ]
     for case in cases:
         if case() != 0:
