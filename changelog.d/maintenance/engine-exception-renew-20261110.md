@@ -1,0 +1,1 @@
+- The HISS-07 exception for `.config/lefthook/scripts/common.py` is renewed for three more days, to 2026-11-13: the engine fix (praetor issue 1768) is still open, and engine main a6fc702c3b00 still ships the two empty excepts that `scripts/check-python-empty-except.py` reports at lines 842 and 865 ([ADR-0241](docs/adr/0241-suppression-marker-binding.md)).
