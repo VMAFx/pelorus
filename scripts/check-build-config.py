@@ -3931,21 +3931,21 @@ def validate_workflows() -> list[str]:
 LOAD_CONFIG_ACTION_TARGET = "./.github/actions/load-build-config"
 
 
-def _step_key(step: str, key: str) -> str | None:
-    """Value of the step's own top-level key (e.g. if:), or None when absent.
+def _step_key_span(step: str, key: str) -> tuple[int, int] | None:
+    """Line index and value column of the step's own top-level key, or None.
 
     Keys nested under with: or env: sit deeper than the step's own keys and
-    do not count; a trailing " #" comment is dropped.
+    do not count.
     """
     lines = step.splitlines()
     if not lines:
         return None
     prefix = f"{key}:"
-    head = lines[0].strip()
+    head = lines[0].lstrip()
     if head.startswith(f"- {prefix}"):
-        return head[len(prefix) + 2 :].split(" #", 1)[0].strip()
+        return 0, len(lines[0]) - len(head) + len(prefix) + 2
     step_indent: int | None = None
-    for line in lines[1:]:
+    for index, line in enumerate(lines[1:], start=1):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -3953,8 +3953,20 @@ def _step_key(step: str, key: str) -> str | None:
         if step_indent is None:
             step_indent = indent
         if indent == step_indent and stripped.startswith(prefix):
-            return stripped[len(prefix) :].split(" #", 1)[0].strip()
+            return index, len(line) - len(line.lstrip()) + len(prefix)
     return None
+
+
+def _step_key(step: str, key: str) -> str | None:
+    """Value of the step's own top-level key (e.g. if:), or None when absent.
+
+    A trailing " #" comment is dropped.
+    """
+    span = _step_key_span(step, key)
+    if span is None:
+        return None
+    index, start = span
+    return step.splitlines()[index][start:].split(" #", 1)[0].strip()
 
 
 JOB_STEPS_LINE = re.compile(r"^    steps:", re.MULTILINE)
@@ -8035,9 +8047,14 @@ def _python_floor_pin_errors(step: str, step_id: str, floor: str) -> list[str]:
     return errors
 
 
+def _strip_yaml_quotes(value: str) -> str:
+    """A YAML scalar with its surrounding quotes removed."""
+    return value.strip("'\"")
+
+
 def _floor_step_id(step: str) -> str:
     """The step's id: value with YAML quotes removed, empty when absent."""
-    return (_step_key(step, "id") or "").strip("'\"")
+    return _strip_yaml_quotes(_step_key(step, "id") or "")
 
 
 def validate_python_floor_text(ci_source: str, doc_text: str) -> list[str]:
@@ -8239,54 +8256,97 @@ def _raise_python_floor(ci: str, doc: str, floor: str, raised: str) -> tuple[str
     return ci, re.sub(PYTHON_FLOOR_PATTERN, f"Python {raised} or newer", doc, count=1)
 
 
+def _edit_step_id_line(step: str, edit: Callable[[str, str], str]) -> str:
+    """The step with edit(value, comment) applied on the line its id is read from."""
+    span = _step_key_span(step, "id")
+    if span is None:
+        return step
+    index, start = span
+    lines = step.splitlines(keepends=True)
+    rest = lines[index][start:]
+    body = rest.rstrip("\r\n")
+    value, mark, comment = body.partition(" #")
+    lines[index] = (
+        lines[index][:start] + edit(value, mark + comment) + rest[len(body) :]
+    )
+    return "".join(lines)
+
+
+def _flip_quotes(value: str, comment: str) -> str:
+    """The id value quoted if bare, bare if quoted; spacing and comment kept."""
+    core = value.strip()
+    bare = _strip_yaml_quotes(core)
+    lead, tail = value.split(core, 1) if core else (value, "")
+    return lead + (bare if core != bare else f'"{bare}"') + tail + comment
+
+
 def _flip_floor_step_id_quotes(ci: str) -> str:
     """The same workflow with each floor step id quoted if bare, bare if quoted."""
     for step_id in PYTHON_FLOOR_STEP_IDS:
-        ci = re.sub(
-            rf"""^([ ]*(?:- )?id:[ ]*)(["']?){re.escape(step_id)}\2[ ]*$""",
-            lambda match, step_id=step_id: (
-                match.group(1) + (step_id if match.group(2) else f'"{step_id}"')
-            ),
-            ci,
-            count=1,
-            flags=re.MULTILINE,
+        ci = _mutate_python_floor_step(
+            ci, step_id, lambda step: _edit_step_id_line(step, _flip_quotes)
         )
     return ci
 
 
-def _flipped_back_failures(flipped: str, doc: str) -> list[str]:
-    """Flipping again must change the tree and still pass, so quoted real ids work."""
+def _comment_floor_step_ids(ci: str) -> str:
+    """The same workflow with a trailing comment on each floor step id line."""
+    for step_id in PYTHON_FLOOR_STEP_IDS:
+        ci = _mutate_python_floor_step(
+            ci,
+            step_id,
+            lambda step: _edit_step_id_line(
+                step, lambda value, comment: f"{value}{comment}  # floor step"
+            ),
+        )
+    return ci
+
+
+def _without_quotes(text: str) -> str:
+    """The text with every YAML quote character removed."""
+    return text.translate(str.maketrans("", "", "'\""))
+
+
+def _id_flip_failures(base: str, doc: str, name: str) -> list[str]:
+    """Flipping must change only quotes, and flipping back must change them again and pass."""
+    flipped = _flip_floor_step_id_quotes(base)
     back = _flip_floor_step_id_quotes(flipped)
-    if back == flipped:
+    if flipped == base or back == flipped:
+        return [f"Python floor regression: {name} tree: id flip changed nothing"]
+    plain = _without_quotes(base)
+    if _without_quotes(flipped) != plain or _without_quotes(back) != plain:
         return [
-            "Python floor regression: other id quoting tree: flipping back changed nothing"
+            f"Python floor regression: {name} tree: id flip changed more than quotes"
         ]
     return [
-        f"Python floor regression: other id quoting tree flipped back: {error}"
+        f"Python floor regression: {name} tree flipped back: {error}"
         for error in validate_python_floor_text(back, doc)
     ]
 
 
 def python_floor_regressions() -> list[str]:
-    """Run the floor cases on the real tree and three valid variants of it."""
+    """Run the floor cases on the real tree and five valid variants of it."""
     ci = (ROOT / CI_RELATIVE).read_text(encoding="utf-8")
     doc = PYTHON_FLOOR_DOC.read_text(encoding="utf-8")
     failures = python_floor_regressions_text(ci, doc)
     floor, _ = documented_python_floor(doc)
     if floor is None:
         return failures
-    flipped = _flip_floor_step_id_quotes(ci)
+    commented = _comment_floor_step_ids(ci)
     variants = {
         "consistent raise": _raise_python_floor(ci, doc, floor, _raised_minor(floor)),
         "other quote style": _python_floor_passing_cases(ci, doc, floor)["other quote style"],
-        "other id quoting": (flipped, doc),
+        "other id quoting": (_flip_floor_step_id_quotes(ci), doc),
+        "id comments": (commented, doc),
+        "id comments, other id quoting": (_flip_floor_step_id_quotes(commented), doc),
     }
     failures.extend(
         f"Python floor regression: {name} tree: mutation changed nothing"
         for name, variant in variants.items()
         if variant == (ci, doc)
     )
-    failures.extend(_flipped_back_failures(flipped, doc))
+    failures.extend(_id_flip_failures(ci, doc, "other id quoting"))
+    failures.extend(_id_flip_failures(commented, doc, "id comments, other id quoting"))
     for name, (variant_ci, variant_doc) in variants.items():
         prefix = "Python floor regression: "
         failures.extend(
