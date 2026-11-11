@@ -3,11 +3,7 @@
 # SPDX-License-Identifier: EUPL-1.2
 """Keep storage device-local and copy before mapped host reads (ADR-0255).
 
-Permit documented bulk/sink arguments, plain cast stores and store-only aliases.
-Bulk destination calls must discard their result; member callees fail closed.
-Exact known reads require unique sites and entries with unexpired MEL dates.
-C/H files and isolated patch hunks undergo splicing and lexical masking; patch
-reports require added-line overlap. Macro and pointer provenance are not followed.
+Patch reports require added-line overlap. Source reading lives in c_source.py.
 """
 
 from __future__ import annotations
@@ -25,7 +21,6 @@ if str(_SCRIPTS_DIR) not in sys.path:
 sys.dont_write_bytecode = True
 from c_scan import (  # noqa: E402
     MAX_CALL_CHARS,
-    PatchError,
     added_overlap,
     argument_index,
     call_args,
@@ -34,12 +29,12 @@ from c_scan import (  # noqa: E402
     parse_args,
     pointer_expression,
     resolve,
-    source_texts,
     statement_at,
     statement_bounds,
     store_only_tail,
 )
 from c_scan import self_test as scan_self_test  # noqa: E402
+from c_source import PatchError, self_test as reading_self_test, source_texts  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILES = ROOT / "ffmpeg-patches" / "files"
@@ -298,6 +293,12 @@ ACCEPTED = {
 
 
 MAPPED_PLANTED = {
+    "digraph subscript": "x = b->mapped_mem<:0:>;",
+    "digraph alias": "{ T *p = (T *)b->mapped_mem; x = p<:0:>; }",
+    "UCN alias": r"{ T *p\u00e4 = (T *)b->mapped_mem; x = p\u00e4[0]; }",
+    "UTF-8 alias": "{ T *pä = (T *)b->mapped_mem; x = pä[0]; }",
+    "macro body": "#define R(b) ((b)->mapped_mem[0])",
+    "digraph macro": "%:define R(b) ((b)->mapped_mem[0])",
     "bracket call closer": "memcpy(b->mapped_mem, src, n];",
     "brace call closer": "memcpy(b->mapped_mem, src, n};",
     "compound literal sink": "pel_mc_build_predictors(h, (S){a, b}.w, n, (int32_t *)b->mapped_mem, &gx, &gy);",
@@ -416,7 +417,7 @@ def mapped_self_test() -> list[str]:
 def self_test() -> list[str]:
     """Exercise allocation and mapped-read rules with planted regressions."""
 
-    failures = mapped_self_test() + scan_self_test()
+    failures = mapped_self_test() + scan_self_test() + reading_self_test()
     failures += source_self_test() + patch_self_test()
     for planted, cases in ((True, PLANTED), (False, ACCEPTED)):
         for label, text in cases.items():
@@ -525,12 +526,15 @@ def source_self_test() -> list[str]:
         (root / "c.patch").write_text(
             f"--- a/x.c\n+++ b/x.c\n@@ -1 +1,3 @@\n reader(b->mapped_mem);\n+reader(b->mapped_mem);\n+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n@@ -9,0 +9 @@\n+reader(b->mapped_mem);\n"
         )
+        path = root / "c.patch"
+        marker = "\\ No newline at end of file\n"
+        path.write_text(path.read_text().replace("@@ -9", marker + "@@ -9"))
         errors = check(source_texts(root), datetime.date(2026, 11, 11), root)
     expected = (
         "b.h:1: element-wise",
         "c.patch:5: element-wise",
         "c.patch:6: storage buffer",
-        "c.patch:8: element-wise",
+        "c.patch:9: element-wise",
     )
     if len(errors) != 4 or not all(
         any(e.startswith(p) for e in errors) for p in expected
