@@ -62,10 +62,20 @@ def alias_directive_cases() -> tuple[tuple[str, bool], ...]:
         (declaration + "#define P p\nuint32_t x = P[0]; }", True),
         (declaration + "#define G(i) p[i]\nuint32_t x = G(0); }", True),
         (declaration + "#define G(i)p[i]\nuint32_t x = G(0); }", True),
+        (declaration + f"#define G(p{ucn}) p[p{ucn}]\nuint32_t x = G(0); }}", True),
+        (
+            declaration
+            + f"#define G(p{long_ucn}) p[p{long_ucn}]\nuint32_t x = G(0); }}",
+            True,
+        ),
         ("#define P p\n" + declaration + "uint32_t x = P[0]; }", True),
         (declaration + "#define Q q\np[0] = 1; }", False),
         (declaration + "#define G(p) 1\np[0] = 1; }", False),
         (declaration + "#define SCALE(p) ((p) * 2)\np[0] = SCALE(7); }", False),
+        (
+            declaration + f"#define SCALE(p{ucn}) ((p{ucn}) * 2)\np[0] = SCALE(7); }}",
+            False,
+        ),
         (declaration + "#define V(p...) (p)\np[0] = V(7); }", False),
         (declaration + f"#define G{ucn}(p) 1\np[0] = 1; }}", False),
         (declaration + f"#define G{long_ucn}(p) 1\np[0] = 1; }}", False),

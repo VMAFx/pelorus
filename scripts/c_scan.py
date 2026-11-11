@@ -310,8 +310,9 @@ def directive_alias(text: str, aliases: set[str]) -> bool:
     define = re.match(rf"\s*#\s*define\s+{name}(?:\(([^\n)]*)\))?(.*)", text)
     if not define:
         return False
-    formals = set(re.findall(r"\w+", define[1] or ""))
-    return bool(aliases.intersection(set(re.findall(r"\b\w+\b", define[2])) - formals))
+    formals = set(re.findall(name, define[1] or ""))
+    kept = " ".join(word for word in re.findall(name, define[2]) if word not in formals)
+    return bool(aliases.intersection(re.findall(r"\w+", kept)))
 
 
 def scan_directives(
