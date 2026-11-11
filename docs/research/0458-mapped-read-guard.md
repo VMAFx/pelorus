@@ -25,6 +25,9 @@ All source paths below are relative to `ffmpeg-patches/files/`. Argument indices
 | `vf_pelorus_denoise_vulkan.c:520–536` | Allowed | Non-const `md` / `cd` aliases used only by plain stores; direct cast stores in the alternate branch |
 | `attach_motion(..., mapped_mem, ...)`, cast reads, struct reads, escaped pointers | Refused | No bulk copy before host reads |
 | Compound stores, alias reads or calls, `mapped_mem + off`, mapped `memcpy` size | Refused | Read-modify-write or unclassified pointer expression; fail closed |
+| `memcpy(dst, sizeof(b->mapped_mem), n);`, `if (b->mapped_mem) x = 1;` | Refused | Keyword parentheses enter the call path and fail closed |
+| `memcpy(dst, (reader)(b->mapped_mem), n);` | Refused | The pointer-expression guard rejects calls through parenthesised names before parentheses can merge identifiers |
+| `{ const T *p = (const T *)b->mapped_mem; p[0] = 1; }` | Refused | The const-alias rule rejects this shape independently of the store-only-use rule |
 | `vf_pelorus_analyze_vulkan.c:710` | Known, #596 | `base` feeds per-tile reads; cost scales with resolution |
 | `vf_pelorus_denoise_vulkan.c:814` | Known, #596 | `acc_out` exposes a fixed 160-word accumulator |
 | `vf_pelorus_grain_estimate_vulkan.c:907` | Known, #596 | `attach_estimate()` reads a fixed statistics struct; collapsed statement includes its preceding `if (err >= 0)` |
@@ -38,11 +41,34 @@ Run the focused checker from the repository root:
 ```bash
 python3 -I scripts/check-vulkan-buffer-domain.py --self-test
 python3 -I scripts/check-vulkan-buffer-domain.py
-ruff check scripts/check-vulkan-buffer-domain.py
-ruff format --check scripts/check-vulkan-buffer-domain.py
+ruff check --no-cache --config ruff.toml scripts/check-vulkan-buffer-domain.py
+ruff format --no-cache --check scripts/check-vulkan-buffer-domain.py
 ```
 
-Before the classifier was added, the planted `attach_motion(s, in, (const int32_t *)x->mapped_mem, n);` self-test failed with exit 1 (`planted mapped reader accepted`). With the classifier, the live tree and self-tests exit 0. Self-tests cover bulk copies and stores, unsafe calls and aliases, patch additions, exact exception coverage, unknown categories, an empty scan, expiry at day 121 and acceptance at day 120.
+The live tree and self-tests exit 0. Self-tests cover bulk copies and stores, unsafe calls and aliases, patch additions, exact exception coverage, unknown categories, an empty scan, expiry at day 121 and acceptance at day 120. Every planted mapped-case diagnostic is also checked for doubled semicolons. The pinned Ruff (`ruff==0.17.3` in `.config/python-lint/requirements.txt`) reports clean lint and formatting.
+
+### Self-test strength
+
+Each row below is an independent script mutation, observed on 2026-11-11. Copy the script to `$TMPDIR/<name>/scripts/c.py`, apply only the indicated replacement, and require exactly one occurrence of the old string before replacing it. Run `python3 -I <copy> --self-test --files ffmpeg-patches/files` from the repository root. The table names the first failing self-test case; the classifier-off mutant also reports a stale analyze exception before reaching the self-test diagnostics.
+
+| Mutant | Effect / exact replacement | Observed exit | First failing case |
+| --- | --- | --- | --- |
+| Classifier off | `if not allowed:` → `if False:`; discard refused sites | 1 | `mapped case failed: keyword sizeof: []` |
+| STORE lookahead | `=(?!=)"` → `="` in `STORE`; accept equality as a store | 1 | `mapped case failed: write alias equality: []` |
+| Single-mapped guard | `if len(re.findall(r"\bmapped_mem\b", statement)) != 1:` → `if False:`; accept a mapped RHS | 1 | `mapped case failed: store with mapped RHS: []` |
+| Const rule | `if not alias or re.search(r"\bconst\b", alias[1] + " " + alias[3]):` → `if not alias:`; accept const aliases used only by stores | 1 | `mapped case failed: const alias store: []` |
+| Pointer expression | `return re.fullmatch(CHAIN, plain) is not None` → `return True`; accept pointer arithmetic | 1 | `mapped case failed: offset: []` |
+| Parenthesis-merge guard | Remove `if re.search(r"[\w)\]]\s*\(", plain):` and its `return False`; merge parenthesised call names into member chains | 1 | `mapped case failed: parenthesised reader: []` |
+| Expiry | `today > expiry` → `today >= expiry`; reject the last allowed day | 1 | `known-read case failed: boundary` |
+| Sink index | `index == SINKS.get(name, (-1, ""))[0]` → `name in SINKS`; accept a sink input | 1 | `mapped case failed: sink input: []` |
+| Mapped fail-closed | `if mapped_total == 0:` → `if False:`; omit the empty-scan refusal | 1 | `empty tree accepted: no mapped_mem use found` |
+| Duplicate | `if count != 1:` → `if count == 0:`; accept duplicate coverage | 1 | `known-read case failed: duplicate: []` |
+| Alias uses | `return all(re.match(STORE, tail[use.end() :]) for use in uses)` → `return True`; accept alias reads | 1 | `mapped case failed: write alias read: []` |
+| Semicolon guard | `{statement.removesuffix(';')}` → `{statement}`; duplicate the diagnostic separator | 1 | `doubled semicolon: keyword sizeof` |
+
+Re-adding the removed keyword skip (`if name:` → `if name and name[1] not in {"if", "while", "for", "switch", "return", "sizeof"}:`) keeps the self-test at exit 0, and none of 23 probe inputs (keyword-wrapped stores and aliases, `for` initialisers, `sizeof` and `return` around `mapped_mem`) tells the two versions apart. Two rules refuse keyword parentheses on their own: inside a `memcpy`, `memset` or sink argument the parenthesis-merge guard rejects `sizeof(`, and at statement level only plain cast stores and alias declarations pass. The mutant without the parenthesis-merge guard still refuses `keyword sizeof` through the call path.
+
+### Source mutations
 
 For mutations, copy `ffmpeg-patches/files` into a temporary directory and run `python3 -I scripts/check-vulkan-buffer-domain.py --files <copy>` after each independent change:
 
@@ -51,5 +77,6 @@ For mutations, copy `ffmpeg-patches/files` into a temporary directory and run `p
 | Replace `attach_motion(s, in, s->mv_host` with a cast of `mvx_ref`'s `mapped_mem` | Exit 1; mapped-read diagnostic at `vf_pelorus_mc_vulkan.c:808` |
 | Append `+ 0` to the analyze known-read expression | Exit 1; new refused site and stale exception (`matches no site; remove the entry`) |
 | Remove the analyze entry from a temporary script copy; run that script with `--files` pointing at the real source tree | Exit 1; mapped-read diagnostic at `vf_pelorus_analyze_vulkan.c:710` |
+| Point `--files` at a directory containing only `x.c` with `int x;` | Exit 1; both empty-scan diagnostics name the selected directory, not the default |
 
 These checks leave runtime sources and the FFmpeg patch stack unchanged. `REUSE.toml` supplies the existing EUPL-1.2 annotation for the new Markdown files.

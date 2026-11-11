@@ -35,7 +35,7 @@ Each exception must cover exactly one refused site. Zero matches, duplicate matc
 ## Consequences
 
 - **Positive**: The fast test rejects new direct mapped readers while preserving bulk copy-out, uploads and documented write-only sinks. Its self-tests plant readers, alias escapes, read-modify-write operations and exception failures.
-- **Negative**: The lexical scan fails closed on `mapped_mem + off`, even when a particular offset could be safe. Pointer provenance from `vk->MapMemory` and wrapper implementations is not followed; the rule is not a general C data-flow analysis.
+- **Negative**: The lexical scan fails closed on `mapped_mem + off`, even when a particular offset could be safe. Keyword parentheses (`sizeof`, `if`) around `mapped_mem` and calls through parenthesised names also fail closed. Pointer provenance from `vk->MapMemory` and wrapper implementations is not followed; the rule is not a general C data-flow analysis.
 - **Neutral / follow-ups**: Issue #596 replaces the three known reads with copies before their exceptions expire. GPU wall time remains with #167. The patch stack and runtime code remain unchanged.
 
 ## References

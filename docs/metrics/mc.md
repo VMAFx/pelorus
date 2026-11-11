@@ -205,7 +205,9 @@ $\le 8$ for a 4× grid) and an absolute 100 ms ceiling at 2160p. It also proves
 the detector on the old quadratic scan each run.
 
 The mapped-read half is held by the fast test `vulkan-buffer-domain`, which
-requires bulk copy-out before element-wise host reads ([ADR-0255](../adr/0255-mapped-memory-host-reads.md)); GPU wall-time regression coverage remains with #167.
+requires bulk copy-out before element-wise host reads
+([ADR-0255](../adr/0255-mapped-memory-host-reads.md)); GPU wall-time regression
+coverage remains with #167.
 
 The earlier mandelbrot pan check, which read about 7 px for a 10 px pan, was
 taken with the 4× predictor error and is superseded by the table above.

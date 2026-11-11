@@ -3,17 +3,22 @@
 # SPDX-License-Identifier: EUPL-1.2
 """Keep shader buffers device-local and bulk-copy before mapped host reads.
 
-ADR-0222: ff_vk_get_pooled_buffer/ff_vk_create_buf storage usage requires
-DEVICE_LOCAL; transfer-only buffers may stay host-only. Local flags resolve
-from their nearest assignment plus later |=; unresolved names fail closed.
-ADR-0255: mapped_mem permits only memcpy, memset, two documented write-only
-sink arguments, plain cast stores and block-local write-only aliases. Three
-known reads carry exact-statement, expiring MEL exceptions.
-Scope: C/H and added patch lines under ffmpeg-patches/files (or --files DIR),
-with comments stripped. Shared patches, patch context, pointers obtained from
-vk->MapMemory and wrapper implementations are not followed. Pointer arithmetic
-such as mapped_mem + off is refused (fail closed). --self-test exercises both
-rules with planted defects, allowed uses and deterministic expiry boundaries.
+Host-only storage buffers live in system RAM on discrete GPUs, so every shader
+read crosses PCIe (research 0172, issue #109, ADR-0222). Storage allocations must
+request DEVICE_LOCAL; transfer-only buffers may stay host-only. Local flags
+resolve from the nearest assignment plus later |=; unresolved names fail closed.
+Mapped device-local host-visible memory is uncached for host reads: element-wise
+reads pay a bus access each. Motion compensation removed that cost with one
+memcpy per buffer (docs/metrics/mc.md, ADR-0255).
+The mapped-read rule allows memcpy arguments 0/1, memset argument 0, the two
+write-only sink arguments below, plain cast stores, and block-local non-const
+aliases used only by plain indexed stores. Known reads require an exact statement,
+issue, MEL category and expiry; stale, duplicated or expired exceptions fail.
+The scan covers C/H files and added patch lines with comments stripped. It does
+not follow the shared series, patch context, vk->MapMemory pointers or wrappers.
+Pointer arithmetic such as mapped_mem + off and keyword parentheses fail closed.
+Use --files DIR to scan a copy instead of ffmpeg-patches/files. Use --self-test
+for planted defects, allowed uses, diagnostic checks and expiry boundaries.
 """
 
 from __future__ import annotations
@@ -47,7 +52,6 @@ SINKS = {
         "output parameter written only: vulkan-pelorus-qpmap.patch:1313-1345",
     ),
 }
-CONTROL = {"if", "while", "for", "switch", "return", "sizeof"}
 CAST = r"\(\s*(?:const\s+)?\w+(?:\s+\w+)*\s*\*+\s*\)"
 CHAIN = r"\w+(?:(?:->|\.)\w+)*(?:->|\.)mapped_mem"
 STORE = r"\s*\[[^\[\]]*\]\s*=(?!=)"
@@ -200,7 +204,7 @@ def enclosing_call(text: str, pos: int) -> tuple[str, int] | None:
                 name = re.search(
                     r"\b(\w+)\s*$", text[max(0, index - MAX_CALL_CHARS) : index]
                 )
-                if name and name[1] not in CONTROL:
+                if name:
                     return name[1], index
         elif depth == 0 and char in ";{}":
             return None
@@ -226,6 +230,8 @@ def pointer_expression(arg: str) -> bool:
     """Accept only a cast/grouped member chain ending in mapped_mem."""
 
     plain = re.sub(CAST, "", arg)
+    if re.search(r"[\w)\]]\s*\(", plain):
+        return False
     plain = re.sub(r"[()\s]", "", plain)
     return re.fullmatch(CHAIN, plain) is not None
 
@@ -337,7 +343,7 @@ def check_known(
         if (name, statement) not in covered:
             errors.append(
                 f"{name}:{line}: element-wise host read of mapped device memory: "
-                f"{statement}; copy it out with one memcpy and read the copy (ADR-0255)"
+                f"{statement.removesuffix(';')}; copy it out with one memcpy and read the copy (ADR-0255)"
             )
     for entry in known:
         count = sum(
@@ -360,7 +366,9 @@ def source_texts(files: pathlib.Path = FILES) -> list[tuple[str, str]]:
     return texts
 
 
-def check(texts: list[tuple[str, str]], today: datetime.date) -> list[str]:
+def check(
+    texts: list[tuple[str, str]], today: datetime.date, files: pathlib.Path = FILES
+) -> list[str]:
     """Enforce allocation and mapped-read rules across the complete source scan."""
 
     errors: list[str] = []
@@ -374,12 +382,11 @@ def check(texts: list[tuple[str, str]], today: datetime.date) -> list[str]:
         refused, mapped_count = mapped_sites(name, text)
         sites += refused
         mapped_total += mapped_count
+    directory = files.relative_to(ROOT) if files.is_relative_to(ROOT) else files
     if total == 0:
-        errors.append(
-            f"no buffer allocation call found under {FILES.relative_to(ROOT)}"
-        )
+        errors.append(f"no buffer allocation call found under {directory}")
     if mapped_total == 0:
-        errors.append("no mapped_mem use found under ffmpeg-patches/files")
+        errors.append(f"no mapped_mem use found under {directory}")
     errors += check_known(sites, today)
     return errors
 
@@ -456,6 +463,10 @@ ACCEPTED = {
 
 
 MAPPED_PLANTED = {
+    "keyword sizeof": "memcpy(dst, sizeof(b->mapped_mem), n);",
+    "keyword if": "if (b->mapped_mem) x = 1;",
+    "parenthesised reader": "memcpy(dst, (reader)(b->mapped_mem), n);",
+    "const alias store": "{ const T *p = (const T *)b->mapped_mem; p[0] = 1; }",
     "reader": "attach_motion(s, in, (const int32_t *)x->mapped_mem, n);",
     "const alias": "{ const T *p = (const T *)b->mapped_mem; x = p[0]; }",
     "cast read": "x = ((T *)b->mapped_mem)[i];",
@@ -491,25 +502,15 @@ def known_self_test() -> list[str]:
     entry = KNOWN_READS[0]
     entered = datetime.date.fromisoformat(entry.entered)
     site = (entry.file, entry.statement, 1)
+    expiry = entered + datetime.timedelta(days=120)
+    unknown = entry._replace(category="X")
     cases = (
         ("covered", [site], entered, entry, ""),
         ("stale", [], entered, entry, "matches no site"),
-        (
-            "expired",
-            [site],
-            entered + datetime.timedelta(days=121),
-            entry,
-            "expired on",
-        ),
-        ("boundary", [site], entered + datetime.timedelta(days=120), entry, ""),
+        ("expired", [site], expiry + datetime.timedelta(days=1), entry, "expired on"),
+        ("boundary", [site], expiry, entry, ""),
         ("duplicate", [site, site], entered, entry, "matches 2 sites"),
-        (
-            "category",
-            [site],
-            entered,
-            entry._replace(category="X"),
-            "unknown MEL category",
-        ),
+        ("category", [site], entered, unknown, "unknown MEL category"),
     )
     failures: list[str] = []
     for label, sites, today, known, expected in cases:
@@ -528,6 +529,8 @@ def mapped_self_test() -> list[str]:
         for label, text in cases.items():
             sites, _ = mapped_sites("mapped.c", strip_comments(text))
             errors = check_known(sites, datetime.date(2026, 11, 11), ())
+            if any(";;" in error for error in errors):
+                failures.append(f"doubled semicolon: {label}: {errors}")
             if bool(errors) != planted:
                 failures.append(f"mapped case failed: {label}: {errors}")
     return failures
@@ -569,7 +572,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """Entry point for checking Vulkan buffer domain contract."""
     args = parse_args(argv)
-    errors = check(source_texts(args.files), datetime.date.today())
+    errors = check(source_texts(args.files), datetime.date.today(), args.files)
     if args.self_test:
         errors += self_test()
     for error in errors:
