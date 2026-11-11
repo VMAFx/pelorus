@@ -4,7 +4,6 @@
 """Keep shader buffers device-local and copy before mapped host reads (ADR-0255).
 
 Storage allocations require DEVICE_LOCAL; transfer-only buffers may stay host-only.
-Local flags resolve from the nearest assignment plus later |=; unknowns fail.
 Mapped reads permit memcpy arguments 0/1, memset argument 0 and the documented
 write-only sink arguments below. A mapped destination bulk call must be its own
 expression statement, optionally cast to void; its returned pointer cannot escape.
@@ -13,18 +12,14 @@ aliases are allowed only with declaration specifiers from an explicit type
 allow-list and later uses that start statements and perform plain indexed stores.
 Known reads require exact statements, issues, MEL categories and expiry dates;
 stale sites, duplicate sites or entries, and expired exceptions fail.
-C/H files and patch additions undergo line splicing then comment/literal masking.
-Patch context participates in masking before being blanked. This lexical scan
-has no preprocessor or macro expansion and does not follow the shared series,
-vk->MapMemory pointers or wrappers. Pointer arithmetic and keyword calls fail.
-Use --files DIR to scan a copy instead of ffmpeg-patches/files, and --self-test
-for planted defects, allowed uses, file integration and expiry boundaries.
+C/H files and patch new sides undergo splicing and lexical masking; patch
+diagnostics require added-line overlap. No macro or pointer-provenance analysis
+is performed. Use --files DIR for a copy and --self-test for planted regressions.
 """
 
 from __future__ import annotations
 
 import pathlib
-import argparse
 import datetime
 import re
 import sys
@@ -37,13 +32,19 @@ if str(_SCRIPTS_DIR) not in sys.path:
 sys.dont_write_bytecode = True
 from c_scan import (  # noqa: E402
     MAX_CALL_CHARS,
+    added_overlap,
     argument_index,
-    block_tail,
     call_args,
+    enclosing_call,
     mask_c,
-    patch_additions,
+    patch_source,
+    parse_args,
+    pointer_expression,
+    resolve,
+    source_texts,
     statement_at,
-    statement_start,
+    statement_bounds,
+    store_only_tail,
 )
 from c_scan import self_test as scan_self_test  # noqa: E402
 
@@ -114,21 +115,9 @@ KNOWN_READS = (
 )
 
 
-def resolve(text: str, arg: str, pos: int) -> str | None:
-    """Resolve local flags at ``pos``; retain constants and fail on unknown names."""
-
-    if not re.fullmatch(r"[a-z_]\w*", arg):
-        return arg
-    name = re.escape(arg)
-    found = list(re.finditer(rf"\b{name}\s*=(?!=)\s*([^;]*);", text[:pos]))
-    if not found:
-        return None
-    last = found[-1]
-    more = re.findall(rf"\b{name}\s*\|=\s*([^;]*);", text[last.end() : pos])
-    return " | ".join([last.group(1), *more])
-
-
-def check_text(name: str, text: str) -> tuple[list[str], int]:
+def check_text(
+    name: str, text: str, added: set[int] | None = None
+) -> tuple[list[str], int]:
     """Return (errors, number of calls read) for one source text."""
 
     errors: list[str] = []
@@ -138,9 +127,13 @@ def check_text(name: str, text: str) -> tuple[list[str], int]:
         line = text.count("\n", 0, match.start()) + 1
         call = match.group(0)
         usage_arg, mem_arg = CALLS[call]
-        parsed = call_args(text, match.end() - 1)
-        args = parsed[0] if parsed else None
-        if args is None or len(args) <= mem_arg:
+        args, end = call_args(text, match.end() - 1) or (
+            [],
+            min(len(text), match.start() + MAX_CALL_CHARS),
+        )
+        if not added_overlap(text, match.start(), end, added):
+            continue
+        if len(args) <= mem_arg:
             errors.append(f"{name}:{line}: unreadable {call} call")
             continue
         calls += 1
@@ -156,38 +149,6 @@ def check_text(name: str, text: str) -> tuple[list[str], int]:
     return errors, calls
 
 
-def enclosing_call(text: str, pos: int) -> tuple[str, int] | None:
-    """Find the nearest enclosing call, crossing casts and grouping parentheses."""
-
-    depth = 0
-    for index in range(pos - 1, max(-1, pos - MAX_CALL_CHARS - 1), -1):
-        char = text[index]
-        if char == ")":
-            depth += 1
-        elif char == "(":
-            if depth:
-                depth -= 1
-            else:
-                prefix = text[max(0, index - MAX_CALL_CHARS) : index]
-                name = re.search(r"\b(\w+)\s*$", prefix)
-                if name:
-                    member = re.search(r"(?:->|\.)\s*$", prefix[: name.start()])
-                    return ("" if member else name[1]), index
-        elif depth == 0 and char in ";{}":
-            return None
-    return None
-
-
-def pointer_expression(arg: str) -> bool:
-    """Accept only a cast/grouped member chain ending in mapped_mem."""
-
-    plain = re.sub(CAST, "", arg)
-    if re.search(r"[\w)\]]\s*\(", plain):
-        return False
-    plain = re.sub(r"[()\s]", "", plain)
-    return re.fullmatch(CHAIN, plain) is not None
-
-
 def allowed_call(text: str, pos: int, call: tuple[str, int]) -> bool:
     """Allow a complete mapped pointer only at a documented bulk/sink argument."""
 
@@ -197,7 +158,9 @@ def allowed_call(text: str, pos: int, call: tuple[str, int]) -> bool:
     if parsed is None:
         return False
     args, end = parsed
-    if index >= len(args) or not pointer_expression(args[index]):
+    if index >= len(args) or not pointer_expression(
+        args[index], CAST, CHAIN, "mapped_mem"
+    ):
         return False
     if name in BULK and index == 0:
         boundary = max(text.rfind(c, 0, start) for c in ";{}") + 1
@@ -207,29 +170,24 @@ def allowed_call(text: str, pos: int, call: tuple[str, int]) -> bool:
     return index in BULK.get(name, {}) or index == SINKS.get(name, (-1, ""))[0]
 
 
-def allowed_statement(text: str, statement: str, end: int) -> bool:
+def allowed_statement(text: str, statement: str, end: int) -> tuple[bool, int]:
     """Accept plain cast stores or non-const aliases used only by plain stores."""
 
     if len(re.findall(r"\bmapped_mem\b", statement)) != 1:
-        return False
+        return False, end
     if re.match(rf"^\(\s*{CAST}\s*{CHAIN}\s*\){STORE}", statement):
-        return True
+        return True, end
     alias = re.fullmatch(
         rf"({TYPE}(?:\s+{TYPE})*)\s*\*\s*(\w+)\s*=\s*({CAST})\s*{CHAIN};", statement
     )
     if not alias or re.search(r"\bconst\b", alias[1] + " " + alias[3]):
-        return False
-    tail = block_tail(text, end)
-    if tail is None:
-        return False
-    uses = list(re.finditer(rf"\b{re.escape(alias[2])}\b", tail))
-    return all(
-        re.match(STORE, tail[use.end() :]) and statement_start(tail, use.start())
-        for use in uses
-    )
+        return False, end
+    return store_only_tail(text, alias[2], end, STORE)
 
 
-def mapped_sites(name: str, text: str) -> tuple[list[Site], int]:
+def mapped_sites(
+    name: str, text: str, added: set[int] | None = None
+) -> tuple[list[Site], int]:
     """Classify every mapped_mem token; return refused sites and total count."""
 
     refused: list[Site] = []
@@ -238,12 +196,12 @@ def mapped_sites(name: str, text: str) -> tuple[list[Site], int]:
         pos = match.start()
         statement, end = statement_at(text, pos)
         call = enclosing_call(text, pos)
-        allowed = (
-            allowed_call(text, pos, call)
-            if call
-            else allowed_statement(text, statement, end)
-        )
-        if not allowed:
+        start, _ = statement_bounds(text, pos)
+        if call:
+            allowed = allowed_call(text, pos, call)
+        else:
+            allowed, end = allowed_statement(text, statement, end)
+        if not allowed and added_overlap(text, start, end, added):
             refused.append((name, statement, text.count("\n", 0, pos) + 1))
     return refused, len(matches)
 
@@ -299,30 +257,21 @@ def check_known(
     return errors
 
 
-def source_texts(files: pathlib.Path = FILES) -> list[tuple[str, str]]:
-    """Read C/H files and patch additions from the selected source directory."""
-
-    texts = []
-    for path in sorted(files.iterdir()):
-        if path.suffix in (".c", ".h", ".patch"):
-            scan = patch_additions if path.suffix == ".patch" else mask_c
-            texts.append((path.name, scan(path.read_text())))
-    return texts
-
-
 def check(
-    texts: list[tuple[str, str]], today: datetime.date, files: pathlib.Path = FILES
+    texts: list[tuple[str, str, set[int] | None]],
+    today: datetime.date,
+    files: pathlib.Path = FILES,
 ) -> list[str]:
     """Enforce allocation and mapped-read rules across the complete source scan."""
 
     errors: list[str] = []
     total = mapped_total = 0
     sites: list[Site] = []
-    for name, text in texts:
-        found, calls = check_text(name, text)
+    for name, text, added in texts:
+        found, calls = check_text(name, text, added)
         errors += found
         total += calls
-        refused, mapped_count = mapped_sites(name, text)
+        refused, mapped_count = mapped_sites(name, text, added)
         sites += refused
         mapped_total += mapped_count
     directory = files.relative_to(ROOT) if files.is_relative_to(ROOT) else files
@@ -340,6 +289,7 @@ STORAGE_ALLOC = (
     f"ff_vk_get_pooled_buffer(s, &p, &r,\n {STORAGE}, NULL, n,\n {HOST_ONLY});"
 )
 PLANTED = {
+    "subscript allocation": f"ff_vk_create_buf(s, &bufs[i, 0], n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
     "inline flags in a C file": STORAGE_ALLOC,
     "named flag variable": (
         f"const VkMemoryPropertyFlagBits mem = {HOST_ONLY};\n"
@@ -357,13 +307,13 @@ PLANTED = {
     ),
     "ff_vk_create_buf storage buffer": f"ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
     "unresolvable local flags": STORAGE_ALLOC.replace(STORAGE, "usage"),
-    "hand-maintained patch": patch_additions(
+    "hand-maintained patch": patch_source(
         "+++ b/x.c\n+" + STORAGE_ALLOC.replace("\n", "\n+")
-    ),
-    "patch line starting with ++": patch_additions(
+    )[0],
+    "patch line starting with ++": patch_source(
         "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,3 @@\n+++i; "
         + STORAGE_ALLOC.replace("\n", "\n+")
-    ),
+    )[0],
 }
 ACCEPTED = {
     "host-only transfer staging buffer": STORAGE_ALLOC.replace(
@@ -376,6 +326,12 @@ ACCEPTED = {
 
 
 MAPPED_PLANTED = {
+    "subscript sink input": "pel_mc_build_predictors(hosts[i = 0, j = 0, k], (const int32_t *)b->mapped_mem, n, prev, &gx, &gy);",
+    "brace sink input": "pel_mc_build_predictors((S){a, b, c}.p, (const int32_t *)b->mapped_mem, n, prev, &gx, &gy);",
+    "nested mapped source": "memcpy(dst, ((FFVkBuffer *)b->mapped_mem)->mapped_mem, n);",
+    "nested mapped destination": "memcpy(((FFVkBuffer *)b->mapped_mem)->mapped_mem, src, n);",
+    "nested mapped sink": "pel_mc_build_predictors(h, w, n, ((FFVkBuffer *)b->mapped_mem)->mapped_mem, &gx, &gy);",
+    "nested mapped store": "((uint32_t *)((FFVkBuffer *)b->mapped_mem)->mapped_mem)[0] = 0;",
     "quoted brace alias": '{ uint32_t *p = (uint32_t *)b->mapped_mem; log_message("}"); consume(p); }',
     "char brace alias": "{ uint32_t *p = (uint32_t *)b->mapped_mem; c = '}'; consume(p); }",
     "quoted comments": 'log("/*"); attach_motion(s, in, b->mapped_mem, n); log("*/");',
@@ -398,9 +354,9 @@ MAPPED_PLANTED = {
     "alias RHS sum": "{ T *p = (T *)b->mapped_mem; p[0] = 1 + p[1]; }",
     "alias index": "{ T *p = (T *)b->mapped_mem; q[p[0]] = 1; }",
     "unterminated char": "x = 'a; reader(b->mapped_mem);",
-    "patch context comment close": patch_additions(
+    "patch context comment close": patch_source(
         "@@\n+/*\n */\n+reader(b->mapped_mem);"
-    ),
+    )[0],
     "keyword sizeof": "memcpy(dst, sizeof(b->mapped_mem), n);",
     "keyword if": "if (b->mapped_mem) x = 1;",
     "parenthesised reader": "memcpy(dst, (reader)(b->mapped_mem), n);",
@@ -416,13 +372,14 @@ MAPPED_PLANTED = {
     "struct read": "x = ((const T *)b->mapped_mem)->total[0];",
     "stored pointer": "*out = (const T *)b->mapped_mem;",
     "sink input": "pel_mc_build_predictors((const int32_t *)b->mapped_mem, mvy, n, prev, &gx, &gy);",
-    "patch reader": patch_additions("--- a/x.c\n+++ b/x.c\n+reader(b->mapped_mem);"),
+    "patch reader": patch_source("--- a/x.c\n+++ b/x.c\n+reader(b->mapped_mem);")[0],
     "memcpy size": "memcpy(dst, src, ((T *)b->mapped_mem)[0]);",
     "offset": "memcpy(dst, b->mapped_mem + off, n);",
     "cast equality": "((T *)b->mapped_mem)[0] == 1;",
     "store with mapped RHS": "((T *)b->mapped_mem)[0] = ((T *)c->mapped_mem)[0];",
 }
 MAPPED_ACCEPTED = {
+    "subscript memcpy source": "memcpy(dst[i, 0], b->mapped_mem, n);",
     "alias first store": "{ T *p = (T *)b->mapped_mem; p[0] = 1; }",
     "store after block": "{ if (x) { y = 1; } ((uint32_t *)b->mapped_mem)[0] = 0; }",
     "literal token": 'log("mapped_mem");',
@@ -488,16 +445,73 @@ def mapped_self_test() -> list[str]:
 def self_test() -> list[str]:
     """Exercise allocation and mapped-read rules with planted regressions."""
 
-    failures = mapped_self_test() + scan_self_test() + source_self_test()
+    failures = (
+        mapped_self_test() + scan_self_test() + source_self_test() + patch_self_test()
+    )
     for planted, cases in ((True, PLANTED), (False, ACCEPTED)):
         for label, text in cases.items():
             errors, calls = check_text(label, mask_c(text))
             if calls != 1 or bool(errors) != planted:
                 failures.append(f"allocation case failed: {label}: {errors}")
-    empty = check([("empty.c", "int x;")], datetime.date(2026, 11, 11))
+    empty = check([("empty.c", "int x;", None)], datetime.date(2026, 11, 11))
     for message in ("no buffer allocation call found", "no mapped_mem use found"):
         if not any(message in error for error in empty):
             failures.append(f"empty tree accepted: {message}")
+    return failures
+
+
+PATCH_CASES = {
+    "patch result escape": (" p =\n+memcpy(b->mapped_mem, src, n);", True, False),
+    "patch spliced reader": (" x = reader\\\n+(b->mapped_mem);", True, False),
+    "patch context alias": (
+        " { T *p = (T *)b->mapped_mem;\n+x = p[0];\n }",
+        True,
+        False,
+    ),
+    "patch split allocation": (
+        f" ff_vk_create_buf(s, &buf, n, NULL, NULL,\n+{STORAGE}, {HOST_ONLY});",
+        False,
+        True,
+    ),
+    "patch open alias": (" T *p = (T *)b->mapped_mem;\n+x = p[0];", True, False),
+    "patch reader after addition": (
+        "+y = 1;\n x = reader(b->mapped_mem);",
+        False,
+        False,
+    ),
+    "patch context reader": (" x = reader(b->mapped_mem);\n+y = 1;", False, False),
+    "patch context allocation": (
+        f" ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n+y = 1;",
+        False,
+        False,
+    ),
+    "patch reader argument": (" reader(\n+b->mapped_mem);", True, False),
+    "patch added alias": (
+        " {\n+T *p = (T *)b->mapped_mem;\n x = p[0];\n }",
+        True,
+        False,
+    ),
+    "patch subscript allocation": (
+        f"+ff_vk_create_buf(s, &bufs[i, 0], n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
+        False,
+        True,
+    ),
+}
+
+
+def patch_self_test() -> list[str]:
+    """Exercise patch context and added origins through file selection."""
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        for label, (patch, mapped, allocation) in PATCH_CASES.items():
+            (root / "test.patch").write_text("@@\n" + patch)
+            for name, text, added in source_texts(root):
+                sites, _ = mapped_sites(name, text, added)
+                errors, _ = check_text(name, text, added)
+                result = (bool(sites), any("storage buffer" in e for e in errors))
+                if result != (mapped, allocation):
+                    failures.append(f"patch case failed: {label}: {sites}, {errors}")
     return failures
 
 
@@ -529,23 +543,9 @@ def source_self_test() -> list[str]:
     return []
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments for check-vulkan-buffer-domain."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
-    parser.add_argument(
-        "--files",
-        type=pathlib.Path,
-        default=FILES,
-        metavar="DIR",
-        help="source directory for allocation and mapped-read checks",
-    )
-    return parser.parse_args(argv)
-
-
 def main(argv: list[str] | None = None) -> int:
     """Entry point for checking Vulkan buffer domain contract."""
-    args = parse_args(argv)
+    args = parse_args(__doc__, FILES, argv)
     errors = check(source_texts(args.files), datetime.date.today(), args.files)
     if args.self_test:
         errors += self_test()

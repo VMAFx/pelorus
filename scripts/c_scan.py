@@ -9,8 +9,8 @@ quotes and replace contents, including escapes, with spaces. Other than splice
 removal and newline relocation, masking preserves text length.
 Unterminated literals remain unmasked from their opening quote to an unescaped
 newline or EOF. Unterminated block comments remain unmasked through EOF.
-Patch segments retain new-side context during masking, then blank context and
-headers so diagnostics retain patch line numbers. Hunk markers (`@@`) reset
+Patch segments retain masked new-side context and added-line origins. Headers
+stay blank so diagnostics retain patch line numbers. Hunk markers (`@@`) reset
 lexical state; `+++ ` is a file header only immediately after `--- `.
 Removed lines and metadata stay blank without affecting lexical state.
 This is a bounded lexical scan, with no preprocessor or macro expansion.
@@ -20,6 +20,8 @@ the rest of that line unmasked.
 
 from __future__ import annotations
 
+import argparse
+import pathlib
 import re
 
 
@@ -29,10 +31,25 @@ MAX_CALL_CHARS = 4096
 def statement_at(text: str, pos: int) -> tuple[str, int]:
     """Return collapsed statement and end offset, retaining its semicolon."""
 
-    start = max(text.rfind(delimiter, 0, pos) for delimiter in ";{}") + 1
-    end = text.find(";", pos)
-    end = len(text) if end < 0 else end + 1
+    start, end = statement_bounds(text, pos)
     return " ".join(text[start:end].split()), end
+
+
+def statement_bounds(text: str, pos: int) -> tuple[int, int]:
+    """Return the offsets enclosing the statement at a token."""
+    start = max(text.rfind(delimiter, 0, pos) for delimiter in ";{}") + 1
+    start += len(text[start:pos]) - len(text[start:pos].lstrip())
+    end = text.find(";", pos)
+    return start, len(text) if end < 0 else end + 1
+
+
+def added_overlap(text: str, start: int, end: int, added: set[int] | None) -> bool:
+    """Require an added output line in the classified region of a patch."""
+    if added is None:
+        return True
+    first = text.count("\n", 0, start) + 1
+    last = text.count("\n", 0, max(start, end - 1)) + 1
+    return any(first <= line <= last for line in added)
 
 
 def statement_start(text: str, pos: int) -> bool:
@@ -57,41 +74,116 @@ def block_tail(text: str, start: int) -> str | None:
     return None
 
 
-def call_args(text: str, start: int) -> tuple[list[str], int] | None:
-    """Return top-level arguments and the offset after the closing parenthesis."""
-
+def argument_spans(text: str, start: int) -> list[tuple[int, int]] | None:
+    """Locate arguments using one bounded scan over all C nesting delimiters."""
     depth = 0
-    args: list[str] = []
+    spans: list[tuple[int, int]] = []
     arg_start = start + 1
     end = min(len(text), start + MAX_CALL_CHARS)
     for pos in range(start, end):
         char = text[pos]
-        if char == "(":
+        if char in "([{":
             depth += 1
-        elif char == ")":
+        elif char in ")]}":
             depth -= 1
-            if depth == 0:
-                args.append(text[arg_start:pos].strip())
-                return args, pos + 1
+            if depth == 0 and char == ")":
+                return [*spans, (arg_start, pos)]
         elif char == "," and depth == 1:
-            args.append(text[arg_start:pos].strip())
+            spans.append((arg_start, pos))
             arg_start = pos + 1
     return None
 
 
+def call_args(text: str, start: int) -> tuple[list[str], int] | None:
+    """Return top-level arguments and the offset after the closing parenthesis."""
+    spans = argument_spans(text, start)
+    if spans is None:
+        return None
+    return [text[left:right].strip() for left, right in spans], spans[-1][1] + 1
+
+
 def argument_index(text: str, start: int, pos: int) -> int:
-    """Count depth-one commas before a token in a bounded call."""
+    """Find a token's argument using the same nesting scan as argument splitting."""
+    spans = argument_spans(text, start) or []
+    return next((i for i, (left, right) in enumerate(spans) if left <= pos < right), -1)
+
+
+def enclosing_call(text: str, pos: int) -> tuple[str, int] | None:
+    """Find the nearest enclosing call, crossing casts and grouping parentheses."""
 
     depth = 0
-    index = 0
-    for char in text[start:pos]:
-        if char == "(":
+    for index in range(pos - 1, max(-1, pos - MAX_CALL_CHARS - 1), -1):
+        char = text[index]
+        if char == ")":
             depth += 1
-        elif char == ")":
-            depth -= 1
-        elif char == "," and depth == 1:
-            index += 1
-    return index
+        elif char == "(":
+            if depth:
+                depth -= 1
+            else:
+                prefix = text[max(0, index - MAX_CALL_CHARS) : index]
+                name = re.search(r"\b(\w+)\s*$", prefix)
+                if name:
+                    member = re.search(r"(?:->|\.)\s*$", prefix[: name.start()])
+                    return ("" if member else name[1]), index
+        elif depth == 0 and char in ";{}":
+            return None
+    return None
+
+
+def resolve(text: str, arg: str, pos: int) -> str | None:
+    """Resolve local flags at ``pos``; retain constants and fail on unknown names."""
+
+    if not re.fullmatch(r"[a-z_]\w*", arg):
+        return arg
+    name = re.escape(arg)
+    found = list(re.finditer(rf"\b{name}\s*=(?!=)\s*([^;]*);", text[:pos]))
+    if not found:
+        return None
+    last = found[-1]
+    more = re.findall(rf"\b{name}\s*\|=\s*([^;]*);", text[last.end() : pos])
+    return " | ".join([last.group(1), *more])
+
+
+def parse_args(
+    description: str, files: pathlib.Path, argv: list[str] | None = None
+) -> argparse.Namespace:
+    """Parse source-checker options for a selected default directory."""
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument(
+        "--files",
+        type=pathlib.Path,
+        default=files,
+        metavar="DIR",
+        help="source directory for allocation and mapped-read checks",
+    )
+    return parser.parse_args(argv)
+
+
+def pointer_expression(arg: str, cast: str, chain: str, token: str) -> bool:
+    """Accept only a cast/grouped member chain containing one named token."""
+
+    if len(re.findall(rf"\b{re.escape(token)}\b", arg)) != 1:
+        return False
+    plain = re.sub(cast, "", arg)
+    if re.search(r"[\w)\]]\s*\(", plain):
+        return False
+    plain = re.sub(r"[()\s]", "", plain)
+    return re.fullmatch(chain, plain) is not None
+
+
+def store_only_tail(text: str, alias: str, start: int, store: str) -> tuple[bool, int]:
+    """Check later alias uses for plain stores and return the scanned region end."""
+    tail = block_tail(text, start)
+    if tail is None:
+        return False, len(text)
+    uses = list(re.finditer(rf"\b{re.escape(alias)}\b", tail))
+    allowed = all(
+        re.match(store, tail[use.end() :]) and statement_start(tail, use.start())
+        for use in uses
+    )
+
+    return allowed, start + len(tail)
 
 
 def _splice(text: str) -> str:
@@ -155,28 +247,52 @@ def mask_c(text: str) -> str:
     return "".join(out)
 
 
-def _patch_segment(lines: list[str]) -> list[str]:
-    """Mask a complete new-side segment before blanking its context lines."""
+def _patch_segment(lines: list[str]) -> tuple[list[str], set[int]]:
+    """Mask the new side and carry added origins onto joined splice lines."""
     side = [line[1:] if line.startswith(("+", " ")) else "" for line in lines]
-    masked = mask_c("\n".join(side)).split("\n")
-    return [masked[i] if line.startswith("+") else "" for i, line in enumerate(lines)]
+    added: set[int] = set()
+    origin = 0
+    for i, line in enumerate(lines):
+        if i == 0 or not re.search(r"\\[ \t]*\r?$", side[i - 1]):
+            origin = i
+        if line.startswith("+"):
+            added.add(origin + 1)
+    return mask_c("\n".join(side)).split("\n"), added
 
 
-def patch_additions(patch: str) -> str:
-    """Return masked additions with one output line for each patch input line."""
+def patch_source(patch: str) -> tuple[str, set[int]]:
+    """Return masked new-side text and added origins, preserving patch lines."""
     lines = patch.split("\n")
     out: list[str] = []
+    added: set[int] = set()
     start = 0
     for i, line in enumerate(lines):
         new_header = (
             line.startswith("+++ ") and i > 0 and lines[i - 1].startswith("--- ")
         )
         if line.startswith("@@") or new_header:
-            out.extend(_patch_segment(lines[start:i]))
+            masked, origins = _patch_segment(lines[start:i])
+            out.extend(masked if start < i else [])
+            added.update(start + origin for origin in origins)
             out.append("")
             start = i + 1
-    out.extend(_patch_segment(lines[start:]))
-    return "\n".join(out)
+    masked, origins = _patch_segment(lines[start:])
+    out.extend(masked if start < len(lines) else [])
+    added.update(start + origin for origin in origins)
+    return "\n".join(out), added
+
+
+def source_texts(files: pathlib.Path) -> list[tuple[str, str, set[int] | None]]:
+    """Read masked C/H files and patch new sides with added-line origins."""
+    texts = []
+    for path in sorted(files.iterdir()):
+        if path.suffix in (".c", ".h", ".patch"):
+            raw = path.read_text()
+            text, added = (
+                patch_source(raw) if path.suffix == ".patch" else (mask_c(raw), None)
+            )
+            texts.append((path.name, text, added))
+    return texts
 
 
 def self_test() -> list[str]:
@@ -223,34 +339,62 @@ def self_test() -> list[str]:
         masked = mask_c(source)
         if masked != expected or masked.count("\n") != source.count("\n"):
             failures.append(f"C masking case failed: {label}: {masked!r}")
-    return failures + _patch_self_test()
+    return failures + _patch_self_test() + _argument_self_test()
+
+
+def _argument_self_test() -> list[str]:
+    """Assert shared argument boundaries across subscripts and brace expressions."""
+    failures: list[str] = []
+    for first in ("hosts[i = 0, j = 0, k]", "(S){a, b, c}.p"):
+        text = f"({first}, mapped_mem, n)"
+        parsed = call_args(text, 0)
+        index = argument_index(text, 0, text.index("mapped_mem"))
+        if parsed != ([first, "mapped_mem", "n"], len(text)) or index != 1:
+            failures.append(f"C argument case failed: {first}: {parsed}, {index}")
+    return failures
 
 
 def _patch_self_test() -> list[str]:
-    """Keep context for lexical state without reporting it as added code."""
+    """Keep exact new-side text and origins across lexical and splice boundaries."""
     failures: list[str] = []
     patches = {
+        "context splice origin": (
+            "@@\n x = reader\\\n+(b->mapped_mem);",
+            "\nx = reader(b->mapped_mem);\n",
+            {2},
+        ),
+        "added splice origin": (
+            "@@\n+x = reader\\\n (b->mapped_mem);",
+            "\nx = reader(b->mapped_mem);\n",
+            {2},
+        ),
         "context closes comment": (
             "--- a/x.c\n+++ b/x.c\n@@ -1 +1 @@\n+/*\n */\n+reader(b->mapped_mem);\n",
-            "\n\n\n  \n\nreader(b->mapped_mem);\n",
+            "\n\n\n  \n  \nreader(b->mapped_mem);\n",
+            {4, 6},
         ),
         "context opens comment": (
             "@@\n /*\n+mapped_mem\n */\n+x;",
-            "\n\n          \n\nx;",
+            "\n  \n          \n  \nx;",
+            {3, 5},
         ),
-        "added pre-increment": ("@@\n+++ i;", "\n++ i;"),
-        "added increment": ("--- a/x.c\n+++ b/x.c\n+++i;", "\n\n++i;"),
+        "added pre-increment": ("@@\n+++ i;", "\n++ i;", {2}),
+        "added increment": ("--- a/x.c\n+++ b/x.c\n+++i;", "\n\n++i;", {3}),
         "removed and marker": (
             "@@\n-reader(b->mapped_mem);\n\\ No newline at end of file\n+x;",
             "\n\n\nx;",
+            {4},
         ),
         "segment reset": (
             "@@\n+/*\n@@\n+reader(b->mapped_mem);\n */",
-            "\n/*\n\nreader(b->mapped_mem);\n",
+            "\n/*\n\nreader(b->mapped_mem);\n*/",
+            {2, 4},
         ),
     }
-    for label, (source, expected) in patches.items():
-        masked = patch_additions(source)
-        if masked != expected or masked.count("\n") != source.count("\n"):
+    for label, (source, expected, origins) in patches.items():
+        masked, added = patch_source(source)
+        if (masked, added) != (expected, origins) or masked.count("\n") != source.count(
+            "\n"
+        ):
             failures.append(f"C patch case failed: {label}: {masked!r}")
     return failures
