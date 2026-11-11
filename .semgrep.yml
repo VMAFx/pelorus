@@ -743,4 +743,72 @@ rules:
                     - pattern: <... $X.st_mode ...>
                     - pattern: <... st_mode ...>
 
+  # Windows text-mode fixture writes introduce CRLF, which the strict C reader
+  # refuses. Import scope includes aliases, from-imports and nested imports;
+  # scripts/test-semgrep-strict-reader-fixture.py plants each form.
+  - id: pelorus-strict-reader-fixture-bytes
+    languages: [python]
+    severity: ERROR
+    message: &strict_reader_message >-
+      Windows text mode writes CRLF; the strict reader refuses CR. Write bytes
+      with write_bytes or an explicit binary open mode instead.
+    options:
+      constant_propagation: false
+    paths:
+      exclude:
+        - /scripts/c_source.py
+        - /scripts/c_scan.py
+    patterns:
+      # Match the whole file only when its Python tokens contain an import.
+      # Atomic string/comment skips keep quoted examples outside import scope.
+      - pattern-regex: >-
+          (?sx)\A(?=
+          (?> """(?:\\.|(?!""")[^\\])*""" | '''(?:\\.|(?!''')[^\\])*'''
+            | "(?:\\.|[^"\\])*" | '(?:\\.|[^'\\])*'
+            | \#[^\n]* | [^"'\#] )*?
+          \b(?:
+            from(?:\s|\\\r?\n)+[.\s]*
+              (?:\w+(?:\s|\\\r?\n)*\.(?:\s|\\\r?\n)*)*
+              c_(?:source|scan)(?:\s*\.\s*\w+)*(?:\s|\\\r?\n)+import\b
+            | import(?:\s|\\\r?\n)+\(?
+              (?:(?:\s|\\\r?\n|\#[^\n]*\n)*
+                 \w+(?:\s*\.\s*\w+)*(?:\s+as\s+\w+)?\s*,)*
+              (?:\s|\\\r?\n|\#[^\n]*\n)*
+              (?:\w+(?:\s|\\\r?\n)*\.(?:\s|\\\r?\n)*)*c_(?:source|scan)\b
+          ))[\s\S]*\z
+      - pattern-either: &strict_reader_writes
+          - pattern: $P.write_text(...)
+          - patterns:
+              - pattern-either:
+                  - pattern: open($FILE, $MODE, ...)
+                  - pattern: open(..., mode=$MODE, ...)
+                  - pattern: io.open($FILE, $MODE, ...)
+                  - pattern: io.open(..., mode=$MODE, ...)
+                  - patterns:
+                      - pattern-either:
+                          - pattern: $P.open($MODE, ...)
+                          - pattern: $P.open(..., mode=$MODE, ...)
+                      - pattern-not: io.open(...)
+              - metavariable-pattern:
+                  metavariable: $MODE
+                  pattern-either:
+                    - patterns:
+                        - pattern: '"..."'
+                        - pattern-regex: ^(?!.*b).*[wax+]
+                    - patterns:
+                        - pattern: $EXPR
+                        - pattern-not: '"..."'
 
+  # Reader modules need the same byte-write contract even without importing
+  # themselves. Keep the write patterns shared with the import-scoped rule.
+  - id: pelorus-strict-reader-fixture-bytes-module
+    languages: [python]
+    severity: ERROR
+    message: *strict_reader_message
+    options:
+      constant_propagation: false
+    paths:
+      include:
+        - /scripts/c_source.py
+        - /scripts/c_scan.py
+    pattern-either: *strict_reader_writes

@@ -497,18 +497,14 @@ def patch_self_test() -> list[str]:
         root = pathlib.Path(directory)
         for (mapped, allocation), cases in PATCH_CASES.items():
             for label, patch in cases.items():
-                (root / "test.patch").write_text(patch)
+                (root / "test.patch").write_bytes(patch.encode())
                 errors = check(
                     source_texts(root) + baseline, datetime.date(2026, 11, 11)
                 )
                 found = any("element-wise host read" in e for e in errors)
                 errors = [e for e in errors if "element-wise host read" not in e]
-                valid = (
-                    len(errors) == 1 and allocation in errors[0]
-                    if allocation
-                    else not errors
-                )
-                if found != mapped or not valid:
+                valid = [allocation in error for error in errors]
+                if found != mapped or valid != ([True] if allocation else []):
                     failures.append(f"patch case failed: {label}: {found}, {errors}")
     return failures
 
@@ -517,18 +513,22 @@ def source_self_test() -> list[str]:
     """Check file selection, patch line numbers and both rules in a real tree."""
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
-        for entry in KNOWN_READS:
-            (root / entry.file).write_text(entry.statement)
-        (root / "a.c").write_text(
-            ACCEPTED["device-local storage buffer"] + "\nmemcpy(dst, b->mapped_mem, n);"
-        )
-        (root / "b.h").write_text("x = ((T *)b->mapped_mem)[0];")
-        (root / "c.patch").write_text(
-            f"--- a/x.c\n+++ b/x.c\n@@ -1 +1,3 @@\n reader(b->mapped_mem);\n+reader(b->mapped_mem);\n+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n@@ -9,0 +9 @@\n+reader(b->mapped_mem);\n"
-        )
+        for name, text in {
+            **{entry.file: entry.statement for entry in KNOWN_READS},
+            "a.c": ACCEPTED["device-local storage buffer"]
+            + "\nmemcpy(dst, b->mapped_mem, n);",
+            "b.h": "x = ((T *)b->mapped_mem)[0];",
+            "c.patch": (
+                "--- a/x.c\n+++ b/x.c\n@@ -1 +1,3 @@\n reader(b->mapped_mem);\n"
+                "+reader(b->mapped_mem);\n"
+                f"+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n"
+                "@@ -9,0 +9 @@\n+reader(b->mapped_mem);\n"
+            ),
+        }.items():
+            (root / name).write_bytes(text.encode())
         path = root / "c.patch"
-        marker = "\\ No newline at end of file\n"
-        path.write_text(path.read_text().replace("@@ -9", marker + "@@ -9"))
+        marker = b"\\ No newline at end of file\n"
+        path.write_bytes(path.read_bytes().replace(b"@@ -9", marker + b"@@ -9"))
         errors = check(source_texts(root), datetime.date(2026, 11, 11), root)
     expected = (
         "b.h:1: element-wise",
