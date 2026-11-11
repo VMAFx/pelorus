@@ -10,13 +10,17 @@ removal and newline relocation, masking preserves text length.
 Unterminated literals remain unmasked from their opening quote to an unescaped
 newline or EOF. Unterminated block comments remain unmasked through EOF.
 Each patch hunk is an independent classification region with its own masked
-new-side context and added origins. Hunk markers and file headers end regions,
-preventing lexical state, calls, statements, alias tails or flags from crossing.
+new-side context and added origins. Header counts delimit each hunk, as git apply
+does; header-shaped body lines remain body lines. Lexical and classification
+state cannot cross hunks. Missing counts mean one. Empty body lines are context.
+Malformed headers, invalid body prefixes, negative counts, incomplete hunks and
+patches without hunks fail closed. Lines outside hunks are metadata and never
+scanned, because git apply ignores them.
 Only context and added lines enter lexing and splicing, in new-side order; the
 splice origin follows the previous new-side line. Removed lines and metadata
 are excluded from that input and restored as blank output at patch positions.
-Blank prefix offsets retain diagnostic line numbers; `+++ ` is a file header
-only immediately after `--- `. The flat patch_source view is for lexical fixtures.
+Blank prefix offsets retain diagnostic line numbers. The flat patch_source view
+is for lexical fixtures.
 This is a bounded lexical scan, with no preprocessor or macro expansion.
 C23 digit separators such as 1'000 become unterminated characters and leave
 the rest of that line unmasked.
@@ -253,7 +257,9 @@ def mask_c(text: str) -> str:
 
 def _patch_segment(lines: list[str]) -> tuple[list[str], set[int]]:
     """Lex only new-side lines, then restore blanks at excluded patch positions."""
-    positions = [i for i, line in enumerate(lines) if line.startswith(("+", " "))]
+    positions = [
+        i for i, line in enumerate(lines) if not line or line.startswith(("+", " "))
+    ]
     side = [lines[i][1:] for i in positions]
     added: set[int] = set()
     origin = 0
@@ -268,32 +274,59 @@ def _patch_segment(lines: list[str]) -> tuple[list[str], set[int]]:
     return out, added
 
 
-def _old_header(lines: list[str], index: int) -> bool:
-    """Recognize an old file header only when paired with a new file header."""
-    return (
-        index + 1 < len(lines)
-        and lines[index].startswith("--- ")
-        and lines[index + 1].startswith("+++ ")
-    )
+class PatchError(ValueError):
+    """Carry a patch line number and a fail-closed parsing diagnostic."""
+
+
+def _hunk_counts(line: str, number: int) -> tuple[int, int] | None:
+    """Read old and new counts, rejecting malformed hunk headers."""
+    if not line.startswith("@@"):
+        return None
+    match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+    if match is None:
+        raise PatchError(f"{number}: unreadable patch hunk header")
+    return tuple(int(match[i]) if match[i] is not None else 1 for i in (2, 4))
+
+
+def _consume_line(line: str, old: int, new: int, number: int) -> tuple[int, int]:
+    """Consume one body line, retaining markers and rejecting invalid counts."""
+    prefix = line[:1]
+    if prefix in ("", " "):
+        old, new = old - 1, new - 1
+    elif prefix == "-":
+        old -= 1
+    elif prefix == "+":
+        new -= 1
+    elif prefix != "\\":
+        raise PatchError(f"{number}: unreadable patch hunk body prefix")
+    if min(old, new) < 0:
+        raise PatchError(f"{number}: unreadable patch hunk negative count")
+    return old, new
 
 
 def patch_regions(patch: str) -> list[tuple[str, set[int]]]:
-    """Return separate hunk texts with blank prefix offsets for patch diagnostics."""
-    lines = patch.split("\n")
+    """Read counted hunks with independent lexical state and patch line offsets."""
+    lines = patch.removesuffix("\n").split("\n")
     regions: list[tuple[str, set[int]]] = []
-    start = 0
-    for i, line in enumerate([*lines, "@@"]):
-        new_header = (
-            line.startswith("+++ ") and i > 0 and lines[i - 1].startswith("--- ")
-        )
-        boundary = line.startswith("@@") or new_header
-        if boundary or _old_header(lines, i) or line.startswith(("diff ", "index ")):
-            if start < i:
-                masked, added = _patch_segment(lines[start:i])
+    old = new = start = 0
+    seen = False
+    for i, line in enumerate(lines):
+        if old or new:
+            old, new = _consume_line(line, old, new, i + 1)
+            if old == new == 0:
+                masked, added = _patch_segment(lines[start : i + 1])
                 regions.append(
                     ("\n" * start + "\n".join(masked), {start + n for n in added})
                 )
-            start = i + 1
+        else:
+            counts = _hunk_counts(line, i + 1)
+            if counts is not None:
+                old, new = counts
+                start, seen = i + 1, True
+    if old or new:
+        raise PatchError(f"{len(lines) + 1}: unreadable patch hunk at EOF")
+    if not seen:
+        raise PatchError("1: unreadable patch hunk: no hunk found")
     return regions
 
 
@@ -309,16 +342,23 @@ def patch_source(patch: str) -> tuple[str, set[int]]:
     return "\n".join(out), added
 
 
-def source_texts(files: pathlib.Path) -> list[tuple[str, str, set[int] | None]]:
-    """Read C/H files and isolated patch hunks with original diagnostic offsets."""
+def source_texts(
+    files: pathlib.Path,
+) -> list[tuple[str, str | PatchError, set[int] | None]]:
+    """Read source regions and retain patch errors for the caller to report."""
     texts = []
     for path in sorted(files.iterdir()):
         if path.suffix in (".c", ".h", ".patch"):
             raw = path.read_text()
-            regions = (
-                patch_regions(raw) if path.suffix == ".patch" else [(mask_c(raw), None)]
-            )
-            texts.extend((path.name, text, added) for text, added in regions)
+            try:
+                regions = (
+                    patch_regions(raw)
+                    if path.suffix == ".patch"
+                    else [(mask_c(raw), None)]
+                )
+                texts.extend((path.name, text, added) for text, added in regions)
+            except PatchError as error:
+                texts.append((path.name, error, None))
     return texts
 
 
@@ -366,7 +406,9 @@ def self_test() -> list[str]:
         masked = mask_c(source)
         if masked != expected or masked.count("\n") != source.count("\n"):
             failures.append(f"C masking case failed: {label}: {masked!r}")
-    return failures + _patch_self_test() + _argument_self_test()
+    return (
+        failures + _patch_self_test() + _argument_self_test() + _patch_error_self_test()
+    )
 
 
 def _argument_self_test() -> list[str]:
@@ -381,62 +423,98 @@ def _argument_self_test() -> list[str]:
     return failures
 
 
+PATCH_FIXTURES = {
+    "empty context": ("@@ -1 +1,2 @@ section\n\n+x;", "\n\nx;", {3}),
+    "trailing addition": ("@@ -1 +1 @@\n-a\n+z\n+x;", "\n\nz\n", {3}),
+    "zero counts": ("@@ -0,0 +0,0 @@\n+x;", "\n", set()),
+    "removed decrement splice": (
+        "@@ -1,2 +1,2 @@\n x = b->mapped_\\\n--- old;\n+mem;",
+        "\nx = b->mapped_mem;\n\n",
+        {2},
+    ),
+    "removed splice origin": (
+        "@@ -1,2 +1,2 @@\n x = b->mapped_\\\n-old;\n+mem;",
+        "\nx = b->mapped_mem;\n\n",
+        {2},
+    ),
+    "marker splice origin": (
+        "@@ -1,0 +1,2 @@\n+x = b->mapped_\\\n\\ No newline at end of file\n+mem;",
+        "\nx = b->mapped_mem;\n\n",
+        {2},
+    ),
+    "context splice origin": (
+        "@@ -1,1 +1,2 @@\n x = reader\\\n+(b->mapped_mem);",
+        "\nx = reader(b->mapped_mem);\n",
+        {2},
+    ),
+    "added splice origin": (
+        "@@ -1,1 +1,2 @@\n+x = reader\\\n (b->mapped_mem);",
+        "\nx = reader(b->mapped_mem);\n",
+        {2},
+    ),
+    "context closes comment": (
+        "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,3 @@\n+/*\n */\n+reader(b->mapped_mem);\n",
+        "\n\n\n  \n  \nreader(b->mapped_mem);\n",
+        {4, 6},
+    ),
+    "context opens comment": (
+        "@@ -1,2 +1,4 @@\n /*\n+mapped_mem\n */\n+x;",
+        "\n  \n          \n  \nx;",
+        {3, 5},
+    ),
+    "added pre-increment": ("@@ -1,0 +1,1 @@\n+++ i;", "\n++ i;", {2}),
+    "added increment": (
+        "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+++i;",
+        "\n\n\n++i;",
+        {4},
+    ),
+    "removed and marker": (
+        "@@ -1,1 +1,1 @@\n-reader(b->mapped_mem);\n\\ No newline at end of file\n+x;",
+        "\n\n\nx;",
+        {4},
+    ),
+    "segment reset": (
+        "@@ -1,0 +1,1 @@\n+/*\n@@ -1,1 +1,2 @@\n+reader(b->mapped_mem);\n */",
+        "\n/*\n\nreader(b->mapped_mem);\n*/",
+        {2, 4},
+    ),
+}
+
+
 def _patch_self_test() -> list[str]:
     """Keep exact new-side text and origins across lexical and splice boundaries."""
     failures: list[str] = []
-    patches = {
-        "removed decrement splice": (
-            "@@\n x = b->mapped_\\\n--- old;\n+mem;",
-            "\nx = b->mapped_mem;\n\n",
-            {2},
-        ),
-        "removed splice origin": (
-            "@@\n x = b->mapped_\\\n-old;\n+mem;",
-            "\nx = b->mapped_mem;\n\n",
-            {2},
-        ),
-        "marker splice origin": (
-            "@@\n+x = b->mapped_\\\n\\ No newline at end of file\n+mem;",
-            "\nx = b->mapped_mem;\n\n",
-            {2},
-        ),
-        "context splice origin": (
-            "@@\n x = reader\\\n+(b->mapped_mem);",
-            "\nx = reader(b->mapped_mem);\n",
-            {2},
-        ),
-        "added splice origin": (
-            "@@\n+x = reader\\\n (b->mapped_mem);",
-            "\nx = reader(b->mapped_mem);\n",
-            {2},
-        ),
-        "context closes comment": (
-            "--- a/x.c\n+++ b/x.c\n@@ -1 +1 @@\n+/*\n */\n+reader(b->mapped_mem);\n",
-            "\n\n\n  \n  \nreader(b->mapped_mem);\n",
-            {4, 6},
-        ),
-        "context opens comment": (
-            "@@\n /*\n+mapped_mem\n */\n+x;",
-            "\n  \n          \n  \nx;",
-            {3, 5},
-        ),
-        "added pre-increment": ("@@\n+++ i;", "\n++ i;", {2}),
-        "added increment": ("--- a/x.c\n+++ b/x.c\n+++i;", "\n\n++i;", {3}),
-        "removed and marker": (
-            "@@\n-reader(b->mapped_mem);\n\\ No newline at end of file\n+x;",
-            "\n\n\nx;",
-            {4},
-        ),
-        "segment reset": (
-            "@@\n+/*\n@@\n+reader(b->mapped_mem);\n */",
-            "\n/*\n\nreader(b->mapped_mem);\n*/",
-            {2, 4},
-        ),
-    }
-    for label, (source, expected, origins) in patches.items():
-        masked, added = patch_source(source)
+    for label, (source, expected, origins) in PATCH_FIXTURES.items():
+        try:
+            masked, added = patch_source(source)
+        except PatchError as error:
+            failures.append(f"C patch case failed: {label}: {error}")
+            continue
         if (masked, added) != (expected, origins) or masked.count("\n") != source.count(
             "\n"
         ):
             failures.append(f"C patch case failed: {label}: {masked!r}")
+    return failures
+
+
+def _patch_error_self_test() -> list[str]:
+    """Require each corrupt patch class to retain a line-numbered read error."""
+    failures: list[str] = []
+    cases = {
+        "incomplete body": ("@@ -1,2 +1,2 @@\n-a\n+z", 4),
+        "header at EOF": ("@@ -1 +1 @@", 2),
+        "unknown prefix": ("@@ -1,2 +1,2 @@\n a\n*b", 3),
+        "negative old count": ("@@ -1,0 +1 @@\n-a\n+z", 2),
+        "negative new count": ("@@ -1 +1,0 @@\n+z\n-a", 2),
+        "malformed header": ("@@ -0,0 +0,0 @@\n@@ broken\n+x;", 2),
+        "no hunk": ("--- a/x.c\n+++ b/x.c\n+x;", 1),
+        "nested header": ("@@ -1 +1 @@\n@@ -2 +2 @@", 2),
+    }
+    for label, (patch, line) in cases.items():
+        try:
+            patch_regions(patch)
+        except PatchError as error:
+            if str(error).startswith(f"{line}: unreadable patch hunk"):
+                continue
+        failures.append(f"C patch error case failed: {label}")
     return failures

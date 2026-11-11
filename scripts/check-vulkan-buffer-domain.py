@@ -25,12 +25,12 @@ if str(_SCRIPTS_DIR) not in sys.path:
 sys.dont_write_bytecode = True
 from c_scan import (  # noqa: E402
     MAX_CALL_CHARS,
+    PatchError,
     added_overlap,
     argument_index,
     call_args,
     enclosing_call,
     mask_c,
-    patch_source,
     parse_args,
     pointer_expression,
     resolve,
@@ -120,10 +120,8 @@ def check_text(
         line = text.count("\n", 0, match.start()) + 1
         call = match.group(0)
         usage_arg, mem_arg = CALLS[call]
-        args, end = call_args(text, match.end() - 1) or (
-            [],
-            min(len(text), match.start() + MAX_CALL_CHARS),
-        )
+        limit = min(len(text), match.start() + MAX_CALL_CHARS)
+        args, end = call_args(text, match.end() - 1) or ([], limit)
         if not added_overlap(text, match.start(), end, added):
             continue
         if len(args) <= mem_arg:
@@ -242,16 +240,13 @@ def check_known(
         if key in seen:
             errors.append(f"duplicate known read entry {entry.file}: {entry.statement}")
         seen.add(key)
-        count = sum(
-            (name, statement) == (entry.file, entry.statement)
-            for name, statement, _ in sites
-        )
+        count = sum((name, statement) == key for name, statement, _ in sites)
         errors += known_entry_errors(entry, count, today)
     return errors
 
 
 def check(
-    texts: list[tuple[str, str, set[int] | None]],
+    texts: list[tuple[str, str | PatchError, set[int] | None]],
     today: datetime.date,
     files: pathlib.Path = FILES,
 ) -> list[str]:
@@ -261,6 +256,9 @@ def check(
     total = mapped_total = 0
     sites: list[Site] = []
     for name, text, added in texts:
+        if isinstance(text, PatchError):
+            errors.append(f"{name}:{text}")
+            continue
         found, calls = check_text(name, text, added)
         errors += found
         total += calls
@@ -272,8 +270,7 @@ def check(
         errors.append(f"no buffer allocation call found under {directory}")
     if mapped_total == 0:
         errors.append(f"no mapped_mem use found under {directory}")
-    errors += check_known(sites, today)
-    return errors
+    return errors + check_known(sites, today)
 
 
 HOST_ONLY = "VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT"
@@ -284,29 +281,11 @@ STORAGE_ALLOC = (
 PLANTED = {
     "subscript allocation": f"ff_vk_create_buf(s, &bufs[i, 0], n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
     "inline flags in a C file": STORAGE_ALLOC,
-    "named flag variable": (
-        f"const VkMemoryPropertyFlagBits mem = {HOST_ONLY};\n"
-        f"const VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | {STORAGE};\n"
-        + POOL
-    ),
-    "usage built with |=": (
-        f"VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;\nusage |= {STORAGE};\n"
-        f"const VkMemoryPropertyFlagBits mem = {HOST_ONLY};\n" + POOL
-    ),
-    "local name reused by a later function": (
-        f"static int a(void) {{ int mem = {DEVICE_LOCAL}; return mem; }}\n"
-        f"static int b(void) {{ int mem = {HOST_ONLY};\n"
-        f"return ff_vk_get_pooled_buffer(v, &p, &r, {STORAGE}, NULL, n, mem); }}"
-    ),
+    "named flag variable": f"const VkMemoryPropertyFlagBits mem = {HOST_ONLY};\nconst VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | {STORAGE};\n{POOL}",
+    "usage built with |=": f"VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;\nusage |= {STORAGE};\nconst VkMemoryPropertyFlagBits mem = {HOST_ONLY};\n{POOL}",
+    "local name reused by a later function": f"static int a(void) {{ int mem = {DEVICE_LOCAL}; return mem; }}\nstatic int b(void) {{ int mem = {HOST_ONLY};\nreturn ff_vk_get_pooled_buffer(v, &p, &r, {STORAGE}, NULL, n, mem); }}",
     "ff_vk_create_buf storage buffer": f"ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
     "unresolvable local flags": STORAGE_ALLOC.replace(STORAGE, "usage"),
-    "hand-maintained patch": patch_source(
-        "+++ b/x.c\n+" + STORAGE_ALLOC.replace("\n", "\n+")
-    )[0],
-    "patch line starting with ++": patch_source(
-        "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,3 @@\n+++i; "
-        + STORAGE_ALLOC.replace("\n", "\n+")
-    )[0],
 }
 ACCEPTED = {
     "host-only transfer staging buffer": STORAGE_ALLOC.replace(
@@ -350,9 +329,6 @@ MAPPED_PLANTED = {
     "alias RHS sum": "{ T *p = (T *)b->mapped_mem; p[0] = 1 + p[1]; }",
     "alias index": "{ T *p = (T *)b->mapped_mem; q[p[0]] = 1; }",
     "unterminated char": "x = 'a; reader(b->mapped_mem);",
-    "patch context comment close": patch_source(
-        "@@\n+/*\n */\n+reader(b->mapped_mem);"
-    )[0],
     "keyword sizeof": "memcpy(dst, sizeof(b->mapped_mem), n);",
     "keyword if": "if (b->mapped_mem) x = 1;",
     "parenthesised reader": "memcpy(dst, (reader)(b->mapped_mem), n);",
@@ -368,7 +344,6 @@ MAPPED_PLANTED = {
     "struct read": "x = ((const T *)b->mapped_mem)->total[0];",
     "stored pointer": "*out = (const T *)b->mapped_mem;",
     "sink input": "pel_mc_build_predictors((const int32_t *)b->mapped_mem, mvy, n, prev, &gx, &gy);",
-    "patch reader": patch_source("--- a/x.c\n+++ b/x.c\n+reader(b->mapped_mem);")[0],
     "memcpy size": "memcpy(dst, src, ((T *)b->mapped_mem)[0]);",
     "offset": "memcpy(dst, b->mapped_mem + off, n);",
     "cast equality": "((T *)b->mapped_mem)[0] == 1;",
@@ -441,9 +416,8 @@ def mapped_self_test() -> list[str]:
 def self_test() -> list[str]:
     """Exercise allocation and mapped-read rules with planted regressions."""
 
-    failures = (
-        mapped_self_test() + scan_self_test() + source_self_test() + patch_self_test()
-    )
+    failures = mapped_self_test() + scan_self_test()
+    failures += source_self_test() + patch_self_test()
     for planted, cases in ((True, PLANTED), (False, ACCEPTED)):
         for label, text in cases.items():
             errors, calls = check_text(label, mask_c(text))
@@ -458,59 +432,83 @@ def self_test() -> list[str]:
 
 PATCH_CASES = {
     (True, ""): {
-        "patch result escape": " p =\n+memcpy(b->mapped_mem, src, n);",
-        "patch spliced reader": " x = reader\\\n+(b->mapped_mem);",
-        "patch context alias": " { T *p = (T *)b->mapped_mem;\n+x = p[0];\n }",
-        "patch open alias": " T *p = (T *)b->mapped_mem;\n+x = p[0];",
-        "patch reader argument": " reader(\n+b->mapped_mem);",
-        "patch added alias": " {\n+T *p = (T *)b->mapped_mem;\n x = p[0];\n }",
-        "patch removed splice": " x = b->mapped_\\\n-old;\n+mem;",
-        "patch added removed splice": "+x = b->mapped_\\\n-old;\n+mem;",
-        "patch marker splice": "+x = b->mapped_\\\n\\ No newline at end of file\n+mem;",
-        "patch context splice read": " if (ok) \\\n+    value = ((const int *)buf->mapped_mem)[0];\n     do_something();",
-        "patch hunk call": "+memcpy(dst,\n@@ -9 +9 @@\n+b->mapped_mem, n);",
-        "patch hunk context call": " memcpy(dst,\n@@ -9 +9,2 @@\n+b->mapped_mem, n);",
-        "patch hunk alias": " {\n+T *p = (T *)b->mapped_mem;\n@@ -9 +10 @@\n+p[0] = 1; }",
-        "patch file call": "+memcpy(dst,\n--- a/y.c\n+++ b/y.c\n+b->mapped_mem, n);",
-        "patch open added alias": " {\n+T *p = (T *)b->mapped_mem;",
+        "patch context comment close": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,3 @@\n+/*\n */\n+reader(b->mapped_mem);",
+        "patch reader": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+reader(b->mapped_mem);",
+        "patch header-shaped read": "--- a/x.c\n+++ b/x.c\n@@ -1 +1 @@\n--- i;\n+++ i, x = b->mapped_mem[0];",
+        "patch header-shaped argument": "--- a/x.c\n+++ b/x.c\n@@ -1,2 +1,2 @@\n reader(\n--- i,\n+++ i, b->mapped_mem);",
+        "patch header-shaped then read": "--- a/x.c\n+++ b/x.c\n@@ -1 +1,2 @@\n--- i;\n+++ i;\n+x = b->mapped_mem[0];",
+        "patch empty context": "--- a/x.c\n+++ b/x.c\n@@ -1,3 +1,3 @@\n a\n\n-b\n+x = b->mapped_mem[0];",
+        "patch result escape": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n p =\n+memcpy(b->mapped_mem, src, n);",
+        "patch spliced reader": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n x = reader\\\n+(b->mapped_mem);",
+        "patch context alias": "--- a/x.c\n+++ b/x.c\n@@ -1,2 +1,3 @@\n { T *p = (T *)b->mapped_mem;\n+x = p[0];\n }",
+        "patch open alias": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n T *p = (T *)b->mapped_mem;\n+x = p[0];",
+        "patch reader argument": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n reader(\n+b->mapped_mem);",
+        "patch added alias": "--- a/x.c\n+++ b/x.c\n@@ -1,3 +1,4 @@\n {\n+T *p = (T *)b->mapped_mem;\n x = p[0];\n }",
+        "patch removed splice": "--- a/x.c\n+++ b/x.c\n@@ -1,2 +1,2 @@\n x = b->mapped_\\\n-old;\n+mem;",
+        "patch added removed splice": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n+x = b->mapped_\\\n-old;\n+mem;",
+        "patch marker splice": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,2 @@\n+x = b->mapped_\\\n\\ No newline at end of file\n+mem;",
+        "patch context splice read": "--- a/x.c\n+++ b/x.c\n@@ -1,2 +1,3 @@\n if (ok) \\\n+    value = ((const int *)buf->mapped_mem)[0];\n     do_something();",
+        "patch hunk call": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+memcpy(dst,\n@@ -9,0 +9 @@\n+b->mapped_mem, n);",
+        "patch hunk context call": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,1 @@\n memcpy(dst,\n@@ -9,0 +9 @@\n+b->mapped_mem, n);",
+        "patch hunk alias": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n {\n+T *p = (T *)b->mapped_mem;\n@@ -9,0 +10 @@\n+p[0] = 1; }",
+        "patch file call": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+memcpy(dst,\n--- a/y.c\n+++ b/y.c\n@@ -0,0 +1 @@\n+b->mapped_mem, n);",
+        "patch open added alias": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n {\n+T *p = (T *)b->mapped_mem;",
+    },
+    (False, "unreadable patch hunk"): {
+        "patch incomplete": "@@ -1,2 +1,2 @@\n-a\n+z",
+        "patch EOF header": "@@ -1 +1 @@",
+        "patch unknown prefix": "@@ -1,2 +1,2 @@\n a\n*b",
+        "patch negative count": "@@ -1,0 +1 @@\n-a\n+z",
+        "patch malformed header": "@@ -0,0 +0,0 @@\n@@ broken\n+x;",
+        "patch no hunk": "--- a/x.c\n+++ b/x.c\n+x;",
     },
     (False, "storage buffer"): {
-        "patch split allocation": f" ff_vk_create_buf(s, &buf, n, NULL, NULL,\n+{STORAGE}, {HOST_ONLY});",
-        "patch subscript allocation": f"+ff_vk_create_buf(s, &bufs[i, 0], n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
+        "hand-maintained patch": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,3 @@\n+"
+        + STORAGE_ALLOC.replace("\n", "\n+"),
+        "patch line starting with ++": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,3 @@\n+++i; "
+        + STORAGE_ALLOC.replace("\n", "\n+"),
+        "patch split allocation": f"--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n ff_vk_create_buf(s, &buf, n, NULL, NULL,\n+{STORAGE}, {HOST_ONLY});",
+        "patch subscript allocation": f"--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+ff_vk_create_buf(s, &bufs[i, 0], n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
     },
     (False, "unreadable"): {
-        "patch hunk allocation": f"+ff_vk_create_buf(s, &buf, n, NULL, NULL,\n@@ -9 +9 @@\n+{STORAGE}, {HOST_ONLY});",
+        "patch hunk allocation": f"--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+ff_vk_create_buf(s, &buf, n, NULL, NULL,\n@@ -9,0 +9 @@\n+{STORAGE}, {HOST_ONLY});",
     },
     (False, "flags not resolvable here"): {
-        "patch hunk flags": f"+flags = {DEVICE_LOCAL};\n@@ -9 +9 @@\n+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, flags);",
+        "patch hunk flags": f"--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+flags = {DEVICE_LOCAL};\n@@ -9,0 +9 @@\n+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, flags);",
     },
     (False, ""): {
-        "patch hunk context reader": "+y = 1;\n@@\n reader(b->mapped_mem);",
-        "patch hunk context alias": " T *p = (T *)b->mapped_mem;\n@@\n+x = p[0]; }",
-        "patch reader after addition": "+y = 1;\n x = reader(b->mapped_mem);",
-        "patch context reader": " x = reader(b->mapped_mem);\n+y = 1;",
-        "patch context allocation": f" ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n+y = 1;",
+        "patch trailing addition": "@@ -1 +1 @@\n-a\n+z\n+x = b->mapped_mem[0];",
+        "patch hunk context reader": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+y = 1;\n@@ -9 +9 @@\n reader(b->mapped_mem);",
+        "patch hunk context alias": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,1 @@\n T *p = (T *)b->mapped_mem;\n@@ -9,0 +9 @@\n+x = p[0]; }",
+        "patch reader after addition": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n+y = 1;\n x = reader(b->mapped_mem);",
+        "patch context reader": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n x = reader(b->mapped_mem);\n+y = 1;",
+        "patch context allocation": f"--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n+y = 1;",
     },
 }
 
 
 def patch_self_test() -> list[str]:
-    """Exercise patch context and added origins through file selection."""
+    """Exercise patch classification and parse diagnostics through full checks."""
     failures: list[str] = []
+    baseline = [(e.file, e.statement, None) for e in KNOWN_READS]
+    baseline.append(("valid.c", ACCEPTED["device-local storage buffer"], None))
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         for (mapped, allocation), cases in PATCH_CASES.items():
             for label, patch in cases.items():
-                (root / "test.patch").write_text("--- a/x.c\n+++ b/x.c\n@@\n" + patch)
-                sites, errors = [], []
-                for name, text, added in source_texts(root):
-                    sites += mapped_sites(name, text, added)[0]
-                    errors += check_text(name, text, added)[0]
-                valid = (
-                    any(allocation in e for e in errors) if allocation else not errors
+                (root / "test.patch").write_text(patch)
+                errors = check(
+                    source_texts(root) + baseline, datetime.date(2026, 11, 11)
                 )
-                if bool(sites) != mapped or not valid:
-                    failures.append(f"patch case failed: {label}: {sites}, {errors}")
+                found = any("element-wise host read" in e for e in errors)
+                errors = [e for e in errors if "element-wise host read" not in e]
+                valid = (
+                    len(errors) == 1 and allocation in errors[0]
+                    if allocation
+                    else not errors
+                )
+                if found != mapped or not valid:
+                    failures.append(f"patch case failed: {label}: {found}, {errors}")
     return failures
 
 
@@ -525,9 +523,7 @@ def source_self_test() -> list[str]:
         )
         (root / "b.h").write_text("x = ((T *)b->mapped_mem)[0];")
         (root / "c.patch").write_text(
-            "--- a/x.c\n+++ b/x.c\n@@ -1 +1,3 @@\n reader(b->mapped_mem);\n"
-            "+reader(b->mapped_mem);\n"
-            f"+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n@@ -9 +9 @@\n+reader(b->mapped_mem);\n"
+            f"--- a/x.c\n+++ b/x.c\n@@ -1 +1,3 @@\n reader(b->mapped_mem);\n+reader(b->mapped_mem);\n+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n@@ -9,0 +9 @@\n+reader(b->mapped_mem);\n"
         )
         errors = check(source_texts(root), datetime.date(2026, 11, 11), root)
     expected = (
