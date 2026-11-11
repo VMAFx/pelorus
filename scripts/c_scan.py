@@ -79,6 +79,21 @@ def call_args(text: str, start: int) -> tuple[list[str], int] | None:
     return None
 
 
+def argument_index(text: str, start: int, pos: int) -> int:
+    """Count depth-one commas before a token in a bounded call."""
+
+    depth = 0
+    index = 0
+    for char in text[start:pos]:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "," and depth == 1:
+            index += 1
+    return index
+
+
 def _splice(text: str) -> str:
     """Join escaped newlines and defer their line count to the next newline."""
     out: list[str] = []
@@ -223,6 +238,7 @@ def _patch_self_test() -> list[str]:
             "@@\n /*\n+mapped_mem\n */\n+x;",
             "\n\n          \n\nx;",
         ),
+        "added pre-increment": ("@@\n+++ i;", "\n++ i;"),
         "added increment": ("--- a/x.c\n+++ b/x.c\n+++i;", "\n\n++i;"),
         "removed and marker": (
             "@@\n-reader(b->mapped_mem);\n\\ No newline at end of file\n+x;",

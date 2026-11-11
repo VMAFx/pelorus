@@ -37,6 +37,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 sys.dont_write_bytecode = True
 from c_scan import (  # noqa: E402
     MAX_CALL_CHARS,
+    argument_index,
     block_tail,
     call_args,
     mask_c,
@@ -175,21 +176,6 @@ def enclosing_call(text: str, pos: int) -> tuple[str, int] | None:
         elif depth == 0 and char in ";{}":
             return None
     return None
-
-
-def argument_index(text: str, start: int, pos: int) -> int:
-    """Count depth-one commas before a token in a bounded call."""
-
-    depth = 0
-    index = 0
-    for char in text[start:pos]:
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-        elif char == "," and depth == 1:
-            index += 1
-    return index
 
 
 def pointer_expression(arg: str) -> bool:
@@ -437,6 +423,8 @@ MAPPED_PLANTED = {
     "store with mapped RHS": "((T *)b->mapped_mem)[0] = ((T *)c->mapped_mem)[0];",
 }
 MAPPED_ACCEPTED = {
+    "alias first store": "{ T *p = (T *)b->mapped_mem; p[0] = 1; }",
+    "store after block": "{ if (x) { y = 1; } ((uint32_t *)b->mapped_mem)[0] = 0; }",
     "literal token": 'log("mapped_mem");',
     "void memset": "(void)memset(b->mapped_mem, 0, n);",
     "comment splits token": "mapped/**/_mem;",

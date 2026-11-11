@@ -45,6 +45,9 @@ All source paths below are relative to `ffmpeg-patches/files/`. Argument indices
 | First hunk adds `/*`; second hunk adds a mapped read followed by context `*/` | Refused | The `@@` reset prevents the second hunk's context from closing a comment in the first hunk and hiding the read |
 | `log("mapped_mem");`, `mapped/**/_mem` | Allowed; zero mapped tokens | Literals cannot fabricate tokens; comments separate tokens |
 | `(void)memset(b->mapped_mem, 0, n);` | Allowed | The destination return value is explicitly discarded |
+| `{ T *p = (T *)b->mapped_mem; p[0] = 1; }` | Allowed; one mapped token | The `alias first store` case accepts the first use with an empty statement prefix |
+| `{ if (x) { y = 1; } ((uint32_t *)b->mapped_mem)[0] = 0; }` | Allowed | The `store after block` case starts its statement after the closing brace |
+| Patch source `@@\n+++ i;` | Added code `\n++ i;` | The `added pre-increment` case retains a spaced increment without a preceding `---` header |
 | Plain alias stores after a loop block, an `if` condition, `else` and `do` | Allowed | The `write alias` case exercises statement starts after `}`, `)` and the two keywords |
 | `{ T *a = (T *)b->mapped_mem; struct s *c = (struct s *)b->mapped_mem; int *d = (int *)b->mapped_mem; a[0] = 1; c[0] = 1; d[0] = 1; }` | Allowed | Three mapped tokens cover uppercase, tagged and scalar type-name groups; the live denoise scan covers `_t` names |
 | `vf_pelorus_analyze_vulkan.c:710` | Known, #596 | `base` feeds per-tile reads; cost scales with resolution |
@@ -55,7 +58,7 @@ The scanner is lexical, not a C parser, and performs no preprocessing or macro e
 
 ## Verification
 
-Patch lexical state resets at `@@` hunk markers. A `+++` file header is recognized only immediately after a `---` line; `+++i;` remains added code. Removed and metadata lines are blank on the new side, so separate `diff`, `index` and `---` reset rules are unnecessary. Generic statement-boundary helpers are shared through `scripts/c_scan.py`.
+Patch lexical state resets at `@@` hunk markers. A `+++` file header is recognized only immediately after a `---` line; `+++i;` remains added code. Removed and metadata lines are blank on the new side, so separate `diff`, `index` and `---` reset rules are unnecessary. Generic statement-boundary helpers and the depth-one comma counter `argument_index()` are shared through `scripts/c_scan.py`; the checker imports the counter beside `call_args()` without changing its behavior.
 
 Run the focused checker from the repository root:
 
@@ -70,7 +73,7 @@ The live tree and self-tests exit 0. File integration uses `TemporaryDirectory` 
 
 ### Self-test strength
 
-All 32 independent rule mutants below exited 1 on 2026-11-11. Copy both Python files into `$TMPDIR/<name>/scripts/`, change only the named file, and run `python3 -I <copy>/check-vulkan-buffer-domain.py --self-test --files ffmpeg-patches/files` from the repository root. Each replacement is represented by exact Python string literals (including indentation and escaped newlines); require `text.count(old) == 1` before `text.replace(old, new, 1)`. The 22 earlier mutants and ten additional mutants covering G1–G6 were all rerun against this implementation.
+All 35 independent rule mutants below exited 1 on 2026-11-11. Copy both Python files into `$TMPDIR/<name>/scripts/`, change only the named file, and run `python3 -I <copy>/check-vulkan-buffer-domain.py --self-test --files ffmpeg-patches/files` from the repository root. Each replacement is represented by exact Python string literals (including indentation and escaped newlines); require `text.count(old) == 1` before `text.replace(old, new, 1)`. The table lists 22 mutants from the first review round, ten for the bulk-suffix, statement-start, type-group, block-nesting, literal-newline and hunk-reset rules, and three for the empty-prefix, closing-brace and spaced-increment boundaries; all were rerun against these final Python files. Each of the last three exited 0 before its planted case was added and now exits 1.
 
 | Mutant | File | Exact replacement (`old` → `new`) | Observed exit | First failing self-test case |
 | --- | --- | --- | --- | --- |
@@ -100,12 +103,15 @@ All 32 independent rule mutants below exited 1 on 2026-11-11. Copy both Python f
 | statement-close-paren-off | `c_scan.py` | `'";{})"'` → `'";{}"'` | 1 | `mapped case failed: write alias` |
 | statement-close-brace-off | `c_scan.py` | `'";{})"'` → `'";{)"'` | 1 | `mapped case failed: write alias` |
 | statement-else-do-off | `c_scan.py` | `'bool(re.search(r"\\b(?:else\|do)$", prefix))'` → `'False'` | 1 | `mapped case failed: write alias` |
-| type-uppercase-off | `check-vulkan-buffer-domain.py` | `'\|[A-Z]\\w*'` → `''` | 1 | `mapped case failed: alias type groups` |
+| type-uppercase-off | `check-vulkan-buffer-domain.py` | `'\|[A-Z]\\w*'` → `''` | 1 | `mapped case failed: alias first store` |
 | type-tag-off | `check-vulkan-buffer-domain.py` | `'\|(?:struct\|union\|enum)\\s+\\w+'` → `''` | 1 | `mapped case failed: alias type groups` |
 | type-scalars-off | `check-vulkan-buffer-domain.py` | `'const\|volatile\|restrict\|signed\|unsigned\|short\|long\|int\|char\|float\|double\|void\|_Bool'` → `'const'` | 1 | `mapped case failed: alias type groups` |
 | block-nesting-off | `c_scan.py` | `'if text[pos] == "{":'` → `'if False:'` | 1 | `mapped case failed: nested block alias escape` |
 | literal-newline-off | `c_scan.py` | `'        if char == "\\n":\n            return text[start:pos], pos\n'` → `''` | 1 | `C masking case failed: literal newline stop` |
 | hunk-reset-off | `c_scan.py` | `'line.startswith("@@") or new_header'` → `'new_header'` | 1 | `C patch case failed: segment reset` |
+| statement-empty-prefix-off | `c_scan.py` | `'not prefix or prefix[-1]'` → `'prefix and prefix[-1]'` | 1 | `mapped case failed: alias first store` |
+| statement-at-close-brace-off | `c_scan.py` | `'for delimiter in ";{}"'` → `'for delimiter in ";{"'` | 1 | `mapped case failed: store after block` |
+| new-header-previous-off | `c_scan.py` | `' and i > 0 and lines[i - 1].startswith("--- ")'` → `''` | 1 | `C patch case failed: added pre-increment` |
 
 The classifier-off mutant first emits a stale analyze exception; mask-identity first emits a false mapped-read diagnostic for comment text at `vf_pelorus_analyze_vulkan.c:632`. Both also fail the quoted-brace self-test listed above. Other mutants report their failing case first. Disabling the member guard is independently caught by the member-qualified source argument; the destination-statement rule also refuses member-qualified destination calls. Disabling patch context is caught by the exact masked-output assertion, even though the unterminated-comment rule keeps the later reader visible.
 
@@ -137,4 +143,4 @@ These checks leave runtime sources and the FFmpeg patch stack unchanged. `REUSE.
 | F7: Alias store appears within an expression | Require every use to start a statement | Chained store, call argument, RHS/sum/index reads |
 | F8: File-selection behavior lacks integration coverage | Exercise C, header and patch files through `source_texts()` and `check()` | Temporary tree requires exactly `b.h:1`, `c.patch:5` and `c.patch:6` diagnostics |
 
-Rule/source mutation evidence checked at `2026-11-11T03:33:52Z`: `check-vulkan-buffer-domain.py` SHA-256 `7118f44b7eb07798b580a4362dc298120f0dfbcafecb172a6215c69c4273a1ad`; `c_scan.py` SHA-256 `ac1b13565c1b7145b35e027b40f9ade85b07b27330525c434c5cc13f6c4ee81d`. NLOC (nonblank, excluding `#` comment lines, including docstrings): checker 499; scanner 206. Local AST inspection counts branches, loops, comprehension clauses, conditional expressions, exception handlers and Boolean operators: the checker has at most 26 physical lines and 9 decision points per function; the scanner has at most 45 physical lines and 6 decision points per function. Both remain within the 60-line and 10-decision limits.
+Rule/source mutation evidence checked at `2026-11-11T03:44:06Z`: `check-vulkan-buffer-domain.py` SHA-256 `156e15163dc452db04e2c1848de36fb812546910432cfdb7c55ba6fd7bc6c89d`; `c_scan.py` SHA-256 `c266c4c6a3d4b43992c19ff0c69a5462159cbaad2f563e6b6540edacd0fcbe2a`. NLOC (nonblank, excluding `#` comment lines, including docstrings): checker 490; scanner 219. Local AST inspection counts branches, loops, comprehension clauses, conditional expressions, exception handlers and Boolean operators: the checker has at most 26 physical lines and 9 decision points per function; the scanner has at most 45 physical lines and 6 decision points per function. Both remain within the 60-line and 10-decision limits.
