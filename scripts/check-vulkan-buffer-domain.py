@@ -454,7 +454,8 @@ PATCH_CASES = {
         "patch file call": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+memcpy(dst,\n--- a/y.c\n+++ b/y.c\n@@ -0,0 +1 @@\n+b->mapped_mem, n);",
         "patch open added alias": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n {\n+T *p = (T *)b->mapped_mem;",
     },
-    (False, "unreadable patch hunk"): {
+    (False, "unreadable patch"): {
+        "patch trailing addition": "@@ -1 +1 @@\n-a\n+z\n+x = b->mapped_mem[0];",
         "patch incomplete": "@@ -1,2 +1,2 @@\n-a\n+z",
         "patch EOF header": "@@ -1 +1 @@",
         "patch unknown prefix": "@@ -1,2 +1,2 @@\n a\n*b",
@@ -477,7 +478,6 @@ PATCH_CASES = {
         "patch hunk flags": f"--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+flags = {DEVICE_LOCAL};\n@@ -9,0 +9 @@\n+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, flags);",
     },
     (False, ""): {
-        "patch trailing addition": "@@ -1 +1 @@\n-a\n+z\n+x = b->mapped_mem[0];",
         "patch hunk context reader": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+y = 1;\n@@ -9 +9 @@\n reader(b->mapped_mem);",
         "patch hunk context alias": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,1 @@\n T *p = (T *)b->mapped_mem;\n@@ -9,0 +9 @@\n+x = p[0]; }",
         "patch reader after addition": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n+y = 1;\n x = reader(b->mapped_mem);",

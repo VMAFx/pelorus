@@ -14,8 +14,16 @@ new-side context and added origins. Header counts delimit each hunk, as git appl
 does; header-shaped body lines remain body lines. Lexical and classification
 state cannot cross hunks. Missing counts mean one. Empty body lines are context.
 Malformed headers, invalid body prefixes, negative counts, incomplete hunks and
-patches without hunks fail closed. Lines outside hunks are metadata and never
-scanned, because git apply ignores them.
+patches without hunks fail closed. Outside bodies, only allow-listed file and
+index headers, new-file modes, hunk headers and adjacent end markers are accepted.
+Binary sections can write file content, so other metadata fails closed.
+Sources use strict UTF-8, LF-only splitting and only non-control characters, LF
+and tab. CRLF and lone CR fail closed: ISO C17 treats CR as a line end, while
+git apply splits on LF. Trigraphs fail closed before masking because ISO C17
+translates them even in comments and literals; C23 removal does not apply to
+FFmpeg 9, whose default is -std=c17. Digraphs, universal character names and
+macro bodies are not translated or expanded; measured mapped reads using them
+remain refused because the mapped_mem token stays visible.
 Only context and added lines enter lexing and splicing, in new-side order; the
 splice origin follows the previous new-side line. Removed lines and metadata
 are excluded from that input and restored as blank output at patch positions.
@@ -31,6 +39,8 @@ from __future__ import annotations
 import argparse
 import pathlib
 import re
+import tempfile
+import unicodedata
 
 
 MAX_CALL_CHARS = 4096
@@ -304,16 +314,27 @@ def _consume_line(line: str, old: int, new: int, number: int) -> tuple[int, int]
     return old, new
 
 
+def _patch_metadata(line: str, marker: bool) -> bool:
+    """Allow only known metadata shapes and an immediately trailing marker."""
+    shapes = (
+        r"diff --git a/\S+ b/\S+|index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]{6})?"
+        r"|new file mode [0-7]{6}|--- (?:a/\S+|/dev/null)|\+\+\+ b/\S+"
+    )
+    return re.fullmatch(shapes, line) is not None or (marker and line.startswith("\\ "))
+
+
 def patch_regions(patch: str) -> list[tuple[str, set[int]]]:
     """Read counted hunks with independent lexical state and patch line offsets."""
     lines = patch.removesuffix("\n").split("\n")
     regions: list[tuple[str, set[int]]] = []
     old = new = start = 0
     seen = False
+    marker = -1
     for i, line in enumerate(lines):
         if old or new:
             old, new = _consume_line(line, old, new, i + 1)
             if old == new == 0:
+                marker = i + 1
                 masked, added = _patch_segment(lines[start : i + 1])
                 regions.append(
                     ("\n" * start + "\n".join(masked), {start + n for n in added})
@@ -323,6 +344,8 @@ def patch_regions(patch: str) -> list[tuple[str, set[int]]]:
             if counts is not None:
                 old, new = counts
                 start, seen = i + 1, True
+            elif not _patch_metadata(line, i == marker):
+                raise PatchError(f"{i + 1}: unreadable patch metadata")
     if old or new:
         raise PatchError(f"{len(lines) + 1}: unreadable patch hunk at EOF")
     if not seen:
@@ -342,6 +365,25 @@ def patch_source(patch: str) -> tuple[str, set[int]]:
     return "\n".join(out), added
 
 
+def _read_source(path: pathlib.Path) -> str:
+    """Decode bytes without newline conversion and reject C phase-one hazards."""
+    kind = "patch" if path.suffix == ".patch" else "source"
+    try:
+        data = path.read_bytes()
+        raw = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        line = data.count(b"\n", 0, error.start) + 1
+        raise PatchError(f"{line}: unreadable {kind} UTF-8") from error
+    except OSError as error:
+        raise PatchError(f"1: unreadable {kind}: {error.strerror}") from error
+    for number, line in enumerate(raw.split("\n"), 1):
+        if any(unicodedata.category(c) == "Cc" and c not in "\t" for c in line):
+            raise PatchError(f"{number}: unreadable {kind} control character")
+        if re.search(r"\?\?[=(/)'<!>-]", line):
+            raise PatchError(f"{number}: unreadable {kind} trigraph")
+    return raw
+
+
 def source_texts(
     files: pathlib.Path,
 ) -> list[tuple[str, str | PatchError, set[int] | None]]:
@@ -349,8 +391,8 @@ def source_texts(
     texts = []
     for path in sorted(files.iterdir()):
         if path.suffix in (".c", ".h", ".patch"):
-            raw = path.read_text()
             try:
+                raw = _read_source(path)
                 regions = (
                     patch_regions(raw)
                     if path.suffix == ".patch"
@@ -425,8 +467,7 @@ def _argument_self_test() -> list[str]:
 
 PATCH_FIXTURES = {
     "empty context": ("@@ -1 +1,2 @@ section\n\n+x;", "\n\nx;", {3}),
-    "trailing addition": ("@@ -1 +1 @@\n-a\n+z\n+x;", "\n\nz\n", {3}),
-    "zero counts": ("@@ -0,0 +0,0 @@\n+x;", "\n", set()),
+    "zero counts": ("@@ -0,0 +0,0 @@", "", set()),
     "removed decrement splice": (
         "@@ -1,2 +1,2 @@\n x = b->mapped_\\\n--- old;\n+mem;",
         "\nx = b->mapped_mem;\n\n",
@@ -507,14 +548,74 @@ def _patch_error_self_test() -> list[str]:
         "negative old count": ("@@ -1,0 +1 @@\n-a\n+z", 2),
         "negative new count": ("@@ -1 +1,0 @@\n+z\n-a", 2),
         "malformed header": ("@@ -0,0 +0,0 @@\n@@ broken\n+x;", 2),
-        "no hunk": ("--- a/x.c\n+++ b/x.c\n+x;", 1),
+        "no hunk": ("--- a/x.c\n+++ b/x.c", 1),
+        "trailing addition": ("@@ -1 +1 @@\n-a\n+z\n+x;", 4),
         "nested header": ("@@ -1 +1 @@\n@@ -2 +2 @@", 2),
     }
-    for label, (patch, line) in cases.items():
-        try:
-            patch_regions(patch)
-        except PatchError as error:
-            if str(error).startswith(f"{line}: unreadable patch hunk"):
-                continue
-        failures.append(f"C patch error case failed: {label}")
+    cases.update({line: (line + "\n@@ -0,0 +0,0 @@", 1) for line in BAD_METADATA})
+    cases.update(
+        {
+            "blank between hunks": ("@@ -0,0 +0,0 @@\n\n@@ -0,0 +0,0 @@", 2),
+            "marker before hunk": ("\\ No newline at end of file\n@@ -0,0 +0,0 @@", 1),
+        }
+    )
+    sources = [
+        (label, "x.patch", raw.encode(), line) for label, (raw, line) in cases.items()
+    ]
+    sources += _reader_cases()
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        for label, name, data, line in sources:
+            path = root / name
+            path.write_bytes(data)
+            texts = source_texts(root)
+            path.unlink()
+            errors = [str(text) for _, text, _ in texts if isinstance(text, PatchError)]
+            valid = bool(texts) and not errors
+            if line:
+                valid = len(errors) == 1 and errors[0].startswith(f"{line}: unreadable")
+            if not valid:
+                failures.append(f"C source case failed: {label}: {errors}")
     return failures
+
+
+BAD_METADATA = (
+    "GIT binary patch",
+    "literal 40",
+    "delta 40",
+    "rename from a.c",
+    "rename to b.c",
+    "copy from a.c",
+    "copy to b.c",
+    "similarity index 90%",
+    "old mode 100644",
+    "new mode 100755",
+    "deleted file mode 100644",
+    "From: x",
+    "diff --git a/x.c b/x.c junk",
+    "index zz..yy",
+    "+++ /dev/null",
+)
+
+
+def _reader_cases() -> list[tuple[str, str, bytes, int]]:
+    """Plant reader hazards across source kinds and retain safe text boundaries."""
+    cases = []
+    for name, prefix in (
+        ("x.c", "// head\n"),
+        ("x.h", "// head\n"),
+        ("x.patch", "@@ -0,0 +1 @@\n+"),
+    ):
+        for bad in ("\r", "\r\n", "\0", "\f", "\v", "\x1b", "\x7f", "\x85"):
+            cases.append((repr(bad), name, (prefix + "a;" + bad + "x;").encode(), 2))
+        for raw in (
+            "x = b->mapped_\\\rmem[0];",
+            "x = b->mapped_??/\nmem[0];",
+            "char c = '??/''; int x = b->mapped_mem[0];",
+            "// ??=",
+            "/* ??( */",
+        ):
+            cases.append((raw, name, (prefix + raw).encode(), 2))
+        cases.append(("invalid UTF-8", name, prefix.encode() + b"\xff", 2))
+        cases.append(("safe text", name, (prefix + '\t/* — */ "??x";').encode(), 0))
+    return cases
