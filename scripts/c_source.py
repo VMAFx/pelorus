@@ -163,7 +163,7 @@ def source_texts(
                 )
                 aliases = set().union(*(mapped_aliases(text) for text, _ in regions))
                 for text, added in regions:
-                    text, errors = scan_directives(text, aliases)
+                    errors = scan_directives(text, aliases)[1]
                     texts.append((path.name, text, added))
                     texts.extend(
                         (path.name, PatchError(error), None) for error in errors

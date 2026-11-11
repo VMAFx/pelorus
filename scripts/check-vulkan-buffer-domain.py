@@ -34,9 +34,18 @@ from c_scan import (  # noqa: E402
     statement_bounds,
     store_only_tail,
 )
-from c_scan import call_patches, self_test as scan_self_test  # noqa: E402
+from c_scan import call_patches, scan_directives, self_test as scan_self_test  # noqa: E402
 from c_source import PatchError, self_test as reading_self_test, source_texts  # noqa: E402
 from c_source import KnownRead, lexical_self_test  # noqa: E402
+from vulkan_buffer_cases import (  # noqa: E402
+    ACCEPTED,
+    DEVICE_LOCAL,
+    HOST_ONLY,
+    PATCH_MACRO,
+    PLANTED,
+    STORAGE,
+    STORAGE_ALLOC,
+)
 
 ROOT = _SCRIPTS_DIR.parent
 FILES = ROOT / "ffmpeg-patches" / "files"
@@ -45,8 +54,6 @@ CALLS = {
     "ff_vk_get_pooled_buffer(": (3, 6),
     "ff_vk_create_buf(": (5, 6),
 }
-STORAGE = "VK_BUFFER_USAGE_STORAGE_BUFFER_BIT"
-DEVICE_LOCAL = "VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT"
 BULK = {"memcpy": {0: "write", 1: "read"}, "memset": {0: "write"}}
 SINKS = {
     "pel_mc_build_predictors": (
@@ -249,7 +256,9 @@ def check(
         found, calls = check_text(name, text, added)
         errors += found
         total += calls
-        refused, mapped_count = mapped_sites(name, text, added)
+        refused, mapped_count = mapped_sites(
+            name, scan_directives(text, set())[0], added
+        )
         sites += refused
         mapped_total += mapped_count
     directory = files.relative_to(ROOT) if files.is_relative_to(ROOT) else files
@@ -258,30 +267,6 @@ def check(
     if mapped_total == 0:
         errors.append(f"no mapped_mem use found under {directory}")
     return errors + check_known(sites, today)
-
-
-HOST_ONLY = "VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT"
-POOL = "ff_vk_get_pooled_buffer(s, &p, &r, usage, NULL, n, mem);"
-STORAGE_ALLOC = (
-    f"ff_vk_get_pooled_buffer(s, &p, &r,\n {STORAGE}, NULL, n,\n {HOST_ONLY});"
-)
-PLANTED = {
-    "subscript allocation": f"ff_vk_create_buf(s, &bufs[i, 0], n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
-    "inline flags in a C file": STORAGE_ALLOC,
-    "named flag variable": f"const VkMemoryPropertyFlagBits mem = {HOST_ONLY};\nconst VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | {STORAGE};\n{POOL}",
-    "usage built with |=": f"VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;\nusage |= {STORAGE};\nconst VkMemoryPropertyFlagBits mem = {HOST_ONLY};\n{POOL}",
-    "local name reused by a later function": f"static int a(void) {{ int mem = {DEVICE_LOCAL}; return mem; }}\nstatic int b(void) {{ int mem = {HOST_ONLY};\nreturn ff_vk_get_pooled_buffer(v, &p, &r, {STORAGE}, NULL, n, mem); }}",
-    "ff_vk_create_buf storage buffer": f"ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
-    "unresolvable local flags": STORAGE_ALLOC.replace(STORAGE, "usage"),
-}
-ACCEPTED = {
-    "host-only transfer staging buffer": STORAGE_ALLOC.replace(
-        STORAGE, "VK_BUFFER_USAGE_TRANSFER_SRC_BIT"
-    ),
-    "device-local storage buffer": STORAGE_ALLOC.replace(
-        HOST_ONLY, DEVICE_LOCAL + " | " + HOST_ONLY
-    ),
-}
 
 
 MAPPED_PLANTED = {
@@ -462,6 +447,7 @@ PATCH_CASES = {
         "patch no hunk": "--- a/x.c\n+++ b/x.c\n+x;",
     },
     (False, "storage buffer"): {
+        "patch macro allocation": "@@ -0,0 +1 @@\n+" + PATCH_MACRO,
         "hand-maintained patch": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,3 @@\n+"
         + STORAGE_ALLOC.replace("\n", "\n+"),
         "patch line starting with ++": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,3 @@\n+++i; "
@@ -476,6 +462,11 @@ PATCH_CASES = {
         "patch hunk flags": f"--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+flags = {DEVICE_LOCAL};\n@@ -9,0 +9 @@\n+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, flags);",
     },
     (False, ""): {
+        "patch device-local macro allocation": "@@ -0,0 +1 @@\n+"
+        + PATCH_MACRO.replace(HOST_ONLY, DEVICE_LOCAL),
+        "patch context macro allocation": "@@ -1 +1,2 @@\n "
+        + PATCH_MACRO
+        + "\n+y = 1;",
         "patch hunk context reader": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+y = 1;\n@@ -9 +9 @@\n reader(b->mapped_mem);",
         "patch hunk context alias": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,1 @@\n T *p = (T *)b->mapped_mem;\n@@ -9,0 +9 @@\n+x = p[0]; }",
         "patch reader after addition": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n+y = 1;\n x = reader(b->mapped_mem);",
@@ -517,6 +508,8 @@ def source_self_test() -> list[str]:
             "a.c": ACCEPTED["device-local storage buffer"]
             + "\nmemcpy(dst, b->mapped_mem, n);",
             "b.h": "x = ((T *)b->mapped_mem)[0];",
+            "macro.c": "// allocation\n" + PATCH_MACRO,
+            "mapped.c": "#define READ(b) ((b)->mapped_mem[0])",
             "c.patch": (
                 "--- a/x.c\n+++ b/x.c\n@@ -1 +1,3 @@\n reader(b->mapped_mem);\n"
                 "+reader(b->mapped_mem);\n"
@@ -529,11 +522,13 @@ def source_self_test() -> list[str]:
         errors = check(source_texts(root), datetime.date(2026, 11, 11), root)
     expected = (
         "b.h:1: element-wise",
+        "macro.c:2: storage buffer",
+        "mapped.c:1: mapped_mem in preprocessor directive",
         "c.patch:5: element-wise",
         "c.patch:6: storage buffer",
         "c.patch:9: element-wise",
     )
-    if len(errors) != 4 or not all(
+    if len(errors) != len(expected) or not all(
         any(e.startswith(p) for e in errors) for p in expected
     ):
         return [f"source tree case failed: {errors}"]
