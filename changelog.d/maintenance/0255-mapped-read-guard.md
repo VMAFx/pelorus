@@ -1,0 +1,1 @@
+- Extend the fast `vulkan-buffer-domain` check to refuse element-wise host reads of mapped GPU buffers while allowing bulk copies and writes; track three exact, expiring exceptions for #596 ([ADR-0255](docs/adr/0255-mapped-memory-host-reads.md)).

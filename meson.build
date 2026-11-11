@@ -303,7 +303,8 @@ test('vulkan-storage-domain',
 
 # ADR-0222 (#109): a storage buffer the shader reads must be device-local, or a
 # discrete GPU reads it over PCIe during the dispatch. --self-test plants a
-# host-only storage buffer per source shape and requires a refusal.
+# host-only storage buffer per source shape and requires a refusal. ADR-0255
+# also refuses element-wise mapped-memory host reads, allowing bulk copies and writes.
 test('vulkan-buffer-domain',
      python_prog,
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-vulkan-buffer-domain.py',
