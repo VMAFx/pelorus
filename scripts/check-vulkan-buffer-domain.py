@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
-"""Keep shader buffers device-local and copy before mapped host reads (ADR-0255).
+"""Keep storage device-local and copy before mapped host reads (ADR-0255).
 
-Storage allocations require DEVICE_LOCAL; transfer-only buffers may stay host-only.
-Mapped reads permit memcpy arguments 0/1, memset argument 0 and the documented
-write-only sink arguments below. A mapped destination bulk call must be its own
-expression statement, optionally cast to void; its returned pointer cannot escape.
-Member-qualified callees fail closed. Plain cast stores and block-local non-const
-aliases are allowed only with declaration specifiers from an explicit type
-allow-list and later uses that start statements and perform plain indexed stores.
-Known reads require exact statements, issues, MEL categories and expiry dates;
-stale sites, duplicate sites or entries, and expired exceptions fail.
-C/H files and patch new sides undergo splicing and lexical masking; patch
-diagnostics require added-line overlap. No macro or pointer-provenance analysis
-is performed. Use --files DIR for a copy and --self-test for planted regressions.
+Permit documented bulk/sink arguments, plain cast stores and store-only aliases.
+Bulk destination calls must discard their result; member callees fail closed.
+Exact known reads require unique sites and entries with unexpired MEL dates.
+C/H files and isolated patch hunks undergo splicing and lexical masking; patch
+reports require added-line overlap. Macro and pointer provenance are not followed.
 """
 
 from __future__ import annotations
@@ -326,6 +319,9 @@ ACCEPTED = {
 
 
 MAPPED_PLANTED = {
+    "bracket call closer": "memcpy(b->mapped_mem, src, n];",
+    "brace call closer": "memcpy(b->mapped_mem, src, n};",
+    "compound literal sink": "pel_mc_build_predictors(h, (S){a, b}.w, n, (int32_t *)b->mapped_mem, &gx, &gy);",
     "subscript sink input": "pel_mc_build_predictors(hosts[i = 0, j = 0, k], (const int32_t *)b->mapped_mem, n, prev, &gx, &gy);",
     "brace sink input": "pel_mc_build_predictors((S){a, b, c}.p, (const int32_t *)b->mapped_mem, n, prev, &gx, &gy);",
     "nested mapped source": "memcpy(dst, ((FFVkBuffer *)b->mapped_mem)->mapped_mem, n);",
@@ -461,41 +457,40 @@ def self_test() -> list[str]:
 
 
 PATCH_CASES = {
-    "patch result escape": (" p =\n+memcpy(b->mapped_mem, src, n);", True, False),
-    "patch spliced reader": (" x = reader\\\n+(b->mapped_mem);", True, False),
-    "patch context alias": (
-        " { T *p = (T *)b->mapped_mem;\n+x = p[0];\n }",
-        True,
-        False,
-    ),
-    "patch split allocation": (
-        f" ff_vk_create_buf(s, &buf, n, NULL, NULL,\n+{STORAGE}, {HOST_ONLY});",
-        False,
-        True,
-    ),
-    "patch open alias": (" T *p = (T *)b->mapped_mem;\n+x = p[0];", True, False),
-    "patch reader after addition": (
-        "+y = 1;\n x = reader(b->mapped_mem);",
-        False,
-        False,
-    ),
-    "patch context reader": (" x = reader(b->mapped_mem);\n+y = 1;", False, False),
-    "patch context allocation": (
-        f" ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n+y = 1;",
-        False,
-        False,
-    ),
-    "patch reader argument": (" reader(\n+b->mapped_mem);", True, False),
-    "patch added alias": (
-        " {\n+T *p = (T *)b->mapped_mem;\n x = p[0];\n }",
-        True,
-        False,
-    ),
-    "patch subscript allocation": (
-        f"+ff_vk_create_buf(s, &bufs[i, 0], n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
-        False,
-        True,
-    ),
+    (True, ""): {
+        "patch result escape": " p =\n+memcpy(b->mapped_mem, src, n);",
+        "patch spliced reader": " x = reader\\\n+(b->mapped_mem);",
+        "patch context alias": " { T *p = (T *)b->mapped_mem;\n+x = p[0];\n }",
+        "patch open alias": " T *p = (T *)b->mapped_mem;\n+x = p[0];",
+        "patch reader argument": " reader(\n+b->mapped_mem);",
+        "patch added alias": " {\n+T *p = (T *)b->mapped_mem;\n x = p[0];\n }",
+        "patch removed splice": " x = b->mapped_\\\n-old;\n+mem;",
+        "patch added removed splice": "+x = b->mapped_\\\n-old;\n+mem;",
+        "patch marker splice": "+x = b->mapped_\\\n\\ No newline at end of file\n+mem;",
+        "patch context splice read": " if (ok) \\\n+    value = ((const int *)buf->mapped_mem)[0];\n     do_something();",
+        "patch hunk call": "+memcpy(dst,\n@@ -9 +9 @@\n+b->mapped_mem, n);",
+        "patch hunk context call": " memcpy(dst,\n@@ -9 +9,2 @@\n+b->mapped_mem, n);",
+        "patch hunk alias": " {\n+T *p = (T *)b->mapped_mem;\n@@ -9 +10 @@\n+p[0] = 1; }",
+        "patch file call": "+memcpy(dst,\n--- a/y.c\n+++ b/y.c\n+b->mapped_mem, n);",
+        "patch open added alias": " {\n+T *p = (T *)b->mapped_mem;",
+    },
+    (False, "storage buffer"): {
+        "patch split allocation": f" ff_vk_create_buf(s, &buf, n, NULL, NULL,\n+{STORAGE}, {HOST_ONLY});",
+        "patch subscript allocation": f"+ff_vk_create_buf(s, &bufs[i, 0], n, NULL, NULL, {STORAGE}, {HOST_ONLY});",
+    },
+    (False, "unreadable"): {
+        "patch hunk allocation": f"+ff_vk_create_buf(s, &buf, n, NULL, NULL,\n@@ -9 +9 @@\n+{STORAGE}, {HOST_ONLY});",
+    },
+    (False, "flags not resolvable here"): {
+        "patch hunk flags": f"+flags = {DEVICE_LOCAL};\n@@ -9 +9 @@\n+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, flags);",
+    },
+    (False, ""): {
+        "patch hunk context reader": "+y = 1;\n@@\n reader(b->mapped_mem);",
+        "patch hunk context alias": " T *p = (T *)b->mapped_mem;\n@@\n+x = p[0]; }",
+        "patch reader after addition": "+y = 1;\n x = reader(b->mapped_mem);",
+        "patch context reader": " x = reader(b->mapped_mem);\n+y = 1;",
+        "patch context allocation": f" ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n+y = 1;",
+    },
 }
 
 
@@ -504,13 +499,17 @@ def patch_self_test() -> list[str]:
     failures: list[str] = []
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
-        for label, (patch, mapped, allocation) in PATCH_CASES.items():
-            (root / "test.patch").write_text("@@\n" + patch)
-            for name, text, added in source_texts(root):
-                sites, _ = mapped_sites(name, text, added)
-                errors, _ = check_text(name, text, added)
-                result = (bool(sites), any("storage buffer" in e for e in errors))
-                if result != (mapped, allocation):
+        for (mapped, allocation), cases in PATCH_CASES.items():
+            for label, patch in cases.items():
+                (root / "test.patch").write_text("--- a/x.c\n+++ b/x.c\n@@\n" + patch)
+                sites, errors = [], []
+                for name, text, added in source_texts(root):
+                    sites += mapped_sites(name, text, added)[0]
+                    errors += check_text(name, text, added)[0]
+                valid = (
+                    any(allocation in e for e in errors) if allocation else not errors
+                )
+                if bool(sites) != mapped or not valid:
                     failures.append(f"patch case failed: {label}: {sites}, {errors}")
     return failures
 
@@ -528,15 +527,16 @@ def source_self_test() -> list[str]:
         (root / "c.patch").write_text(
             "--- a/x.c\n+++ b/x.c\n@@ -1 +1,3 @@\n reader(b->mapped_mem);\n"
             "+reader(b->mapped_mem);\n"
-            f"+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n"
+            f"+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n@@ -9 +9 @@\n+reader(b->mapped_mem);\n"
         )
         errors = check(source_texts(root), datetime.date(2026, 11, 11), root)
     expected = (
         "b.h:1: element-wise",
         "c.patch:5: element-wise",
         "c.patch:6: storage buffer",
+        "c.patch:8: element-wise",
     )
-    if len(errors) != 3 or not all(
+    if len(errors) != 4 or not all(
         any(e.startswith(p) for e in errors) for p in expected
     ):
         return [f"source tree case failed: {errors}"]

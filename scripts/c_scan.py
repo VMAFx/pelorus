@@ -9,10 +9,14 @@ quotes and replace contents, including escapes, with spaces. Other than splice
 removal and newline relocation, masking preserves text length.
 Unterminated literals remain unmasked from their opening quote to an unescaped
 newline or EOF. Unterminated block comments remain unmasked through EOF.
-Patch segments retain masked new-side context and added-line origins. Headers
-stay blank so diagnostics retain patch line numbers. Hunk markers (`@@`) reset
-lexical state; `+++ ` is a file header only immediately after `--- `.
-Removed lines and metadata stay blank without affecting lexical state.
+Each patch hunk is an independent classification region with its own masked
+new-side context and added origins. Hunk markers and file headers end regions,
+preventing lexical state, calls, statements, alias tails or flags from crossing.
+Only context and added lines enter lexing and splicing, in new-side order; the
+splice origin follows the previous new-side line. Removed lines and metadata
+are excluded from that input and restored as blank output at patch positions.
+Blank prefix offsets retain diagnostic line numbers; `+++ ` is a file header
+only immediately after `--- `. The flat patch_source view is for lexical fixtures.
 This is a bounded lexical scan, with no preprocessor or macro expansion.
 C23 digit separators such as 1'000 become unterminated characters and leave
 the rest of that line unmasked.
@@ -248,50 +252,73 @@ def mask_c(text: str) -> str:
 
 
 def _patch_segment(lines: list[str]) -> tuple[list[str], set[int]]:
-    """Mask the new side and carry added origins onto joined splice lines."""
-    side = [line[1:] if line.startswith(("+", " ")) else "" for line in lines]
+    """Lex only new-side lines, then restore blanks at excluded patch positions."""
+    positions = [i for i, line in enumerate(lines) if line.startswith(("+", " "))]
+    side = [lines[i][1:] for i in positions]
     added: set[int] = set()
     origin = 0
-    for i, line in enumerate(lines):
+    for i, pos in enumerate(positions):
         if i == 0 or not re.search(r"\\[ \t]*\r?$", side[i - 1]):
-            origin = i
-        if line.startswith("+"):
+            origin = pos
+        if lines[pos].startswith("+"):
             added.add(origin + 1)
-    return mask_c("\n".join(side)).split("\n"), added
+    out = [""] * len(lines)
+    for pos, masked in zip(positions, mask_c("\n".join(side)).split("\n")):
+        out[pos] = masked
+    return out, added
 
 
-def patch_source(patch: str) -> tuple[str, set[int]]:
-    """Return masked new-side text and added origins, preserving patch lines."""
+def _old_header(lines: list[str], index: int) -> bool:
+    """Recognize an old file header only when paired with a new file header."""
+    return (
+        index + 1 < len(lines)
+        and lines[index].startswith("--- ")
+        and lines[index + 1].startswith("+++ ")
+    )
+
+
+def patch_regions(patch: str) -> list[tuple[str, set[int]]]:
+    """Return separate hunk texts with blank prefix offsets for patch diagnostics."""
     lines = patch.split("\n")
-    out: list[str] = []
-    added: set[int] = set()
+    regions: list[tuple[str, set[int]]] = []
     start = 0
-    for i, line in enumerate(lines):
+    for i, line in enumerate([*lines, "@@"]):
         new_header = (
             line.startswith("+++ ") and i > 0 and lines[i - 1].startswith("--- ")
         )
-        if line.startswith("@@") or new_header:
-            masked, origins = _patch_segment(lines[start:i])
-            out.extend(masked if start < i else [])
-            added.update(start + origin for origin in origins)
-            out.append("")
+        boundary = line.startswith("@@") or new_header
+        if boundary or _old_header(lines, i) or line.startswith(("diff ", "index ")):
+            if start < i:
+                masked, added = _patch_segment(lines[start:i])
+                regions.append(
+                    ("\n" * start + "\n".join(masked), {start + n for n in added})
+                )
             start = i + 1
-    masked, origins = _patch_segment(lines[start:])
-    out.extend(masked if start < len(lines) else [])
-    added.update(start + origin for origin in origins)
+    return regions
+
+
+def patch_source(patch: str) -> tuple[str, set[int]]:
+    """Combine masked regions for lexical fixtures, retaining every patch line."""
+    out = [""] * len(patch.split("\n"))
+    added: set[int] = set()
+    for text, origins in patch_regions(patch):
+        for i, line in enumerate(text.split("\n")):
+            if line:
+                out[i] = line
+        added.update(origins)
     return "\n".join(out), added
 
 
 def source_texts(files: pathlib.Path) -> list[tuple[str, str, set[int] | None]]:
-    """Read masked C/H files and patch new sides with added-line origins."""
+    """Read C/H files and isolated patch hunks with original diagnostic offsets."""
     texts = []
     for path in sorted(files.iterdir()):
         if path.suffix in (".c", ".h", ".patch"):
             raw = path.read_text()
-            text, added = (
-                patch_source(raw) if path.suffix == ".patch" else (mask_c(raw), None)
+            regions = (
+                patch_regions(raw) if path.suffix == ".patch" else [(mask_c(raw), None)]
             )
-            texts.append((path.name, text, added))
+            texts.extend((path.name, text, added) for text, added in regions)
     return texts
 
 
@@ -358,6 +385,21 @@ def _patch_self_test() -> list[str]:
     """Keep exact new-side text and origins across lexical and splice boundaries."""
     failures: list[str] = []
     patches = {
+        "removed decrement splice": (
+            "@@\n x = b->mapped_\\\n--- old;\n+mem;",
+            "\nx = b->mapped_mem;\n\n",
+            {2},
+        ),
+        "removed splice origin": (
+            "@@\n x = b->mapped_\\\n-old;\n+mem;",
+            "\nx = b->mapped_mem;\n\n",
+            {2},
+        ),
+        "marker splice origin": (
+            "@@\n+x = b->mapped_\\\n\\ No newline at end of file\n+mem;",
+            "\nx = b->mapped_mem;\n\n",
+            {2},
+        ),
         "context splice origin": (
             "@@\n x = reader\\\n+(b->mapped_mem);",
             "\nx = reader(b->mapped_mem);\n",
