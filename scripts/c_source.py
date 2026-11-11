@@ -16,8 +16,8 @@ and tab. CRLF and lone CR fail closed: ISO C17 treats CR as a line end, while
 git apply splits on LF. Trigraphs fail closed before masking because ISO C17
 translates them even in comments and literals; C23 removal does not apply to
 FFmpeg 9, whose default is -std=c17. Digraphs and token pastes also fail closed
-before masking, including inside comments and literals. Universal character
-names and macro bodies are not translated or expanded.
+on raw and spliced new-side text before masking, including comments and literals.
+Universal character names and macro bodies are not translated or expanded.
 Only context and added lines enter lexing and splicing, in new-side order; the
 splice origin follows the previous new-side line. Removed lines and metadata
 are excluded from that input and restored as blank output at patch positions.
@@ -32,11 +32,18 @@ import re
 import tempfile
 import unicodedata
 
-from c_scan import mask_c, patch_segment, scan_directives
-
-
-class PatchError(ValueError):
-    """Carry a patch line number and a fail-closed parsing diagnostic."""
+from c_scan import (
+    PatchError,
+    alias_directive_cases,
+    alias_patch_cases,
+    check_spliced,
+    mapped_aliases,
+    mask_c,
+    patch_segment,
+    preprocessing_hazard,
+    scan_directives,
+    splice_cases,
+)
 
 
 def _hunk_counts(line: str, number: int) -> tuple[int, int] | None:
@@ -74,6 +81,18 @@ def _patch_metadata(line: str, marker: bool) -> bool:
     return re.fullmatch(shapes, line) is not None or (marker and line.startswith("\\ "))
 
 
+def _patch_segment_at(
+    lines: list[str], start: int, i: int
+) -> tuple[list[str], set[int]]:
+    """Translate a hunk-local refusal into its physical patch line number."""
+    try:
+        masked, added = patch_segment(lines[start : i + 1])
+    except PatchError as error:
+        number, message = str(error).split(":", 1)
+        raise PatchError(f"{start + int(number)}:{message}") from error
+    return masked, added
+
+
 def patch_regions(patch: str) -> list[tuple[str, set[int]]]:
     """Read counted hunks with independent lexical state and patch line offsets."""
     lines = patch.removesuffix("\n").split("\n")
@@ -86,7 +105,7 @@ def patch_regions(patch: str) -> list[tuple[str, set[int]]]:
             old, new = _consume_line(line, old, new, i + 1)
             if old == new == 0:
                 marker = i + 1
-                masked, added = patch_segment(lines[start : i + 1])
+                masked, added = _patch_segment_at(lines, start, i)
                 regions.append(
                     ("\n" * start + "\n".join(masked), {start + n for n in added})
                 )
@@ -132,10 +151,11 @@ def _read_source(path: pathlib.Path) -> str:
             raise PatchError(f"{number}: unreadable {kind} control character")
         if re.search(r"\?\?[=(/)'<!>-]", line):
             raise PatchError(f"{number}: unreadable {kind} trigraph")
-        if re.search(r"<:|:>|<%|%>|%:", line):
-            raise PatchError(f"{number}: unreadable {kind} digraph")
-        if "##" in line:
-            raise PatchError(f"{number}: unreadable {kind} token paste")
+        hazard = preprocessing_hazard(line)
+        if hazard:
+            raise PatchError(f"{number}: unreadable {kind} {hazard[1]}")
+    if kind == "source":
+        check_spliced(raw, kind)
     return raw
 
 
@@ -153,8 +173,9 @@ def source_texts(
                     if path.suffix == ".patch"
                     else [(mask_c(raw), None)]
                 )
+                aliases = set().union(*(mapped_aliases(text) for text, _ in regions))
                 for text, added in regions:
-                    text, errors = scan_directives(text, added)
+                    text, errors = scan_directives(text, aliases)
                     texts.append((path.name, text, added))
                     texts.extend(
                         (path.name, PatchError(error), None) for error in errors
@@ -279,7 +300,7 @@ def _patch_error_self_test() -> list[str]:
         (label, "x.patch", raw.encode(), f"{line}: unreadable")
         for label, (raw, line) in cases.items()
     ]
-    sources += _reader_cases() + _mode_cases() + _preprocessing_cases()
+    sources += _reader_cases() + _mode_cases() + _preprocessing_cases() + splice_cases()
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         for label, name, data, expected in sources:
@@ -435,7 +456,7 @@ def _directive_self_test() -> list[str]:
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         for name in ("x.c", "x.h", "x.patch"):
-            for source, refused in cases:
+            for source, refused in cases + alias_directive_cases():
                 raw = "// head\n" + source
                 line = 2
                 if name.endswith(".patch"):
@@ -447,6 +468,11 @@ def _directive_self_test() -> list[str]:
                 path.write_bytes(raw.encode())
                 texts = source_texts(root)
                 path.unlink()
+                line += next(
+                    i
+                    for i, part in enumerate(source.split("\n"))
+                    if part.lstrip().startswith("#")
+                )
                 expected = [f"{line}: mapped_mem in preprocessor directive"]
                 errors = [
                     str(text) for _, text, _ in texts if isinstance(text, PatchError)
@@ -459,14 +485,14 @@ def _directive_self_test() -> list[str]:
 def _directive_patch_self_test() -> list[str]:
     """Keep context directives separate and mark added continuations at their origin."""
     cases = (
-        ("@@ -1 +1,2 @@\n #define MM mapped_mem\n+x = 1;", []),
+        ("@@ -1 +1,2 @@\n #define MM mapped_mem\n+x = 1;", [2]),
         ("@@ -1 +1,2 @@\n #define MM \\\n+mapped_mem", [2]),
         ("@@ -1 +1,2 @@\n+#define MM \\\n mapped_mem", [2]),
     )
     failures = []
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
-        for raw, lines in cases:
+        for raw, lines in cases + alias_patch_cases():
             (root / "x.patch").write_bytes(raw.encode())
             errors = [
                 str(text)

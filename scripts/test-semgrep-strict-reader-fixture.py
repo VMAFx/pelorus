@@ -154,7 +154,11 @@ TEMPFILE_FORMS = tuple(
     (f"{prefix}{name}({argument})", f"{prefix}{name}:{argument}")
     for name in ("NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile")
     for prefix in ("tempfile.", "", "other.")
-    for argument in ("{mode}", "mode={mode}")
+    for argument in (
+        ("1024, {mode}", "1024, mode={mode}", "max_size=1024, mode={mode}")
+        if name == "SpooledTemporaryFile"
+        else ("{mode}", "mode={mode}")
+    )
 )
 
 
@@ -164,6 +168,11 @@ def fixture_cases() -> list[tuple[str, str, bool]]:
         (f"{prefix}{name}:default", f"{prefix}{name}()", False)
         for name in ("NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile")
         for prefix in ("", "other.")
+    ]
+    defaults += [
+        (f"{prefix}spooled:{size}", f"{prefix}SpooledTemporaryFile({size})", False)
+        for prefix in ("tempfile.", "", "other.")
+        for size in ("1024", "size")
     ]
     return (
         list(CASES)
@@ -260,7 +269,7 @@ def step_importer_cases() -> str | None:
 
 
 def plant_matrix(tree: pathlib.Path) -> dict[tuple[str, int], tuple[str, bool]]:
-    """Plant identical writes in listed paths and an unlisted reader importer."""
+    """Plant imported and parameter-shadowed calls in listed and unlisted paths."""
     scopes = sorted(READER_PATHS | {CHECKER_REL, "scripts/other.py"})
     expected = {}
     for relative in scopes:
@@ -282,6 +291,25 @@ def plant_matrix(tree: pathlib.Path) -> dict[tuple[str, int], tuple[str, bool]]:
                 label,
                 refused and relative != "scripts/other.py",
             )
+        lines += [
+            "def shadowed(TextIOWrapper, NamedTemporaryFile, TemporaryFile,",
+            "             SpooledTemporaryFile, fdopen):",
+        ]
+        for label, source, refused in fixture_cases():
+            if source.startswith(
+                (
+                    "TextIOWrapper(",
+                    "NamedTemporaryFile(",
+                    "TemporaryFile(",
+                    "SpooledTemporaryFile(",
+                    "fdopen(",
+                )
+            ):
+                lines.append("    " + source)
+                expected[(relative, len(lines))] = (
+                    "shadowed:" + label,
+                    refused and relative != "scripts/other.py",
+                )
         if relative == CHECKER_REL:
             lines.append("import c_scan")
         make_tree(tree, relative, "\n".join(lines) + "\n")
@@ -451,18 +479,16 @@ def main(argv: list[str] | None = None) -> int:
         tmp = pathlib.Path(directory)
         (tmp / "cfg").mkdir()
         try:
-            steps = (
-                (step_importer_cases, ()),
-                (step_planted_cases, (semgrep_bin, tmp, rule_file)),
-                (step_scope_drift, (semgrep_bin, tmp, repo_root, rule_file)),
-                (step_real_tree, (semgrep_bin, tmp, repo_root, rule_file)),
-                (step_planted_revert, (semgrep_bin, tmp, repo_root, rule_file)),
+            problem = (
+                step_importer_cases()
+                or step_planted_cases(semgrep_bin, tmp, rule_file)
+                or step_scope_drift(semgrep_bin, tmp, repo_root, rule_file)
+                or step_real_tree(semgrep_bin, tmp, repo_root, rule_file)
+                or step_planted_revert(semgrep_bin, tmp, repo_root, rule_file)
             )
-            for step, arguments in steps:
-                problem = step(*arguments)
-                if problem:
-                    sys.stderr.write(problem + "\n")
-                    return 1
+            if problem:
+                sys.stderr.write(problem + "\n")
+                return 1
         except (ScanError, OSError, subprocess.SubprocessError) as err:
             sys.stderr.write(f"{err}\n")
             return 1

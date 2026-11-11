@@ -33,7 +33,7 @@ from c_scan import (  # noqa: E402
     statement_bounds,
     store_only_tail,
 )
-from c_scan import self_test as scan_self_test  # noqa: E402
+from c_scan import call_patches, self_test as scan_self_test  # noqa: E402
 from c_source import PatchError, self_test as reading_self_test, source_texts  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -496,7 +496,7 @@ def patch_self_test() -> list[str]:
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         for (mapped, allocation), cases in PATCH_CASES.items():
-            for label, patch in cases.items():
+            for label, patch in (cases | call_patches(mapped, allocation)).items():
                 (root / "test.patch").write_bytes(patch.encode())
                 errors = check(
                     source_texts(root) + baseline, datetime.date(2026, 11, 11)

@@ -781,9 +781,9 @@ rules:
                       - pattern: $X.TemporaryFile(..., mode=$MODE, ...)
                       - pattern: TemporaryFile($MODE, ...)
                       - pattern: TemporaryFile(..., mode=$MODE, ...)
-                      - pattern: $X.SpooledTemporaryFile($MODE, ...)
+                      - pattern: $X.SpooledTemporaryFile($SIZE, $MODE, ...)
                       - pattern: $X.SpooledTemporaryFile(..., mode=$MODE, ...)
-                      - pattern: SpooledTemporaryFile($MODE, ...)
+                      - pattern: SpooledTemporaryFile($SIZE, $MODE, ...)
                       - pattern: SpooledTemporaryFile(..., mode=$MODE, ...)
                   - pattern-either: &strict_reader_fdopen
                       - pattern: $X.fdopen($FD, $MODE, ...)
