@@ -1,19 +1,6 @@
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
-"""Mask C text so comments and literals neither hide nor fabricate code tokens.
-
-Splicing precedes comment and literal recognition, as in C translation phases
-2 and 3. Swallowed newlines move after the next surviving newline, or to EOF.
-Comments become spaces with their newlines retained; literals retain their
-quotes and replace contents, including escapes, with spaces. Other than splice
-removal and newline relocation, masking preserves text length.
-Unterminated literals remain unmasked from their opening quote to an unescaped
-newline or EOF. Unterminated block comments remain unmasked through EOF.
-Source reading and patch parsing live in c_source.py.
-Only phases 1–2 are modelled; macro expansion is outside this bounded scan.
-C23 digit separators such as 1'000 become unterminated characters and leave
-the rest of that line unmasked.
-"""
+"""Mask C and bound lexical regions; contracts: ADR-0255, source I/O: c_source.py."""
 
 from __future__ import annotations
 
@@ -23,6 +10,7 @@ import re
 
 
 MAX_CALL_CHARS = 4096
+CAST = r"\(\s*(?:const\s+)?\w+(?:\s+\w+)*\s*\*+\s*\)"
 
 
 class PatchError(ValueError):
@@ -296,8 +284,23 @@ def mask_c(text: str) -> str:
 
 
 def mapped_aliases(text: str) -> set[str]:
-    """Collect pointer declarations initialized with mapped memory across a region."""
-    return set(re.findall(r"\*\s*(\w+)\s*=\s*[^;{}]*\bmapped_mem\b", text))
+    """Collect declared or assigned mapped aliases, including chained assignments."""
+    return set(re.findall(r"(?=\b(\w+)\s*=(?!=)[^;{}]*\bmapped_mem\b)", text))
+
+
+def mapped_binding(text: str, pos: int) -> str | None:
+    """Find the nearest assignment name, crossing parentheses belonging to casts."""
+    prefix = re.split(r"[;{}(]", re.sub(CAST, "", text[:pos]))[-1]
+    binding = re.search(r"\b(\w+)\s*=(?!=)[^;{}=]*$", prefix)
+    return binding[1] if binding else None
+
+
+def binding_tail(text: str, pos: int, end: int) -> int:
+    """Extend refused bindings through the block tail on either classifier path."""
+    if mapped_binding(text, pos) is None:
+        return end
+    tail = block_tail(text, end)
+    return len(text) if tail is None else end + len(tail)
 
 
 def directive_alias(text: str, aliases: set[str]) -> bool:
@@ -559,3 +562,24 @@ def _call_tail_patches() -> dict[str, str]:
         )
         for close in (")", "")
     }
+
+
+def mode_cases() -> list[tuple[str, str, bytes, str]]:
+    """Accept regular-file metadata and reject unsupported modes at their line."""
+    cases = []
+    modes = [(mode, True) for mode in ("100644", "100755")]
+    modes += [(mode, False) for mode in ("120000", "160000", "100664")]
+    metadata_cases = [("index ab..cd", True)]
+    metadata_cases += [
+        (prefix + mode, accepted)
+        for prefix in ("new file mode ", "index ab..cd ")
+        for mode, accepted in modes
+    ]
+    metadata_cases += [
+        ("new file mode " + mode, False) for mode in ("040000", "junk", "")
+    ]
+    for metadata, accepted in metadata_cases:
+        raw = f"diff --git a/x.c b/x.c\n{metadata}\n@@ -0,0 +1 @@\n+x;"
+        expected = "" if accepted else "2: unreadable patch metadata"
+        cases.append((metadata, "x.patch", raw.encode(), expected))
+    return cases

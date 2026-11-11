@@ -1,28 +1,10 @@
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
-"""Read strict source text and parse unified patches into independent regions.
+"""Read strict UTF-8 sources and independent counted unified-patch hunks.
 
-Each patch hunk is an independent classification region with its own masked
-new-side context and added origins. Header counts delimit each hunk, as git apply
-does; header-shaped body lines remain body lines. Lexical and classification
-state cannot cross hunks. Missing counts mean one. Empty body lines are context.
-Malformed headers, invalid body prefixes, negative counts, incomplete hunks and
-patches without hunks fail closed. Outside bodies, only allow-listed file and
-index headers, regular-file modes 100644/100755, hunk headers and adjacent end
-markers are accepted.
-Binary sections can write file content, so other metadata fails closed.
-Sources use strict UTF-8, LF-only splitting and only non-control characters, LF
-and tab. CRLF and lone CR fail closed: ISO C17 treats CR as a line end, while
-git apply splits on LF. Trigraphs fail closed before masking because ISO C17
-translates them even in comments and literals; C23 removal does not apply to
-FFmpeg 9, whose default is -std=c17. Digraphs and token pastes also fail closed
-on raw and spliced new-side text before masking, including comments and literals.
-Universal character names and macro bodies are not translated or expanded.
-Only context and added lines enter lexing and splicing, in new-side order; the
-splice origin follows the previous new-side line. Removed lines and metadata
-are excluded from that input and restored as blank output at patch positions.
-Blank prefix offsets retain diagnostic line numbers. The flat patch_source view
-is for lexical fixtures.
+Reject controls except tab, Unicode format characters, trigraphs, digraphs and
+pastes before masking. LF alone splits lines; patch metadata is allow-listed.
+Detailed translation and region contracts: docs/adr/0255-mapped-memory-host-reads.md.
 """
 
 from __future__ import annotations
@@ -31,6 +13,8 @@ import pathlib
 import re
 import tempfile
 import unicodedata
+from collections.abc import Callable
+from typing import NamedTuple
 
 from c_scan import (
     PatchError,
@@ -39,6 +23,7 @@ from c_scan import (
     check_spliced,
     mapped_aliases,
     mask_c,
+    mode_cases,
     patch_segment,
     preprocessing_hazard,
     scan_directives,
@@ -147,8 +132,11 @@ def _read_source(path: pathlib.Path) -> str:
     except OSError as error:
         raise PatchError(f"1: unreadable {kind}: {error.strerror}") from error
     for number, line in enumerate(raw.split("\n"), 1):
-        if any(unicodedata.category(c) == "Cc" and c not in "\t" for c in line):
-            raise PatchError(f"{number}: unreadable {kind} control character")
+        categories = {unicodedata.category(c) for c in line if c not in "\t"}
+        hazards = categories.intersection(("Cc", "Cf"))
+        if hazards:
+            reason = {"Cc": "control", "Cf": "format"}[min(hazards)]
+            raise PatchError(f"{number}: unreadable {kind} {reason} character")
         if re.search(r"\?\?[=(/)'<!>-]", line):
             raise PatchError(f"{number}: unreadable {kind} trigraph")
         hazard = preprocessing_hazard(line)
@@ -300,7 +288,7 @@ def _patch_error_self_test() -> list[str]:
         (label, "x.patch", raw.encode(), f"{line}: unreadable")
         for label, (raw, line) in cases.items()
     ]
-    sources += _reader_cases() + _mode_cases() + _preprocessing_cases() + splice_cases()
+    sources += _reader_cases() + mode_cases() + _preprocessing_cases() + splice_cases()
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         for label, name, data, expected in sources:
@@ -345,26 +333,14 @@ def _reader_cases() -> list[tuple[str, str, bytes, str]]:
         ("x.patch", "@@ -0,0 +1 @@\n+"),
     ):
         for bad in ("\r", "\r\n", "\0", "\f", "\v", "\x1b", "\x7f", "\x85"):
-            cases.append(
-                (
-                    repr(bad),
-                    name,
-                    (prefix + "a;" + bad + "x;").encode(),
-                    "2: unreadable",
-                )
-            )
+            raw = (prefix + "a;" + bad + "x;").encode()
+            cases.append((repr(bad), name, raw, "2: unreadable"))
         kind = "patch" if name.endswith(".patch") else "source"
         for raw in (
             "x = b->mapped_??/\nmem[0];",
             "char c = '??/''; int x = b->mapped_mem[0];",
-            "// ??=",
             "/* ??( */",
-            "// ??)",
-            "// ??'",
-            "// ??<",
-            "// ??!",
-            "// ??>",
-            "// ??-",
+            *("// ??" + token for token in "=)'<!>-"),
             "x ??'= 1; int x = b->mapped_mem[0]; c = '?';",
         ):
             cases.append(
@@ -411,31 +387,6 @@ def _preprocessing_cases() -> list[tuple[str, str, bytes, str]]:
                 )
         for safe in ("a ? b : c;", "a < b ? c : d;", "x % y;", "a[i] ? b : c;"):
             cases.append((safe, name, (prefix + safe).encode(), ""))
-    return cases
-
-
-def _mode_cases() -> list[tuple[str, str, bytes, str]]:
-    """Accept regular-file metadata and reject unsupported modes at their line."""
-    cases = []
-    for metadata, accepted in (
-        ("new file mode 100644", True),
-        ("new file mode 100755", True),
-        ("index ab..cd 100644", True),
-        ("index ab..cd 100755", True),
-        ("index ab..cd", True),
-        ("new file mode 120000", False),
-        ("new file mode 160000", False),
-        ("new file mode 100664", False),
-        ("new file mode 040000", False),
-        ("new file mode junk", False),
-        ("new file mode ", False),
-        ("index ab..cd 120000", False),
-        ("index ab..cd 160000", False),
-        ("index ab..cd 100664", False),
-    ):
-        raw = f"diff --git a/x.c b/x.c\n{metadata}\n@@ -0,0 +1 @@\n+x;"
-        expected = "" if accepted else "2: unreadable patch metadata"
-        cases.append((metadata, "x.patch", raw.encode(), expected))
     return cases
 
 
@@ -510,3 +461,87 @@ def _directive_patch_self_test() -> list[str]:
 def self_test() -> list[str]:
     """Exercise patch boundaries and strict source reading with exact diagnostics."""
     return _patch_self_test() + _patch_error_self_test() + _directive_self_test()
+
+
+def lexical_cases() -> list[tuple[str, str, str, str]]:
+    """Plant assignment, loop and format-character refusals with exact origins."""
+    assignment = " uint8_t *p;\n p = (uint8_t *)b->mapped_mem;\n"
+    const = " const uint8_t *p = (const uint8_t *)b->mapped_mem;\n"
+    loop = " for (uint32_t *p = (uint32_t *)b->mapped_mem; p < end; ++p) {\n"
+    header = "diff --git a/x.c b/x.c\nindex ab..cd 100644\n--- a/x.c\n+++ b/x.c\n"
+    bodies = (
+        (
+            "assigned directive",
+            assignment + "+#define P p[0]",
+            "8: mapped_mem;7: element-wise",
+        ),
+        (
+            "chained context directive",
+            assignment.replace(" p =", " q = p =") + " #define P p[0]\n+x = P;",
+            "8: mapped_mem;7: element-wise",
+        ),
+        ("assignment read", assignment + "+x = p[0];", "7: element-wise"),
+        ("const read", const + "+x = p[0];", "6: element-wise"),
+        ("for-init read", loop + "+x = p[0];\n }", "6: element-wise"),
+        ("assignment outside block", " {\n" + assignment + " }\n+{ y = 1; }", ""),
+        (
+            "for-init after loop",
+            " {\n" + loop + " }\n+{ y = 1; }\n }",
+            "7: element-wise",
+        ),
+        ("for-init outside block", " {\n" + loop + " }\n }\n+{ y = 1; }", ""),
+        ("format added", "+x = \u200b1;", "6: unreadable patch format character"),
+        (
+            "format context",
+            " // \u200b\n+x = 1;",
+            "6: unreadable patch format character",
+        ),
+    )
+    cases = []
+    for label, body, expected in bodies:
+        lines = body.split("\n")
+        old = sum(line.startswith(" ") for line in lines)
+        patch = header + f"@@ -1,{old} +1,{len(lines)} @@\n" + body
+        cases.append((label, "x.patch", patch, expected))
+    bom = "\ufeff#define P p\nvoid f(B *b) {\n" + const[1:] + "x = P[0];\n}"
+    bom = bom.replace("const ", "")
+    cases.append(("BOM source", "x.c", bom, "1: unreadable source format character"))
+    header = header.replace("index ab", "new file mode 100644\nindex 0000000")
+    header = header.replace("--- a/x.c", "--- /dev/null")
+    patch = header + "@@ -0,0 +1,5 @@\n+" + bom.replace("\n", "\n+")
+    cases.append(
+        ("BOM patch", "x.patch", patch, "7: unreadable patch format character")
+    )
+    return cases
+
+
+def lexical_self_test(
+    check: Callable[[list[tuple[str, str | PatchError, set[int] | None]]], list[str]],
+) -> list[str]:
+    """Require exact diagnostic counts and numbered refusals through the checker."""
+    failures = []
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        for label, name, raw, expected in lexical_cases():
+            path = root / name
+            path.write_bytes(raw.encode())
+            errors = check(source_texts(root))
+            path.unlink()
+            wanted = expected.split(";") if expected else []
+            if len(errors) != len(wanted) or not all(
+                error.split(":", 1)[1].startswith(part)
+                for part, error in zip(wanted, errors)
+            ):
+                failures.append(f"lexical case failed: {label}: {errors}")
+    return failures
+
+
+class KnownRead(NamedTuple):
+    """One exact source statement with a dated MEL exception."""
+
+    file: str
+    statement: str
+    issue: int
+    category: str
+    entered: str
+    reason: str

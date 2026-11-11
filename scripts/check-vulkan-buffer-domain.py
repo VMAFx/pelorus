@@ -13,16 +13,17 @@ import datetime
 import re
 import sys
 import tempfile
-from typing import NamedTuple
 
 _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 sys.dont_write_bytecode = True
 from c_scan import (  # noqa: E402
+    CAST,
     MAX_CALL_CHARS,
     added_overlap,
     argument_index,
+    binding_tail,
     call_args,
     enclosing_call,
     mask_c,
@@ -35,8 +36,9 @@ from c_scan import (  # noqa: E402
 )
 from c_scan import call_patches, self_test as scan_self_test  # noqa: E402
 from c_source import PatchError, self_test as reading_self_test, source_texts  # noqa: E402
+from c_source import KnownRead, lexical_self_test  # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = _SCRIPTS_DIR.parent
 FILES = ROOT / "ffmpeg-patches" / "files"
 # Call name -> (usage argument index, memory-flag argument index).
 CALLS = {
@@ -56,23 +58,11 @@ SINKS = {
         "output parameter written only: vulkan-pelorus-qpmap.patch:1313-1345",
     ),
 }
-CAST = r"\(\s*(?:const\s+)?\w+(?:\s+\w+)*\s*\*+\s*\)"
 CHAIN = r"\w+(?:(?:->|\.)\w+)*(?:->|\.)mapped_mem"
 STORE = r"\s*\[[^\[\]]*\]\s*=(?!=)"
 TYPE = r"(?:const|volatile|restrict|signed|unsigned|short|long|int|char|float|double|void|_Bool|(?:struct|union|enum)\s+\w+|\w+_t|[A-Z]\w*)"
 MEL_DAYS = {"B": 3, "C": 10, "D": 120}
 Site = tuple[str, str, int]
-
-
-class KnownRead(NamedTuple):
-    """One exact source statement with a dated MEL exception."""
-
-    file: str
-    statement: str
-    issue: int
-    category: str
-    entered: str
-    reason: str
 
 
 KNOWN_READS = (
@@ -180,14 +170,16 @@ def mapped_sites(
     matches = list(re.finditer(r"\bmapped_mem\b", text))
     for match in matches:
         pos = match.start()
-        statement, end = statement_at(text, pos)
+        start, end = statement_bounds(text, pos)
+        statement = " ".join(text[start:end].split())
         call = enclosing_call(text, pos)
-        start, _ = statement_bounds(text, pos)
         if call:
             allowed = allowed_call(text, pos, call)
         else:
             allowed, end = allowed_statement(text, statement, end)
-        if not allowed and added_overlap(text, start, end, added):
+        if not allowed and added_overlap(
+            text, start, binding_tail(text, pos, end), added
+        ):
             refused.append((name, statement, text.count("\n", 0, pos) + 1))
     return refused, len(matches)
 
@@ -401,6 +393,9 @@ def mapped_self_test() -> list[str]:
     """Plant mapped reads and retain legitimate bulk transfers and writes."""
 
     failures = known_self_test()
+    for raw, expected in (("p[0] = 1; }", (True, 10)), ("p[0] = 1;", (False, 9))):
+        if store_only_tail(raw, "p", 0, STORE) != expected:
+            failures.append(f"alias tail case failed: {raw}")
     for planted, cases in ((True, MAPPED_PLANTED), (False, MAPPED_ACCEPTED)):
         for label, text in cases.items():
             sites, tokens = mapped_sites("mapped.c", mask_c(text))
@@ -506,7 +501,9 @@ def patch_self_test() -> list[str]:
                 valid = [allocation in error for error in errors]
                 if found != mapped or valid != ([True] if allocation else []):
                     failures.append(f"patch case failed: {label}: {found}, {errors}")
-    return failures
+    return failures + lexical_self_test(
+        lambda texts: check(texts + baseline, datetime.date(2026, 11, 11))
+    )
 
 
 def source_self_test() -> list[str]:
@@ -522,13 +519,11 @@ def source_self_test() -> list[str]:
                 "--- a/x.c\n+++ b/x.c\n@@ -1 +1,3 @@\n reader(b->mapped_mem);\n"
                 "+reader(b->mapped_mem);\n"
                 f"+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n"
+                "\\ No newline at end of file\n"
                 "@@ -9,0 +9 @@\n+reader(b->mapped_mem);\n"
             ),
         }.items():
             (root / name).write_bytes(text.encode())
-        path = root / "c.patch"
-        marker = b"\\ No newline at end of file\n"
-        path.write_bytes(path.read_bytes().replace(b"@@ -9", marker + b"@@ -9"))
         errors = check(source_texts(root), datetime.date(2026, 11, 11), root)
     expected = (
         "b.h:1: element-wise",
