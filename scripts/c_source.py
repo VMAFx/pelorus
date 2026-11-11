@@ -15,9 +15,9 @@ Sources use strict UTF-8, LF-only splitting and only non-control characters, LF
 and tab. CRLF and lone CR fail closed: ISO C17 treats CR as a line end, while
 git apply splits on LF. Trigraphs fail closed before masking because ISO C17
 translates them even in comments and literals; C23 removal does not apply to
-FFmpeg 9, whose default is -std=c17. Digraphs, universal character names and
-macro bodies are not translated or expanded; measured mapped reads using them
-remain refused because the mapped_mem token stays visible.
+FFmpeg 9, whose default is -std=c17. Digraphs and token pastes also fail closed
+before masking, including inside comments and literals. Universal character
+names and macro bodies are not translated or expanded.
 Only context and added lines enter lexing and splicing, in new-side order; the
 splice origin follows the previous new-side line. Removed lines and metadata
 are excluded from that input and restored as blank output at patch positions.
@@ -32,7 +32,7 @@ import re
 import tempfile
 import unicodedata
 
-from c_scan import mask_c, patch_segment
+from c_scan import mask_c, patch_segment, scan_directives
 
 
 class PatchError(ValueError):
@@ -132,6 +132,10 @@ def _read_source(path: pathlib.Path) -> str:
             raise PatchError(f"{number}: unreadable {kind} control character")
         if re.search(r"\?\?[=(/)'<!>-]", line):
             raise PatchError(f"{number}: unreadable {kind} trigraph")
+        if re.search(r"<:|:>|<%|%>|%:", line):
+            raise PatchError(f"{number}: unreadable {kind} digraph")
+        if "##" in line:
+            raise PatchError(f"{number}: unreadable {kind} token paste")
     return raw
 
 
@@ -149,7 +153,12 @@ def source_texts(
                     if path.suffix == ".patch"
                     else [(mask_c(raw), None)]
                 )
-                texts.extend((path.name, text, added) for text, added in regions)
+                for text, added in regions:
+                    text, errors = scan_directives(text, added)
+                    texts.append((path.name, text, added))
+                    texts.extend(
+                        (path.name, PatchError(error), None) for error in errors
+                    )
             except PatchError as error:
                 texts.append((path.name, error, None))
     return texts
@@ -270,7 +279,7 @@ def _patch_error_self_test() -> list[str]:
         (label, "x.patch", raw.encode(), f"{line}: unreadable")
         for label, (raw, line) in cases.items()
     ]
-    sources += _reader_cases() + _mode_cases()
+    sources += _reader_cases() + _mode_cases() + _preprocessing_cases()
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         for label, name, data, expected in sources:
@@ -349,6 +358,41 @@ def _reader_cases() -> list[tuple[str, str, bytes, str]]:
     return cases
 
 
+def _preprocessing_cases() -> list[tuple[str, str, bytes, str]]:
+    """Reject raw digraphs and token pastes in each source kind at line two."""
+    cases = []
+    hazards = [(token, "digraph") for token in ("<:", ":>", "<%", "%>", "%:", "%:%:")]
+    hazards += [("##", "token paste")]
+    hazards += [
+        (
+            "pel_mc_build_predictors(hosts<:i = 0, j = 0, k:>, "
+            "(const int32_t *)b->mapped_mem, n, prev, &gx, &gy);",
+            "digraph",
+        ),
+        ("{ T *p = (T *)b->mapped_mem; <% y = 1; } consume(p); }", "digraph"),
+        ("#define CAT(a, b) a##b\nx = b->CAT(mapped_, mem)[0];", "token paste"),
+    ]
+    for name, prefix in (
+        ("x.c", "// head\n"),
+        ("x.h", "// head\n"),
+        ("x.patch", "@@ -0,0 +1 @@\n+"),
+    ):
+        kind = "patch" if name.endswith(".patch") else "source"
+        for raw, hazard in hazards:
+            for source in (raw, f'"{raw}";', f"/* {raw} */"):
+                cases.append(
+                    (
+                        source,
+                        name,
+                        (prefix + source).encode(),
+                        f"2: unreadable {kind} {hazard}",
+                    )
+                )
+        for safe in ("a ? b : c;", "a < b ? c : d;", "x % y;", "a[i] ? b : c;"):
+            cases.append((safe, name, (prefix + safe).encode(), ""))
+    return cases
+
+
 def _mode_cases() -> list[tuple[str, str, bytes, str]]:
     """Accept regular-file metadata and reject unsupported modes at their line."""
     cases = []
@@ -374,6 +418,69 @@ def _mode_cases() -> list[tuple[str, str, bytes, str]]:
     return cases
 
 
+def _directive_self_test() -> list[str]:
+    """Check directive diagnostics through real C, header and patch files."""
+    cases = (
+        ("#define MM mapped_mem", True),
+        ("#define MM mapped_mem\nx = b->MM[0];", True),
+        ("#define MM \\\n mapped_mem", True),
+        ("  # define MM mapped_mem", True),
+        ("#include <stdint.h>", False),
+        ("#if HAVE_X\n#endif", False),
+        ("#define MM mapped", False),
+        ('#define MM "mapped_mem"', False),
+        ("#define MM /* mapped_mem */ x", False),
+    )
+    failures = []
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        for name in ("x.c", "x.h", "x.patch"):
+            for source, refused in cases:
+                raw = "// head\n" + source
+                line = 2
+                if name.endswith(".patch"):
+                    count = source.count("\n") + 1
+                    raw = f"--- a/x.c\n+++ b/x.c\n@@ -0,0 +1,{count} @@\n+"
+                    raw += source.replace("\n", "\n+")
+                    line = 4
+                path = root / name
+                path.write_bytes(raw.encode())
+                texts = source_texts(root)
+                path.unlink()
+                expected = [f"{line}: mapped_mem in preprocessor directive"]
+                errors = [
+                    str(text) for _, text, _ in texts if isinstance(text, PatchError)
+                ]
+                if errors != (expected if refused else []):
+                    failures.append(f"C directive case failed: {source}: {errors}")
+    return failures + _directive_patch_self_test()
+
+
+def _directive_patch_self_test() -> list[str]:
+    """Keep context directives separate and mark added continuations at their origin."""
+    cases = (
+        ("@@ -1 +1,2 @@\n #define MM mapped_mem\n+x = 1;", []),
+        ("@@ -1 +1,2 @@\n #define MM \\\n+mapped_mem", [2]),
+        ("@@ -1 +1,2 @@\n+#define MM \\\n mapped_mem", [2]),
+    )
+    failures = []
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        for raw, lines in cases:
+            (root / "x.patch").write_bytes(raw.encode())
+            errors = [
+                str(text)
+                for _, text, _ in source_texts(root)
+                if isinstance(text, PatchError)
+            ]
+            expected = [
+                f"{line}: mapped_mem in preprocessor directive" for line in lines
+            ]
+            if errors != expected:
+                failures.append(f"C directive patch case failed: {raw!r}: {errors}")
+    return failures
+
+
 def self_test() -> list[str]:
     """Exercise patch boundaries and strict source reading with exact diagnostics."""
-    return _patch_self_test() + _patch_error_self_test()
+    return _patch_self_test() + _patch_error_self_test() + _directive_self_test()

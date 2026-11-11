@@ -244,6 +244,19 @@ def mask_c(text: str) -> str:
     return "".join(out)
 
 
+def scan_directives(text: str, added: set[int] | None) -> tuple[str, list[str]]:
+    """Refuse mapped tokens in spliced directives, then blank directive text."""
+    errors = []
+    pattern = r"(?m)^[ \t]*#[^\n]*"
+    for match in re.finditer(pattern, text):
+        if re.search(r"\bmapped_mem\b", match[0]) and added_overlap(
+            text, match.start(), match.end(), added
+        ):
+            line = text.count("\n", 0, match.start()) + 1
+            errors.append(f"{line}: mapped_mem in preprocessor directive")
+    return re.sub(pattern, lambda match: " " * len(match[0]), text), errors
+
+
 def patch_segment(lines: list[str]) -> tuple[list[str], set[int]]:
     """Lex only new-side lines, then restore blanks at excluded patch positions."""
     positions = [

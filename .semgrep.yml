@@ -743,47 +743,53 @@ rules:
                     - pattern: <... $X.st_mode ...>
                     - pattern: <... st_mode ...>
 
-  # Windows text-mode fixture writes introduce CRLF, which the strict C reader
-  # refuses. Import scope includes aliases, from-imports and nested imports;
-  # scripts/test-semgrep-strict-reader-fixture.py plants each form.
+  # The scope covers the reader modules and every tracked script that imports them.
+  # scripts/test-semgrep-strict-reader-fixture.py keeps the list equal to the reader modules
+  # plus the importers it finds by parsing tracked Python.
+  # Run-time module names and path-based loading are outside this scope.
   - id: pelorus-strict-reader-fixture-bytes
     languages: [python]
     severity: ERROR
-    message: &strict_reader_message >-
+    message: >-
       Windows text mode writes CRLF; the strict reader refuses CR. Write bytes
       with write_bytes or an explicit binary open mode instead.
     options:
       constant_propagation: false
     paths:
-      exclude:
+      include:
         - /scripts/c_source.py
         - /scripts/c_scan.py
+        - /scripts/check-vulkan-buffer-domain.py
     patterns:
-      # Match the whole file only when its Python tokens contain an import.
-      # Atomic string/comment skips keep quoted examples outside import scope.
-      - pattern-regex: >-
-          (?sx)\A(?=
-          (?> """(?:\\.|(?!""")[^\\])*""" | '''(?:\\.|(?!''')[^\\])*'''
-            | "(?:\\.|[^"\\])*" | '(?:\\.|[^'\\])*'
-            | \#[^\n]* | [^"'\#] )*?
-          \b(?:
-            from(?:\s|\\\r?\n)+[.\s]*
-              (?:\w+(?:\s|\\\r?\n)*\.(?:\s|\\\r?\n)*)*
-              c_(?:source|scan)(?:\s*\.\s*\w+)*(?:\s|\\\r?\n)+import\b
-            | import(?:\s|\\\r?\n)+\(?
-              (?:(?:\s|\\\r?\n|\#[^\n]*\n)*
-                 \w+(?:\s*\.\s*\w+)*(?:\s+as\s+\w+)?\s*,)*
-              (?:\s|\\\r?\n|\#[^\n]*\n)*
-              (?:\w+(?:\s|\\\r?\n)*\.(?:\s|\\\r?\n)*)*c_(?:source|scan)\b
-          ))[\s\S]*\z
-      - pattern-either: &strict_reader_writes
+      - pattern-either:
           - pattern: $P.write_text(...)
+          - pattern-either: &strict_reader_text_wrapper
+              - pattern: $X.TextIOWrapper(...)
+              - pattern: TextIOWrapper(...)
           - patterns:
               - pattern-either:
                   - pattern: open($FILE, $MODE, ...)
                   - pattern: open(..., mode=$MODE, ...)
                   - pattern: io.open($FILE, $MODE, ...)
                   - pattern: io.open(..., mode=$MODE, ...)
+                  - pattern-either: &strict_reader_tempfile
+                      - pattern: $X.NamedTemporaryFile($MODE, ...)
+                      - pattern: $X.NamedTemporaryFile(..., mode=$MODE, ...)
+                      - pattern: NamedTemporaryFile($MODE, ...)
+                      - pattern: NamedTemporaryFile(..., mode=$MODE, ...)
+                      - pattern: $X.TemporaryFile($MODE, ...)
+                      - pattern: $X.TemporaryFile(..., mode=$MODE, ...)
+                      - pattern: TemporaryFile($MODE, ...)
+                      - pattern: TemporaryFile(..., mode=$MODE, ...)
+                      - pattern: $X.SpooledTemporaryFile($MODE, ...)
+                      - pattern: $X.SpooledTemporaryFile(..., mode=$MODE, ...)
+                      - pattern: SpooledTemporaryFile($MODE, ...)
+                      - pattern: SpooledTemporaryFile(..., mode=$MODE, ...)
+                  - pattern-either: &strict_reader_fdopen
+                      - pattern: $X.fdopen($FD, $MODE, ...)
+                      - pattern: $X.fdopen(..., mode=$MODE, ...)
+                      - pattern: fdopen($FD, $MODE, ...)
+                      - pattern: fdopen(..., mode=$MODE, ...)
                   - patterns:
                       - pattern-either:
                           - pattern: $P.open($MODE, ...)
@@ -798,17 +804,3 @@ rules:
                     - patterns:
                         - pattern: $EXPR
                         - pattern-not: '"..."'
-
-  # Reader modules need the same byte-write contract even without importing
-  # themselves. Keep the write patterns shared with the import-scoped rule.
-  - id: pelorus-strict-reader-fixture-bytes-module
-    languages: [python]
-    severity: ERROR
-    message: *strict_reader_message
-    options:
-      constant_propagation: false
-    paths:
-      include:
-        - /scripts/c_source.py
-        - /scripts/c_scan.py
-    pattern-either: *strict_reader_writes
