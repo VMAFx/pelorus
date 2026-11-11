@@ -8,7 +8,8 @@ does; header-shaped body lines remain body lines. Lexical and classification
 state cannot cross hunks. Missing counts mean one. Empty body lines are context.
 Malformed headers, invalid body prefixes, negative counts, incomplete hunks and
 patches without hunks fail closed. Outside bodies, only allow-listed file and
-index headers, new-file modes, hunk headers and adjacent end markers are accepted.
+index headers, regular-file modes 100644/100755, hunk headers and adjacent end
+markers are accepted.
 Binary sections can write file content, so other metadata fails closed.
 Sources use strict UTF-8, LF-only splitting and only non-control characters, LF
 and tab. CRLF and lone CR fail closed: ISO C17 treats CR as a line end, while
@@ -65,10 +66,10 @@ def _consume_line(line: str, old: int, new: int, number: int) -> tuple[int, int]
 
 
 def _patch_metadata(line: str, marker: bool) -> bool:
-    """Allow only known metadata shapes and an immediately trailing marker."""
+    """Allow regular-file metadata shapes and an immediately trailing marker."""
     shapes = (
-        r"diff --git a/\S+ b/\S+|index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]{6})?"
-        r"|new file mode [0-7]{6}|--- (?:a/\S+|/dev/null)|\+\+\+ b/\S+"
+        r"diff --git a/\S+ b/\S+|index [0-9a-f]+\.\.[0-9a-f]+(?: 100(?:644|755))?"
+        r"|new file mode 100(?:644|755)|--- (?:a/\S+|/dev/null)|\+\+\+ b/\S+"
     )
     return re.fullmatch(shapes, line) is not None or (marker and line.startswith("\\ "))
 
@@ -266,20 +267,21 @@ def _patch_error_self_test() -> list[str]:
         }
     )
     sources = [
-        (label, "x.patch", raw.encode(), line) for label, (raw, line) in cases.items()
+        (label, "x.patch", raw.encode(), f"{line}: unreadable")
+        for label, (raw, line) in cases.items()
     ]
-    sources += _reader_cases()
+    sources += _reader_cases() + _mode_cases()
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
-        for label, name, data, line in sources:
+        for label, name, data, expected in sources:
             path = root / name
             path.write_bytes(data)
             texts = source_texts(root)
             path.unlink()
             errors = [str(text) for _, text, _ in texts if isinstance(text, PatchError)]
             valid = bool(texts) and not errors
-            if line:
-                valid = len(errors) == 1 and errors[0].startswith(f"{line}: unreadable")
+            if expected:
+                valid = len(errors) == 1 and errors[0].startswith(expected)
             if not valid:
                 failures.append(f"C source case failed: {label}: {errors}")
     return failures
@@ -304,26 +306,71 @@ BAD_METADATA = (
 )
 
 
-def _reader_cases() -> list[tuple[str, str, bytes, int]]:
+def _reader_cases() -> list[tuple[str, str, bytes, str]]:
     """Plant reader hazards across source kinds and retain safe text boundaries."""
-    cases = [("CRLF patch", "x.patch", b"@@ -0,0 +1 @@\r\n+x;\r\n", 1)]
+    cases = [("CRLF patch", "x.patch", b"@@ -0,0 +1 @@\r\n+x;\r\n", "1: unreadable")]
     for name, prefix in (
         ("x.c", "// head\n"),
         ("x.h", "// head\n"),
         ("x.patch", "@@ -0,0 +1 @@\n+"),
     ):
         for bad in ("\r", "\r\n", "\0", "\f", "\v", "\x1b", "\x7f", "\x85"):
-            cases.append((repr(bad), name, (prefix + "a;" + bad + "x;").encode(), 2))
+            cases.append(
+                (
+                    repr(bad),
+                    name,
+                    (prefix + "a;" + bad + "x;").encode(),
+                    "2: unreadable",
+                )
+            )
+        kind = "patch" if name.endswith(".patch") else "source"
         for raw in (
-            "x = b->mapped_\\\rmem[0];",
             "x = b->mapped_??/\nmem[0];",
             "char c = '??/''; int x = b->mapped_mem[0];",
             "// ??=",
             "/* ??( */",
+            "// ??)",
+            "// ??'",
+            "// ??<",
+            "// ??!",
+            "// ??>",
+            "// ??-",
+            "x ??'= 1; int x = b->mapped_mem[0]; c = '?';",
         ):
-            cases.append((raw, name, (prefix + raw).encode(), 2))
-        cases.append(("invalid UTF-8", name, prefix.encode() + b"\xff", 2))
-        cases.append(("safe text", name, (prefix + '\t/* — */ "??x";').encode(), 0))
+            cases.append(
+                (raw, name, (prefix + raw).encode(), f"2: unreadable {kind} trigraph")
+            )
+        raw = "x = b->mapped_\\\rmem[0];"
+        cases.append((raw, name, (prefix + raw).encode(), "2: unreadable"))
+        cases.append(
+            ("invalid UTF-8", name, prefix.encode() + b"\xff", "2: unreadable")
+        )
+        cases.append(("safe text", name, (prefix + '\t/* — */ "??x";').encode(), ""))
+    return cases
+
+
+def _mode_cases() -> list[tuple[str, str, bytes, str]]:
+    """Accept regular-file metadata and reject unsupported modes at their line."""
+    cases = []
+    for metadata, accepted in (
+        ("new file mode 100644", True),
+        ("new file mode 100755", True),
+        ("index ab..cd 100644", True),
+        ("index ab..cd 100755", True),
+        ("index ab..cd", True),
+        ("new file mode 120000", False),
+        ("new file mode 160000", False),
+        ("new file mode 100664", False),
+        ("new file mode 040000", False),
+        ("new file mode junk", False),
+        ("new file mode ", False),
+        ("index ab..cd 120000", False),
+        ("index ab..cd 160000", False),
+        ("index ab..cd 100664", False),
+    ):
+        raw = f"diff --git a/x.c b/x.c\n{metadata}\n@@ -0,0 +1 @@\n+x;"
+        expected = "" if accepted else "2: unreadable patch metadata"
+        cases.append((metadata, "x.patch", raw.encode(), expected))
     return cases
 
 
