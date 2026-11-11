@@ -58,6 +58,9 @@ def alias_directive_cases() -> tuple[tuple[str, bool], ...]:
     declaration = "{ uint32_t *p = (uint32_t *)b->mapped_mem;\n"
     ucn = chr(92) + "u00e4"
     long_ucn = chr(92) + "U000000e4"
+    upper_ucn = chr(92) + "u00E4"
+    invalid_ucn = chr(92) + "U00110000"
+    utf8 = chr(0xE4)
     return (
         (declaration + "#define P p\nuint32_t x = P[0]; }", True),
         (declaration + "#define G(i) p[i]\nuint32_t x = G(0); }", True),
@@ -87,4 +90,17 @@ def alias_directive_cases() -> tuple[tuple[str, bool], ...]:
             True,
         ),
         (declaration + "#define P pp\np[0] = 1; }", False),
+    ) + tuple(
+        (
+            declaration
+            + f"#define SCALE(p{formal}) ((p{body}) * 2)\np[0] = SCALE(7); }}",
+            False,
+        )
+        for formal, body in (
+            (ucn, long_ucn),
+            (long_ucn, ucn),
+            (upper_ucn, ucn),
+            (utf8, ucn),
+            (invalid_ucn, invalid_ucn),
+        )
     )

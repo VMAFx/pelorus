@@ -11,6 +11,7 @@ import re
 
 MAX_CALL_CHARS = 4096
 CAST = r"\(\s*(?:const\s+)?\w+(?:\s+\w+)*\s*\*+\s*\)"
+UCN = r"\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8}"
 
 
 class PatchError(ValueError):
@@ -304,14 +305,24 @@ def binding_tail(text: str, pos: int, end: int) -> int:
     return len(text) if tail is None else end + len(tail)
 
 
+def identifier_key(word: str) -> str:
+    """Compare UCN and non-ASCII spellings without decoding invalid code points."""
+    return re.sub(
+        UCN + r"|[^\x00-\x7f]",
+        lambda m: "\\U" + f"{int(m[0][2:], 16) if len(m[0]) > 1 else ord(m[0]):08x}",
+        word,
+    )
+
+
 def directive_alias(text: str, aliases: set[str]) -> bool:
     """Check define replacements, excluding macro names and formal parameters."""
-    name = r"(?:\w|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8})+"
+    name = rf"(?:\w|{UCN})+"
     define = re.match(rf"\s*#\s*define\s+{name}(?:\(([^\n)]*)\))?(.*)", text)
     if not define:
         return False
-    formals = set(re.findall(name, define[1] or ""))
-    kept = " ".join(word for word in re.findall(name, define[2]) if word not in formals)
+    formals = {identifier_key(word) for word in re.findall(name, define[1] or "")}
+    words = re.findall(name, define[2])
+    kept = " ".join(word for word in words if identifier_key(word) not in formals)
     return bool(aliases.intersection(re.findall(r"\w+", kept)))
 
 
@@ -505,7 +516,17 @@ def _statement_self_test() -> list[str]:
 def alias_patch_cases() -> tuple[tuple[str, list[int]], ...]:
     """Refuse context and added directives using aliases anywhere on the new side."""
     declaration = " { T *p = (T *)b->mapped_mem;\n"
+    macro_file = (
+        "diff --git a/b.h b/b.h\n--- a/b.h\n+++ b/b.h\n"
+        "@@ -0,0 +1 @@\n+#define GET(i) (p[i])"
+    )
+    alias_file = (
+        "diff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -0,0 +1,2 @@\n"
+        '+#include "b.h"\n+void f(B *b) { T *p = b->mapped_mem; T x = GET(0); }'
+    )
     return (
+        (macro_file + "\n" + alias_file, [5]),
+        (alias_file + "\n" + macro_file, [11]),
         ("@@ -2,2 +2,3 @@\n" + declaration + "+#define P p\n }", [3]),
         ("@@ -2,3 +2,4 @@\n" + declaration + " #define P p\n+x = 1;\n }", [3]),
         ("@@ -2,3 +2,4 @@\n" + declaration + " #define P \\\n+p\n }", [3]),
