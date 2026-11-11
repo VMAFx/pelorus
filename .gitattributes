@@ -17,6 +17,10 @@
 # Test fixture pinned by a C test; keep checkout bytes exact.
 ffmpeg-patches/test/fixtures/udu-wrap-vectors.txt -text
 
+# ADR number reservations (scripts/adr/next-free.sh --claim) are empty files,
+# and the empty-content hash is pinned by C tests; keep checkout bytes exact.
+docs/adr/*.md.stub -text
+
 # BEGIN praetor managed attributes (praetorctl adopt)
 # praetorctl audit hashes these files; keep their checkout bytes the same on every platform.
 .devcontainer/Dockerfile.praetor text eol=lf
