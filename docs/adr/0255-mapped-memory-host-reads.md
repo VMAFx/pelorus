@@ -24,6 +24,8 @@ Extend `scripts/check-vulkan-buffer-domain.py`, fast test `vulkan-buffer-domain`
 
 Each exception must cover exactly one refused site. Zero matches, duplicate matches, duplicate `(file, statement)` entries, unknown MEL categories and dates after 2027-03-11 fail the check; 2027-03-11 remains allowed. The pure `check_known()` receives its date explicitly; the CLI supplies today's date. An empty mapped-use scan also fails. `--files DIR` selects a source copy for both allocation and mapped-read checks; its default remains `ffmpeg-patches/files`.
 
+Patch hunk markers (`@@`) reset lexical state. A `+++` line is a file header only immediately after a `---` line, so an added `++i;` remains code. Removed lines and metadata are blank on the new side and do not affect lexical state; `diff`, `index` and `---` lines need no separate reset rules. Comment masking preserves width with spaces. The generic statement-boundary helpers live beside the other C-text helpers in `scripts/c_scan.py`.
+
 ## Alternatives considered
 
 | Option | Why not |

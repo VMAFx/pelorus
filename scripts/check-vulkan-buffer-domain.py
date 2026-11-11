@@ -35,7 +35,15 @@ _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 sys.dont_write_bytecode = True
-from c_scan import MAX_CALL_CHARS, block_tail, call_args, mask_c, patch_additions  # noqa: E402
+from c_scan import (  # noqa: E402
+    MAX_CALL_CHARS,
+    block_tail,
+    call_args,
+    mask_c,
+    patch_additions,
+    statement_at,
+    statement_start,
+)
 from c_scan import self_test as scan_self_test  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -211,23 +219,6 @@ def allowed_call(text: str, pos: int, call: tuple[str, int]) -> bool:
         suffix, _ = statement_at(text[end:], 0)
         return prefix in ("", "(void)") and suffix == ";"
     return index in BULK.get(name, {}) or index == SINKS.get(name, (-1, ""))[0]
-
-
-def statement_at(text: str, pos: int) -> tuple[str, int]:
-    """Return collapsed statement and end offset, retaining its semicolon."""
-
-    start = max(text.rfind(delimiter, 0, pos) for delimiter in ";{}") + 1
-    end = text.find(";", pos)
-    end = len(text) if end < 0 else end + 1
-    return " ".join(text[start:end].split()), end
-
-
-def statement_start(text: str, pos: int) -> bool:
-    """Require an alias store to begin a statement rather than a subexpression."""
-    prefix = text[:pos].rstrip()
-    return (
-        not prefix or prefix[-1] in ";{})" or bool(re.search(r"\b(?:else|do)$", prefix))
-    )
 
 
 def allowed_statement(text: str, statement: str, end: int) -> bool:
@@ -410,6 +401,8 @@ MAPPED_PLANTED = {
     "memcpy result alias": "{ uint32_t *p = memcpy(b->mapped_mem, src, n); consume(p); }",
     "memset result assignment": "x = memset(b->mapped_mem, 0, n);",
     "memcpy result condition": "if (memcpy(b->mapped_mem, s, n)) x = 1;",
+    "memcpy result suffix": "memcpy(b->mapped_mem, s, n) + 0;",
+    "nested block alias escape": "{ T *p = (T *)b->mapped_mem; if (x) { p[0] = 1; } consume(p); }",
     "return output": "{ return *out = (T *)b->mapped_mem; }",
     "else output": "{ if (x) y = 1; else *out = (T *)b->mapped_mem; }",
     "do output": "{ do *out = (T *)b->mapped_mem; while (0); }",
@@ -451,7 +444,8 @@ MAPPED_ACCEPTED = {
     "memcpy destination": "memcpy(b->mapped_mem, src, n);",
     "memset": "memset(((FFVkBuffer *)s->prevmv_buf->data)->mapped_mem, 0, n * sizeof(int32_t));",
     "cast store": "((uint32_t *)b->mapped_mem)[0] = 0;",
-    "write alias": "{ uint32_t *md = (uint32_t *)b->mapped_mem; for (j = 0; j < cells; j++) { md[j] = j; } }",
+    "write alias": "{ uint32_t *md = (uint32_t *)b->mapped_mem; for (j = 0; j < cells; j++) { md[j] = j; } md[0] = 0; if (x) md[1] = 1; else md[2] = 2; do md[3] = 3; while (0); }",
+    "alias type groups": "{ T *a = (T *)b->mapped_mem; struct s *c = (struct s *)b->mapped_mem; int *d = (int *)b->mapped_mem; a[0] = 1; c[0] = 1; d[0] = 1; }",
     "predictors": "pel_mc_build_predictors(x, y, n, (int32_t *)b->mapped_mem, &gx, &gy);",
     "raster": "pelorus_qpmap_raster(ctx, rects, n, stage->mapped_mem, pitch);",
     "comment": "/* read b->mapped_mem */ // b->mapped_mem\n",

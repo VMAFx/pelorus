@@ -34,13 +34,19 @@ All source paths below are relative to `ffmpeg-patches/files/`. Argument indices
 | `s->memcpy(...)`, `ops.memcpy(...)`, `s->pel_mc_build_predictors(...)` | Refused | Member-qualified callees cannot inherit bare-function contracts |
 | `attach_motion(..., memset(b->mapped_mem, 0, bytes), ...)`, `T *p = memcpy(b->mapped_mem, src, n);` | Refused | Bulk return values can expose the mapped destination |
 | `x = memset(...)`, `if (memcpy(b->mapped_mem, s, n)) ...` | Refused | Destination bulk calls must be complete expression statements |
+| `memcpy(b->mapped_mem, s, n) + 0;` | Refused | The bulk destination call's suffix must be exactly a semicolon |
+| `{ T *p = (T *)b->mapped_mem; if (x) { p[0] = 1; } consume(p); }` | Refused | Nested braces cannot hide the later escaping alias |
 | `return *out = (T *)b->mapped_mem;`, `else *out = ...`, `do *out = ...` | Refused | Keywords are not allow-listed alias declaration specifiers |
 | Alias uses `p[0] = p[1] = 0;`, `f(p[0] = 1);` | Refused | Each use must start a statement; chained writes are unclassified even without a C read |
 | Alias uses `p[0] = p[1];`, `p[0] = 1 + p[1];`, `q[p[0]] = 1;` | Refused | RHS and index reads are retained as planted cases |
 | Unterminated character literal before `reader(b->mapped_mem);` | Refused | Malformed literal contents remain visible to the classifier |
+| `x = 'a; reader(b->mapped_mem);` followed by `y = 'b';` on the next line | Refused | The malformed literal stops at the newline; the later valid literal is masked independently |
 | Patch addition `/*`, context `*/`, then an added mapped read | Refused | New-side context closes the comment before additions are selected |
+| First hunk adds `/*`; second hunk adds a mapped read followed by context `*/` | Refused | The `@@` reset prevents the second hunk's context from closing a comment in the first hunk and hiding the read |
 | `log("mapped_mem");`, `mapped/**/_mem` | Allowed; zero mapped tokens | Literals cannot fabricate tokens; comments separate tokens |
 | `(void)memset(b->mapped_mem, 0, n);` | Allowed | The destination return value is explicitly discarded |
+| Plain alias stores after a loop block, an `if` condition, `else` and `do` | Allowed | The `write alias` case exercises statement starts after `}`, `)` and the two keywords |
+| `{ T *a = (T *)b->mapped_mem; struct s *c = (struct s *)b->mapped_mem; int *d = (int *)b->mapped_mem; a[0] = 1; c[0] = 1; d[0] = 1; }` | Allowed | Three mapped tokens cover uppercase, tagged and scalar type-name groups; the live denoise scan covers `_t` names |
 | `vf_pelorus_analyze_vulkan.c:710` | Known, #596 | `base` feeds per-tile reads; cost scales with resolution |
 | `vf_pelorus_denoise_vulkan.c:814` | Known, #596 | `acc_out` exposes a fixed 160-word accumulator |
 | `vf_pelorus_grain_estimate_vulkan.c:907` | Known, #596 | `attach_estimate()` reads a fixed statistics struct; collapsed statement includes its preceding `if (err >= 0)` |
@@ -48,6 +54,8 @@ All source paths below are relative to `ffmpeg-patches/files/`. Argument indices
 The scanner is lexical, not a C parser, and performs no preprocessing or macro expansion. Unterminated literals and block comments remain unmasked; C23 `1'000` is treated as an unterminated character literal. Comments retain their width and newlines; splices defer swallowed newlines to the next surviving newline or EOF. The scanner does not follow pointers obtained through `vk->MapMemory` or wrapper implementations. `--files DIR` redirects both source checks to a copy for mutation verification. An input tree with no `mapped_mem` token fails closed.
 
 ## Verification
+
+Patch lexical state resets at `@@` hunk markers. A `+++` file header is recognized only immediately after a `---` line; `+++i;` remains added code. Removed and metadata lines are blank on the new side, so separate `diff`, `index` and `---` reset rules are unnecessary. Generic statement-boundary helpers are shared through `scripts/c_scan.py`.
 
 Run the focused checker from the repository root:
 
@@ -62,7 +70,7 @@ The live tree and self-tests exit 0. File integration uses `TemporaryDirectory` 
 
 ### Self-test strength
 
-All 22 independent rule mutants below exited 1 on 2026-11-11. Copy both Python files into `$TMPDIR/<name>/scripts/`, change only the named file, and run `python3 -I <copy>/check-vulkan-buffer-domain.py --self-test --files ffmpeg-patches/files` from the repository root. Each replacement is represented by exact Python string literals (including indentation and escaped newlines); require `text.count(old) == 1` before `text.replace(old, new, 1)`. The twelve earlier mutants and ten review mutants were all rerun against this implementation.
+All 32 independent rule mutants below exited 1 on 2026-11-11. Copy both Python files into `$TMPDIR/<name>/scripts/`, change only the named file, and run `python3 -I <copy>/check-vulkan-buffer-domain.py --self-test --files ffmpeg-patches/files` from the repository root. Each replacement is represented by exact Python string literals (including indentation and escaped newlines); require `text.count(old) == 1` before `text.replace(old, new, 1)`. The 22 earlier mutants and ten additional mutants covering G1–G6 were all rerun against this implementation.
 
 | Mutant | File | Exact replacement (`old` → `new`) | Observed exit | First failing self-test case |
 | --- | --- | --- | --- | --- |
@@ -88,8 +96,20 @@ All 22 independent rule mutants below exited 1 on 2026-11-11. Copy both Python f
 | type-allowlist-off | `check-vulkan-buffer-domain.py` | `'({TYPE}(?:\\s+{TYPE})*)'` → `'(\\w+(?:\\s+\\w+)*)'` | 1 | `mapped case failed: return output` |
 | alias-statement-off | `check-vulkan-buffer-domain.py` | `' and statement_start(tail, use.start())'` → `''` | 1 | `mapped case failed: chained alias store` |
 | duplicate-entry-off | `check-vulkan-buffer-domain.py` | `'if key in seen:'` → `'if False:'` | 1 | `known-read case failed: duplicate entries` |
+| bulk-suffix-off | `check-vulkan-buffer-domain.py` | `'return prefix in ("", "(void)") and suffix == ";"'` → `'return prefix in ("", "(void)")'` | 1 | `mapped case failed: memcpy result suffix` |
+| statement-close-paren-off | `c_scan.py` | `'";{})"'` → `'";{}"'` | 1 | `mapped case failed: write alias` |
+| statement-close-brace-off | `c_scan.py` | `'";{})"'` → `'";{)"'` | 1 | `mapped case failed: write alias` |
+| statement-else-do-off | `c_scan.py` | `'bool(re.search(r"\\b(?:else\|do)$", prefix))'` → `'False'` | 1 | `mapped case failed: write alias` |
+| type-uppercase-off | `check-vulkan-buffer-domain.py` | `'\|[A-Z]\\w*'` → `''` | 1 | `mapped case failed: alias type groups` |
+| type-tag-off | `check-vulkan-buffer-domain.py` | `'\|(?:struct\|union\|enum)\\s+\\w+'` → `''` | 1 | `mapped case failed: alias type groups` |
+| type-scalars-off | `check-vulkan-buffer-domain.py` | `'const\|volatile\|restrict\|signed\|unsigned\|short\|long\|int\|char\|float\|double\|void\|_Bool'` → `'const'` | 1 | `mapped case failed: alias type groups` |
+| block-nesting-off | `c_scan.py` | `'if text[pos] == "{":'` → `'if False:'` | 1 | `mapped case failed: nested block alias escape` |
+| literal-newline-off | `c_scan.py` | `'        if char == "\\n":\n            return text[start:pos], pos\n'` → `''` | 1 | `C masking case failed: literal newline stop` |
+| hunk-reset-off | `c_scan.py` | `'line.startswith("@@") or new_header'` → `'new_header'` | 1 | `C patch case failed: segment reset` |
 
 The classifier-off mutant first emits a stale analyze exception; mask-identity first emits a false mapped-read diagnostic for comment text at `vf_pelorus_analyze_vulkan.c:632`. Both also fail the quoted-brace self-test listed above. Other mutants report their failing case first. Disabling the member guard is independently caught by the member-qualified source argument; the destination-statement rule also refuses member-qualified destination calls. Disabling patch context is caught by the exact masked-output assertion, even though the unterminated-comment rule keeps the later reader visible.
+
+The keyword-skip equivalent mutant replaces `'if name:'` with `'if name and name[1] not in {"if", "while", "for", "switch", "return", "sizeof"}:'` in `check-vulkan-buffer-domain.py`. Rerunning the same self-test command exits 0 with no diagnostics. Two independent rules preserve refusal: within a bulk or sink argument, the parenthesis-merge guard rejects keyword expressions such as `sizeof(`; at statement level, only plain cast stores and allow-listed alias declarations pass. The survivor therefore does not establish missing keyword-refusal coverage.
 
 ### Source mutations
 
@@ -117,4 +137,4 @@ These checks leave runtime sources and the FFmpeg patch stack unchanged. `REUSE.
 | F7: Alias store appears within an expression | Require every use to start a statement | Chained store, call argument, RHS/sum/index reads |
 | F8: File-selection behavior lacks integration coverage | Exercise C, header and patch files through `source_texts()` and `check()` | Temporary tree requires exactly `b.h:1`, `c.patch:5` and `c.patch:6` diagnostics |
 
-Rule/source mutation evidence checked at `2026-11-11T03:19:42Z`: `check-vulkan-buffer-domain.py` SHA-256 `9460dcb6d1fd833896bf8d916f4f162a098141cbfebe8410aaf6149cd5d834ed`; `c_scan.py` SHA-256 `57fe8d2934cf38c5b03ec2ce0ca3941b3b3c5ed359d9e038c74361db8f6fa41f`. NLOC (nonblank, excluding `#` comment lines, including docstrings): checker 500; scanner 194. Each function stays within 60 physical lines and 10 decision points in the local AST inspection. Repository gates remain the dispatching session's responsibility.
+Rule/source mutation evidence checked at `2026-11-11T03:33:52Z`: `check-vulkan-buffer-domain.py` SHA-256 `7118f44b7eb07798b580a4362dc298120f0dfbcafecb172a6215c69c4273a1ad`; `c_scan.py` SHA-256 `ac1b13565c1b7145b35e027b40f9ade85b07b27330525c434c5cc13f6c4ee81d`. NLOC (nonblank, excluding `#` comment lines, including docstrings): checker 499; scanner 206. Local AST inspection counts branches, loops, comprehension clauses, conditional expressions, exception handlers and Boolean operators: the checker has at most 26 physical lines and 9 decision points per function; the scanner has at most 45 physical lines and 6 decision points per function. Both remain within the 60-line and 10-decision limits.

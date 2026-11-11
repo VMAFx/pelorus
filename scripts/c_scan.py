@@ -10,7 +10,9 @@ removal and newline relocation, masking preserves text length.
 Unterminated literals remain unmasked from their opening quote to an unescaped
 newline or EOF. Unterminated block comments remain unmasked through EOF.
 Patch segments retain new-side context during masking, then blank context and
-headers so diagnostics retain patch line numbers. Removed lines stay blank.
+headers so diagnostics retain patch line numbers. Hunk markers (`@@`) reset
+lexical state; `+++ ` is a file header only immediately after `--- `.
+Removed lines and metadata stay blank without affecting lexical state.
 This is a bounded lexical scan, with no preprocessor or macro expansion.
 C23 digit separators such as 1'000 become unterminated characters and leave
 the rest of that line unmasked.
@@ -22,6 +24,23 @@ import re
 
 
 MAX_CALL_CHARS = 4096
+
+
+def statement_at(text: str, pos: int) -> tuple[str, int]:
+    """Return collapsed statement and end offset, retaining its semicolon."""
+
+    start = max(text.rfind(delimiter, 0, pos) for delimiter in ";{}") + 1
+    end = text.find(";", pos)
+    end = len(text) if end < 0 else end + 1
+    return " ".join(text[start:end].split()), end
+
+
+def statement_start(text: str, pos: int) -> bool:
+    """Require a position to begin a statement rather than a subexpression."""
+    prefix = text[:pos].rstrip()
+    return (
+        not prefix or prefix[-1] in ";{})" or bool(re.search(r"\b(?:else|do)$", prefix))
+    )
 
 
 def block_tail(text: str, start: int) -> str | None:
@@ -134,15 +153,10 @@ def patch_additions(patch: str) -> str:
     out: list[str] = []
     start = 0
     for i, line in enumerate(lines):
-        old_header = (
-            line.startswith("--- ")
-            and i + 1 < len(lines)
-            and lines[i + 1].startswith("+++ ")
-        )
         new_header = (
             line.startswith("+++ ") and i > 0 and lines[i - 1].startswith("--- ")
         )
-        if line.startswith(("diff ", "@@", "index ")) or old_header or new_header:
+        if line.startswith("@@") or new_header:
             out.extend(_patch_segment(lines[start:i]))
             out.append("")
             start = i + 1
@@ -170,6 +184,10 @@ def self_test() -> list[str]:
         "unterminated character": (
             "x = 'a; reader(b->mapped_mem);\nx;",
             "x = 'a; reader(b->mapped_mem);\nx;",
+        ),
+        "literal newline stop": (
+            "x = 'a; reader(b->mapped_mem);\ny = 'b';",
+            "x = 'a; reader(b->mapped_mem);\ny = ' ';",
         ),
         "unterminated string": (
             '"reader(b->mapped_mem);\nx;',
@@ -210,10 +228,9 @@ def _patch_self_test() -> list[str]:
             "@@\n-reader(b->mapped_mem);\n\\ No newline at end of file\n+x;",
             "\n\n\nx;",
         ),
-        "segment reset": ("@@\n+/*\n@@\n+mapped_mem;", "\n/*\n\nmapped_mem;"),
-        "metadata reset": (
-            "+/*\ndiff a b\nindex 1..2\n+mapped_mem;",
-            "/*\n\n\nmapped_mem;",
+        "segment reset": (
+            "@@\n+/*\n@@\n+reader(b->mapped_mem);\n */",
+            "\n/*\n\nreader(b->mapped_mem);\n",
         ),
     }
     for label, (source, expected) in patches.items():
