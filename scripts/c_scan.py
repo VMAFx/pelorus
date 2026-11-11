@@ -289,8 +289,9 @@ def mapped_aliases(text: str) -> set[str]:
 
 
 def mapped_binding(text: str, pos: int) -> str | None:
-    """Find the nearest assignment name, crossing parentheses belonging to casts."""
-    prefix = re.split(r"[;{}(]", re.sub(CAST, "", text[:pos]))[-1]
+    """Find the nearest assignment across casts and grouping, stopping at calls."""
+    grouped = re.sub(r"(?<=[^\w)\]\s])\s*\(", " ", re.sub(CAST, "", text[:pos]))
+    prefix = re.split(r"[;{}(]", grouped)[-1]
     binding = re.search(r"\b(\w+)\s*=(?!=)[^;{}=]*$", prefix)
     return binding[1] if binding else None
 

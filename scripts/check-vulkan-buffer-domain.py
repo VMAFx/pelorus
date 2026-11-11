@@ -428,6 +428,8 @@ def self_test() -> list[str]:
 
 PATCH_CASES = {
     (True, ""): {
+        "patch grouped context alias": "@@ -1,2 +1,3 @@\n {T *p=(T*)(b->mapped_mem);\n+x=p[0];\n }",
+        "patch grouped base alias": "@@ -1,2 +1,3 @@\n {T *p=(T*)(b)->mapped_mem;\n+x=p[0];\n }",
         "patch context comment close": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,3 @@\n+/*\n */\n+reader(b->mapped_mem);",
         "patch reader": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+reader(b->mapped_mem);",
         "patch header-shaped read": "--- a/x.c\n+++ b/x.c\n@@ -1 +1 @@\n--- i;\n+++ i, x = b->mapped_mem[0];",
@@ -477,7 +479,7 @@ PATCH_CASES = {
         "patch hunk context reader": "--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+y = 1;\n@@ -9 +9 @@\n reader(b->mapped_mem);",
         "patch hunk context alias": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,1 @@\n T *p = (T *)b->mapped_mem;\n@@ -9,0 +9 @@\n+x = p[0]; }",
         "patch reader after addition": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n+y = 1;\n x = reader(b->mapped_mem);",
-        "patch context reader": "--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n x = reader(b->mapped_mem);\n+y = 1;",
+        "patch context reader": "--- a/x.c\n+++ b/x.c\n@@ -1,4 +1,5 @@\n x = reader(b->mapped_mem);\n w = (reader)(b->mapped_mem);\n v = fns[0](b->mapped_mem);\n u = reader (b->mapped_mem);\n+y = 1;",
         "patch context allocation": f"--- a/x.c\n+++ b/x.c\n@@ -1,1 +1,2 @@\n ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, {HOST_ONLY});\n+y = 1;",
     },
 }

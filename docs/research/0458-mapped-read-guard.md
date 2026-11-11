@@ -61,8 +61,9 @@ All source paths below are relative to `ffmpeg-patches/files/`. Argument indices
 | Context `p =` followed by added `memcpy(b->mapped_mem, src, n);` | Refused | `patch result escape` retains the assignment prefix during classification |
 | Context `x = reader` ending in a backslash-newline, followed by added `(b->mapped_mem);` | Refused | `patch spliced reader` moves the added origin onto the joined output line; exact scanner cases cover either side of the splice being added |
 | Context `T *p = (T *)b->mapped_mem;` followed by added `x = p[0];` | Refused | `patch context alias` extends overlap through the scanned block tail; `patch open alias` covers an absent closing brace |
+| Context `T *p=(T*)(b->mapped_mem);` or `T *p=(T*)(b)->mapped_mem;` followed by added `x=p[0];` | Refused | `patch grouped context alias` and `patch grouped base alias` drop grouping parentheses before naming the binding, so the scanned block tail still covers the addition |
 | Context allocation prefix through the fifth argument, followed by added storage and host-only flags | Storage-buffer error | `patch split allocation` classifies the complete call and checks overlap through its closing parenthesis |
-| Context `x = reader(b->mapped_mem);` with unrelated added `y = 1;` before or after it | Unreported | `patch context reader` and `patch reader after addition` exclude context-only statements and leading whitespace from overlap |
+| Context `x = reader(b->mapped_mem);` with unrelated added `y = 1;` before or after it; context calls `(reader)(b->mapped_mem)`, `fns[0](b->mapped_mem)` and `reader (b->mapped_mem)` before the addition | Unreported | `patch context reader` and `patch reader after addition` exclude context-only statements and leading whitespace from overlap; an opening parenthesis after a name, `)` or `]` stays a call, so none of the four calls binds an alias |
 | Context-only host-only storage allocation followed by unrelated added `y = 1;` | Unreported | `patch context allocation` requires added-line overlap for the allocation rule too |
 | Context `reader(` followed by added `b->mapped_mem);` | Refused | `patch reader argument` retains the enclosing call |
 | Added alias declaration followed by a context read through that alias | Refused | `patch added alias` includes both declaration and scanned tail in the classification region |
@@ -162,7 +163,7 @@ Five call-boundary cases inspect statement offsets, including a call longer than
 
 Four call-boundary cases also run complete patches through the checker.
 
-The shared `mapped_binding()` strips casts, stops at the nearest semicolon, brace or remaining opening parenthesis, and identifies the nearest assigned name. `binding_tail()` extends refused bindings on both classifier paths. A for-loop initializer conservatively reaches the enclosing block’s end; additions in another block after that enclosing brace remain outside the region. Missing closing braces extend through available text. `mapped_aliases()` uses overlapping assignment matches for directive checks, including chained assignments, while excluding equality comparisons.
+The shared `mapped_binding()` strips casts and grouping parentheses, stops at the nearest semicolon, brace or remaining call parenthesis, and identifies the nearest assigned name. An opening parenthesis is grouping when the previous non-blank character is not a name character, `)` or `]`; otherwise it opens a call. `binding_tail()` extends refused bindings on both classifier paths. A for-loop initializer conservatively reaches the enclosing block’s end; additions in another block after that enclosing brace remain outside the region. Missing closing braces extend through available text. `mapped_aliases()` uses overlapping assignment matches for directive checks, including chained assignments, while excluding equality comparisons.
 
 | Case | Input | Expected diagnostic or acceptance |
 | --- | --- | --- |
@@ -183,9 +184,9 @@ The shared `mapped_binding()` strips casts, stops at the nearest semicolon, brac
 
 The assignment/format fixtures use byte writes and check diagnostic counts and line numbers through `source_texts()` and the complete checker with valid allocation and known-read baselines. Disabling assignment alias collection, binding-tail extension and format-character refusal together in a copy produces exit 1: all ten refused assignment/format fixtures become accepted. The two unrelated-block controls remain accepted. Direct tail contracts independently detect removal of the closing-brace and available-region endpoints.
 
-All 113 non-equivalent checker rule mutants below exited 1 on 2026-11-11. Copy all three Python files into `$TMPDIR/<name>/scripts/`, make one exact replacement, and run `python3 -I <copy>/check-vulkan-buffer-domain.py --self-test --files ffmpeg-patches/files` from the repository root. Each replacement is represented by exact Python string literals, including indentation and escaped newlines; require exactly one occurrence of `old` across all three files before `text.replace(old, new, 1)` in the named file. The table also records four equivalent mutants and two harness removals with expected exit 0.
+All 118 non-equivalent checker rule mutants below exited 1 on 2026-11-11. Copy all three Python files into `$TMPDIR/<name>/scripts/`, make one exact replacement, and run `python3 -I <copy>/check-vulkan-buffer-domain.py --self-test --files ffmpeg-patches/files` from the repository root. Each replacement is represented by exact Python string literals, including indentation and escaped newlines; require exactly one occurrence of `old` across all three files before `text.replace(old, new, 1)` in the named file. The table also records four equivalent mutants and two harness removals with expected exit 0.
 
-All 120 checker table rows were rerun against the files: 113 exited 1 and seven retained their expected exit 0. Combining `start-invariant-off` with `close-paren-boundary` also exits 1: the complete argument-tail patch still detects the regression. Parser and reader rows name `c_source.py`. The twenty-three Semgrep and importer-test mutants below also exited 1 with Semgrep 1.183.0.
+All 125 checker table rows were rerun against the files: 118 exited 1 and seven retained their expected exit 0. Combining `start-invariant-off` with `close-paren-boundary` also exits 1: the complete argument-tail patch still detects the regression. Parser and reader rows name `c_source.py`. The twenty-three Semgrep and importer-test mutants below also exited 1 with Semgrep 1.183.0.
 
 Reader and metadata plants fail when their corresponding checks are disabled. The `metadata between hunks` fixture detects a body scan that includes a following file header. Header-shaped reads, subscript arguments, nested pointers, patch context, open aliases, leading whitespace, excluded-line splices and cross-hunk boundaries each have independent refusal cases. The mode plants fail against the six-digit octal allow-list before the regular-file restriction is applied.
 
@@ -196,7 +197,12 @@ Reader and metadata plants fail when their corresponding checks are disabled. Th
 | const-tail-off | `c_scan.py` | `'    if mapped_binding(text, pos) is None:\n        return end'` → `'    if mapped_binding(text, pos) is None or re.search(\n        r"\\bconst\\b", text[statement_bounds(text, pos)[0]:pos]\n    ):\n        return end'` | 1 | `lexical case failed: const read: []` |
 | assignment-tail-off | `c_scan.py` | `'    if mapped_binding(text, pos) is None:\n        return end'` → `'    if mapped_binding(text, pos) is None or re.match(\n        r"\\w+\\s*=", text[statement_bounds(text, pos)[0]:pos]\n    ):\n        return end'` | 1 | `lexical case failed: assigned directive: ['x.patch:8: mapped_mem in preprocessor directive']` |
 | call-binding-tail-off | `check-vulkan-buffer-domain.py` | `'text, start, binding_tail(text, pos, end), added'` → `'text, start, (end if call else binding_tail(text, pos, end)), added'` | 1 | `lexical case failed: for-init read: []` |
-| binding-name-off | `c_scan.py` | `'return binding[1] if binding else None'` → `'return None'` | 1 | `lexical case failed: assigned directive: ['x.patch:8: mapped_mem in preprocessor directive']` |
+| binding-name-off | `c_scan.py` | `'return binding[1] if binding else None'` → `'return None'` | 1 | `patch case failed: patch grouped context alias: False, []` |
+| grouping-strip-off | `c_scan.py` | `'    grouped = re.sub(r"(?<=[^\\w)\\]\\s])\\s*\\(", " ", re.sub(CAST, "", text[:pos]))'` → `'    grouped = re.sub(CAST, "", text[:pos])'` | 1 | `patch case failed: patch grouped context alias: False, []` |
+| grouping-strip-calls | `c_scan.py` | `'r"(?<=[^\\w)\\]\\s])\\s*\\("'` → `'r"\\s*\\("'` | 1 | `patch case failed: patch context reader: True, []` |
+| grouping-strip-close | `c_scan.py` | `'r"(?<=[^\\w)\\]\\s])\\s*\\("'` → `'r"(?<=[^\\w\\]\\s])\\s*\\("'` | 1 | `patch case failed: patch context reader: True, []` |
+| grouping-strip-bracket | `c_scan.py` | `'r"(?<=[^\\w)\\]\\s])\\s*\\("'` → `'r"(?<=[^\\w)\\s])\\s*\\("'` | 1 | `patch case failed: patch context reader: True, []` |
+| grouping-strip-blank | `c_scan.py` | `'r"(?<=[^\\w)\\]\\s])\\s*\\("'` → `'r"(?<=[^\\w)\\]])\\s*\\("'` | 1 | `patch case failed: patch context reader: True, []` |
 | format-category-off | `c_source.py` | `'hazards = categories.intersection(("Cc", "Cf"))'` → `'hazards = categories.intersection(("Cc",))'` | 1 | `lexical case failed: format added: []` |
 | patch-format-off | `c_source.py` | `'hazards = categories.intersection(("Cc", "Cf"))'` → `'hazards = categories.intersection(("Cc", "Cf") if kind == "source" else ("Cc",))'` | 1 | `lexical case failed: format added: []` |
 | classifier-off | `check-vulkan-buffer-domain.py` | `'if not allowed and added_overlap(\n            text, start, binding_tail(text, pos, end), added\n        ):'` → `'if False:'` | 1 | `mapped case failed: digraph subscript: []` |
@@ -426,12 +432,12 @@ The measurement on `756ec35` with the expanded write header found 7,176 of 7,488
 | 800 | 10,427 | 56,940 |
 | 1,600 | 20,827 | 113,740 |
 
-Rule/source mutation evidence checked at `2026-11-11T17:16:28Z`. NLOC excludes blank and `#` comment lines and includes docstrings. Decision counts include branches, loops, comprehension clauses and filters, conditional expressions, exception handlers and Boolean operators.
+Rule/source mutation evidence checked at `2026-11-11T18:11:11Z`. NLOC excludes blank and `#` comment lines and includes docstrings. Decision counts include branches, loops, comprehension clauses and filters, conditional expressions, exception handlers and Boolean operators.
 
 | File | SHA-256 | NLOC | Lines over 100 characters | Maximum function lines / decisions |
 | --- | --- | --- | --- | --- |
-| `check-vulkan-buffer-domain.py` | `a4b8c36d46e9eec2fe9548c8b03d2074738866271f49ea66fa53a7da25612559` | 498 | 44 | 30 / 10 |
-| `c_scan.py` | `ad7ad308ebc77c4485d0a773e5b9ae8a236dcf89aa7b9b4c47924bba26eef837` | 499 | 0 | 45 / 9 |
+| `check-vulkan-buffer-domain.py` | `57b3d35a58c2c374afbc29ae2a468a870112902162b85fffeb3542606ba5f006` | 500 | 44 | 30 / 10 |
+| `c_scan.py` | `70b8a34c8a1a7a5d0d32b99a20085f91bfc323096667068ec7feff6abee06409` | 500 | 0 | 45 / 9 |
 | `c_source.py` | `a25de0665bf3056c37cd2445ad59e783dcb8d717d023ecaa7bd1a8331e173a63` | 500 | 0 | 50 / 10 |
 | `test-semgrep-strict-reader-fixture.py` | `b7fe595d19ac32abdee28db46cef6da923ea6d11e8b7374ad538635d73adc02d` | 457 | 1 | 47 / 10 |
 | `check-semgrep-harness.py` | `693bdb1fc26a804ab814e06fe207a13a105869e05640ef34a2e6fe0a826f474b` | 183 | 0 | 31 / 10 |
