@@ -18,7 +18,6 @@ from typing import NamedTuple
 
 from c_scan import (
     PatchError,
-    alias_directive_cases,
     alias_patch_cases,
     check_spliced,
     mapped_aliases,
@@ -29,6 +28,7 @@ from c_scan import (
     scan_directives,
     splice_cases,
 )
+from vulkan_buffer_cases import alias_directive_cases
 
 
 def _hunk_counts(line: str, number: int) -> tuple[int, int] | None:

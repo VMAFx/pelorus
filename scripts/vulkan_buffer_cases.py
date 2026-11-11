@@ -1,6 +1,6 @@
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
-"""Allocation fixtures and flag constants for the Vulkan buffer checker."""
+"""Allocation and alias-directive fixtures for the Vulkan buffer checker."""
 
 STORAGE = "VK_BUFFER_USAGE_STORAGE_BUFFER_BIT"
 
@@ -51,3 +51,30 @@ ACCEPTED = {
 PATCH_MACRO = (
     f"#define MK(b) ff_vk_create_buf(s, &(b), n, NULL, NULL, {STORAGE}, {HOST_ONLY})"
 )
+
+
+def alias_directive_cases() -> tuple[tuple[str, bool], ...]:
+    """Refuse captured aliases; accept replacement-list uses of macro formals."""
+    declaration = "{ uint32_t *p = (uint32_t *)b->mapped_mem;\n"
+    ucn = chr(92) + "u00e4"
+    long_ucn = chr(92) + "U000000e4"
+    return (
+        (declaration + "#define P p\nuint32_t x = P[0]; }", True),
+        (declaration + "#define G(i) p[i]\nuint32_t x = G(0); }", True),
+        (declaration + "#define G(i)p[i]\nuint32_t x = G(0); }", True),
+        ("#define P p\n" + declaration + "uint32_t x = P[0]; }", True),
+        (declaration + "#define Q q\np[0] = 1; }", False),
+        (declaration + "#define G(p) 1\np[0] = 1; }", False),
+        (declaration + "#define SCALE(p) ((p) * 2)\np[0] = SCALE(7); }", False),
+        (declaration + "#define V(p...) (p)\np[0] = V(7); }", False),
+        (declaration + f"#define G{ucn}(p) 1\np[0] = 1; }}", False),
+        (declaration + f"#define G{long_ucn}(p) 1\np[0] = 1; }}", False),
+        (declaration + "#define P+p\nuint32_t x = 0 P[0]; (void)x; }", True),
+        (declaration + f"#define P{ucn} p\nuint32_t x = P{ucn}[0]; (void)x; }}", True),
+        (
+            declaration
+            + f"#define G{ucn}(i) p[i]\nuint32_t x = G{ucn}(0); (void)x; }}",
+            True,
+        ),
+        (declaration + "#define P pp\np[0] = 1; }", False),
+    )

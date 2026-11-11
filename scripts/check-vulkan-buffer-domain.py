@@ -462,6 +462,9 @@ PATCH_CASES = {
         "patch hunk flags": f"--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,1 @@\n+flags = {DEVICE_LOCAL};\n@@ -9,0 +9 @@\n+ff_vk_create_buf(s, &buf, n, NULL, NULL, {STORAGE}, flags);",
     },
     (False, ""): {
+        "patch macro formal store": "@@ -0,0 +1,3 @@\n+#define SCALE(p) ((p) * 2)\n"
+        "+{ uint32_t *p = (uint32_t *)b->mapped_mem;\n"
+        "+p[0] = SCALE(7); }",
         "patch device-local macro allocation": "@@ -0,0 +1 @@\n+"
         + PATCH_MACRO.replace(HOST_ONLY, DEVICE_LOCAL),
         "patch context macro allocation": "@@ -1 +1,2 @@\n "

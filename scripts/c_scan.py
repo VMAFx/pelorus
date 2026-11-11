@@ -307,8 +307,11 @@ def binding_tail(text: str, pos: int, end: int) -> int:
 def directive_alias(text: str, aliases: set[str]) -> bool:
     """Check define replacements, excluding macro names and formal parameters."""
     name = r"(?:\w|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8})+"
-    define = re.match(rf"\s*#\s*define\s+{name}(?:\([^\n)]*\))?(.*)", text)
-    return bool(define and aliases.intersection(re.findall(r"\b\w+\b", define[1])))
+    define = re.match(rf"\s*#\s*define\s+{name}(?:\(([^\n)]*)\))?(.*)", text)
+    if not define:
+        return False
+    formals = set(re.findall(r"\w+", define[1] or ""))
+    return bool(aliases.intersection(set(re.findall(r"\b\w+\b", define[2])) - formals))
 
 
 def scan_directives(
@@ -462,31 +465,6 @@ def _splice_origin_cases() -> list[tuple[str, str, bytes, str]]:
             "4: unreadable patch digraph",
         ),
     ]
-
-
-def alias_directive_cases() -> tuple[tuple[str, bool], ...]:
-    """Refuse replacement aliases; accept formal parameters of UCN-named macros."""
-    declaration = "{ uint32_t *p = (uint32_t *)b->mapped_mem;\n"
-    ucn = chr(92) + "u00e4"
-    long_ucn = chr(92) + "U000000e4"
-    return (
-        (declaration + "#define P p\nuint32_t x = P[0]; }", True),
-        (declaration + "#define G(i) p[i]\nuint32_t x = G(0); }", True),
-        (declaration + "#define G(i)p[i]\nuint32_t x = G(0); }", True),
-        ("#define P p\n" + declaration + "uint32_t x = P[0]; }", True),
-        (declaration + "#define Q q\np[0] = 1; }", False),
-        (declaration + "#define G(p) 1\np[0] = 1; }", False),
-        (declaration + f"#define G{ucn}(p) 1\np[0] = 1; }}", False),
-        (declaration + f"#define G{long_ucn}(p) 1\np[0] = 1; }}", False),
-        (declaration + "#define P+p\nuint32_t x = 0 P[0]; (void)x; }", True),
-        (declaration + f"#define P{ucn} p\nuint32_t x = P{ucn}[0]; (void)x; }}", True),
-        (
-            declaration
-            + f"#define G{ucn}(i) p[i]\nuint32_t x = G{ucn}(0); (void)x; }}",
-            True,
-        ),
-        (declaration + "#define P pp\np[0] = 1; }", False),
-    )
 
 
 def _statement_self_test() -> list[str]:
