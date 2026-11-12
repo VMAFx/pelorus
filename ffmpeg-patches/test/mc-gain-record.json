@@ -10,22 +10,22 @@
   },
   "devices": [
     {
-      "name": "RTX 4090",
+      "name": "NVIDIA GeForce RTX 4090",
       "device_id": "0x2684",
       "driver": "NVIDIA 620.70.06",
       "measured": "2026-11-12",
-      "runs": 11,
-      "ratio_subgroup": 3.339,
-      "ratio_tree": 5.526
+      "runs": 15,
+      "ratio_subgroup": 3.115,
+      "ratio_tree": 5.810
     },
     {
       "name": "AMD Ryzen 9 9950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO)",
       "device_id": "0x13c0",
-      "driver": "radv Mesa 26.2.6",
+      "driver": "radv Mesa 26.2.6-arch3.1",
       "measured": "2026-11-12",
-      "runs": 11,
-      "ratio_subgroup": 11.395,
-      "ratio_tree": 12.679
+      "runs": 15,
+      "ratio_subgroup": 11.432,
+      "ratio_tree": 12.736
     }
   ],
   "unguarded": [

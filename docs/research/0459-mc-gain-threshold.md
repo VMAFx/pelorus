@@ -5,11 +5,11 @@
 
 **Decision:** [ADR-0256](../adr/0256-mc-sad-gain-wall-time-threshold.md).
 
-**Scope:** issue #459; the `block_sad` subgroup reduction from PR #27 / `6bedd01`, its static shape guard (#548), and the hardware replay. Measurements below were supplied by the dispatching session on 2026-11-12; this implementation lane runs only the stub self-test.
+**Scope:** issue #459; the `block_sad` subgroup reduction from PR #27 / `6bedd01`, its static shape guard (#548), and the hardware replay. The device measurements below are dated 2026-11-12 and use FFmpeg n9.0.2.
 
 ## Verdict
 
-Use the same binary's net bsize=8 / net bsize=32 wall-time ratio and compare it with the midpoint of the recorded subgroup and tree ratios. Record RTX 4090 and RADV RAPHAEL_MENDOCINO. Keep Arc A380 explicitly unguarded under #602: the subgroup reduction is slower there.
+Use the same binary's net bsize=8 / net bsize=32 wall-time ratio and compare it with the midpoint of the recorded subgroup and tree ratios. Record NVIDIA GeForce RTX 4090 and RADV RAPHAEL_MENDOCINO. Keep Arc A380 explicitly unguarded under #602: the subgroup reduction is slower there.
 
 ## Method
 
@@ -25,34 +25,40 @@ python3 -I ffmpeg-patches/test/mc-gain-smoke.py --tree-shader \
   /absolute/path/to/ffmpeg-tree/libavfilter/vulkan/pelorus_mc.comp.glsl
 FFMPEG_BIN=/absolute/path/to/subgroup/ffmpeg \
   python3 -I ffmpeg-patches/test/mc-gain-smoke.py --make-record \
-  --tree-ffmpeg /absolute/path/to/ffmpeg-tree/ffmpeg --runs 11
+  --tree-ffmpeg /absolute/path/to/ffmpeg-tree/ffmpeg
 ```
 
 The record mode interleaves passthrough, sub8, sub32, tree8 and tree32 for each enumerated device. Discard one warm-up per arm; alternate forward and reversed order for measured rounds. The default is 15 rounds, bounded to 5–50. Output is one JSON device entry per separated device; merge those entries into `mc-gain-record.json` while retaining the workload and unguarded list. Optional `vulkaninfo --summary` provides driver metadata with a 60 s deadline; otherwise it is `unknown`.
 
 ## Measurements
 
-The initial absolute-time experiment used bsize=16. These are net wall times in seconds, subgroup versus tree:
+A separate interleaved A/B run on 2026-11-12 measured absolute wall times at bsize=16 and bsize=32. The bsize=16 net wall times in seconds are subgroup versus tree:
 
 | Device | Driver | Subgroup net s | Tree net s |
 | --- | --- | --- | --- |
-| RTX 4090, `0x2684` | NVIDIA 620.70.06 | 0.154 | 0.179 |
-| AMD Ryzen 9 9950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO), `0x13c0` | Mesa 26.2.6 | 0.960 | 1.056 |
+| NVIDIA GeForce RTX 4090, `0x2684` | NVIDIA 620.70.06 | 0.154 | 0.179 |
+| AMD Ryzen 9 9950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO), `0x13c0` | radv Mesa 26.2.6-arch3.1 | 0.960 | 1.056 |
 | Intel(R) Arc(tm) A380 Graphics (DG2), `0x56a5` | Mesa 26.2.6 ANV | 2.094 | 1.120 |
 
-The ratio experiment used the workload above:
+The 2026-11-12 `--make-record --tree-ffmpeg` run used the workload above with the default 15 rounds. Its three-decimal record values are:
 
-| Device | Runs | Subgroup R | SE | Tree R | SE |
-| --- | --- | --- | --- | --- | --- |
-| RTX 4090, `0x2684` | 11 | 3.339 | 0.202 | 5.526 | 0.238 |
-| RADV RAPHAEL_MENDOCINO, `0x13c0` | 11 | 11.395 | 0.218 | 12.679 | 0.215 |
-| RADV RAPHAEL_MENDOCINO, second session | 7 | 11.219 | not supplied | 12.622 | not supplied |
+| Device | Driver | Runs | Subgroup R | Tree R |
+| --- | --- | --- | --- | --- |
+| NVIDIA GeForce RTX 4090, `0x2684` | NVIDIA 620.70.06 | 15 | 3.115 | 5.810 |
+| AMD Ryzen 9 9950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO), `0x13c0` | radv Mesa 26.2.6-arch3.1 | 15 | 11.432 | 12.736 |
 
 The subgroup and tree outputs were equal (SSIM 1.000000); this comparison concerns performance only.
 
 ## Why the ratio
 
-An absolute-time midpoint has only a 9 % margin on RADV and flips with host load. Host speed scales both net arms to first order. The fetch-bound bsize=32 arm is approximately equal across variants: RADV net 0.306 versus 0.312 s; RTX 4090 net 0.124 versus 0.133 s. Dividing the reduction-bound arm by that reference within the same binary separates the reductions without depending on another filter's speed.
+An absolute-time midpoint has only a 9 % margin on RADV, and absolute times move with host and device speed. Host speed scales both net arms to first order. The separate interleaved A/B run on 2026-11-12 measured approximately equal net bsize=32 times across variants:
+
+| Device | Driver | Subgroup net s | Tree net s |
+| --- | --- | --- | --- |
+| NVIDIA GeForce RTX 4090, `0x2684` | NVIDIA 620.70.06 | 0.124 | 0.133 |
+| AMD Ryzen 9 9950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO), `0x13c0` | radv Mesa 26.2.6-arch3.1 | 0.306 | 0.312 |
+
+Dividing the reduction-bound arm by that reference within the same binary separates the reductions without depending on another filter's speed.
 
 ## Decision rule
 
@@ -68,10 +74,10 @@ On Mesa 26.2.6 ANV, the Arc A380 subgroup reduction is about 85 % slower than th
 
 ## Limits
 
-Records apply to a specific FFmpeg device name and PCI identifier. A driver change requires re-recording; stale-low catches ratios below the recorded range, including uniformly faster subgroup and tree implementations that might otherwise allow a reverted reduction to pass. Concurrent load may still cause inconclusive or failed results: rerun on an idle device. No GPU was exercised in this implementation lane. These measurements do not replace the broader GPU performance work in #167.
+Records apply to a specific FFmpeg device name and PCI identifier. A driver change requires re-recording; stale-low catches ratios below the recorded range, including uniformly faster subgroup and tree implementations that might otherwise allow a reverted reduction to pass. Concurrent load may still cause inconclusive or failed results: rerun on an idle device. These measurements do not replace the broader GPU performance work in #167.
 
 ## Sources
 
-- Dispatching-session measurements and FFmpeg n9.0.2 log strings supplied on 2026-11-12; baseline `origin/master` `5f2adde`, ADR skeleton `b13b7de`.
+- Measurements dated 2026-11-12 from the commands above and FFmpeg n9.0.2 log strings; baseline `origin/master` `5f2adde`.
 - `ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl`, `scripts/check-mc-sad-reduction.py` (#548), `ffmpeg-patches/test/mc-gain-smoke.py --self-test`.
 - [Bench results v0.19](../development/bench-results.md), [ADR-0189](../adr/0189-named-nvenc-smoke-skip.md), [ADR-0256](../adr/0256-mc-sad-gain-wall-time-threshold.md).

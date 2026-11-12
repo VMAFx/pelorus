@@ -853,8 +853,8 @@ time: `ffmpeg-patches/test/mc-gain-smoke.py`
 and requires `OpGroupNonUniformFAdd` in the compiled SPIR-V. The wall-time check
 compares the passthrough-subtracted bsize=8 / bsize=32 ratio with the recorded
 subgroup/tree midpoint. Arc A380 (ANV) inverts the gain and remains unguarded
-under #602. CI has no GPU runner,
-so the 0.765 → 0.727 s figure stays a dated RTX 4090 record.
+under #602. CI has no GPU runner, so the 0.765 → 0.727 s figure stays a dated
+RTX 4090 record.
 
 Honest verdict: the subgroup reduction is a small, real, validated win on the
 slowest filter; the broader "free throughput" framing overstated it — the

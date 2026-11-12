@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0241: Bind every nosemgrep and nosec marker to its start line, rule id and reason
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by [ADR-0256](0256-mc-sad-gain-wall-time-threshold.md) (formatter suppression comments refused)
 - **Date**: 2026-11-02
 - **Deciders**: Lusoris
 - **Tags**: testing, security, static-analysis, ci
@@ -29,6 +29,8 @@ The `nosem` alias and a marker word in the middle of a comment are refused as we
 The rule is stricter than Semgrep on one point: a marker on the line before the start line suppresses in Semgrep but fails here, so each marker has one place, beside the code it answers.
 
 `--self-test` plants a marker on the line before, on a closing bracket, a bare `nosemgrep`, a `nosemgrep` without a reason, a short id, the `nosem` alias, a bare `nosec`, a `nosec` without a reason, a marker word mid-comment, a marker in a shell file, a marker in a non-UTF-8 shell file, a bare marker in a `.pyi` stub, an undecodable source, a marker in a UTF-16 file with a byte-order mark, without one, with an odd trailing byte, with few NUL bytes (CJK text), after one stray byte and in big-endian order, a file that looks like UTF-16 but carries a plain ASCII marker, and an unreadable file (skipped when running as root, or on Windows, where mode 0 leaves a file readable); each must be refused, and a valid source with marker text in a string literal and a declared latin-1 source must pass. The meson fast-suite test `suppression-markers-self-test` runs the planted cases on every platform (`--self-test-only`); `suppression-markers` runs them and then the tree scan, on every platform except Windows, whose MSYS2 leg has no git on `PATH`.
+
+Formatter suppression comments are also refused in tracked Python: `fmt: skip/off/on`, `yapf: disable/enable`, and `autopep8: off/on`, case-insensitively with spaces around the colon allowed ([ADR-0256](0256-mc-sad-gain-wall-time-threshold.md)). The self-test plants `x = 1  # fmt: skip`, a `# fmt: off` / `# fmt: on` pair, `# yapf: disable`, `#fmt:skip`, and `# FMT: SKIP`; each must be refused. Additional plants cover a spaced colon, `yapf: enable`, and both `autopep8` markers. A string literal containing `# fmt: skip` must pass.
 
 ## Alternatives considered
 

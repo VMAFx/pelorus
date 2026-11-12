@@ -15,6 +15,8 @@ ADR-0241. A suppression marker in a tracked Python file must:
 
 A bare ``nosemgrep`` suppresses every rule on the line, and the ``nosem``
 alias or a marker word in the middle of a comment is refused as well.
+Formatter comments for fmt (skip/off/on), yapf (disable/enable), and
+autopep8 (off/on) are refused (ADR-0256), including case and spacing variants.
 Markers inside string literals are text, not comments, and do not count.
 A marker in a tracked non-Python, non-Markdown file is refused, since this
 check reads Python only. UTF-16 non-Python files are decoded before scanning.
@@ -47,6 +49,11 @@ from tracked_python import is_python, tracked_files
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKER_WORD = re.compile(r"\bnos(?:emgrep|em|ec)\b", re.IGNORECASE)
+FORMATTER = re.compile(
+    r"\b(?:fmt\s*:\s*(?:skip|off|on)|yapf\s*:\s*(?:disable|enable)"
+    r"|autopep8\s*:\s*(?:off|on))\b",
+    re.IGNORECASE,
+)
 RULE_ID = r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*"
 NOSEMGREP = re.compile(rf"^nosemgrep:[ \t]*({RULE_ID}(?:[ \t]*,[ \t]*{RULE_ID})*)[ \t]+-[ \t]+\S")
 NOSEC = re.compile(r"^nosec[ \t]+(B\d{3}(?:[ \t]*,[ \t]*B\d{3})*)[ \t]+-[ \t]+\S")
@@ -136,9 +143,15 @@ def python_findings(name: str, text: str, local_ids: frozenset[str]) -> list[str
     }
     found: list[str] = []
     for tok in tokenize.generate_tokens(io.StringIO(text).readline):
-        if tok.type != tokenize.COMMENT or MARKER_WORD.search(tok.string) is None:
+        if tok.type != tokenize.COMMENT:
             continue
         line = tok.start[0]
+        if FORMATTER.search(tok.string):
+            found.append(
+                f"{name}:{line}: formatter suppression comment refused (ADR-0256)"
+            )
+        if MARKER_WORD.search(tok.string) is None:
+            continue
         problems = comment_findings(tok.string, local_ids)
         if line not in starts:
             problems.insert(0, "marker is not on the start line of a statement or expression")
@@ -507,6 +520,33 @@ def exceptions_self_test() -> list[str]:
     return failures
 
 
+def formatter_self_test(local_ids: frozenset[str]) -> list[str]:
+    """Refuse formatter comment variants while accepting literal marker text."""
+    plants = (
+        ("inline", "x = 1  # fmt: skip\n"),
+        ("pair", "# fmt: off\nx = 1\n# fmt: on\n"),
+        ("yapf", "# yapf: disable\nx = 1\n"),
+        ("compact", "x = 1  #fmt:skip\n"),
+        ("uppercase", "x = 1  # FMT: SKIP\n"),
+        ("spaced colon", "# fmt : skip\nx = 1\n"),
+        ("yapf enable", "# yapf: enable\nx = 1\n"),
+        ("autopep8 off", "# autopep8: off\nx = 1\n"),
+        ("autopep8 on", "# autopep8: on\nx = 1\n"),
+    )
+    failures: list[str] = []
+    message = "formatter suppression comment refused (ADR-0256)"
+    for label, source in plants:
+        got = python_findings("formatter.py", source, local_ids)
+        if not got or not all(message in item for item in got):
+            failures.append(f"formatter '{label}' not refused: {got}")
+        else:
+            print(f"refused as expected (formatter {label}): {got[0]}")
+    clean = 'text = "# fmt: skip"\n'
+    if got := python_findings("literal.py", clean, local_ids):
+        failures.append(f"formatter string literal refused: {got}")
+    return failures
+
+
 def self_test() -> int:
     """Plant each refused shape and the valid sources; 0 when all behave."""
     local_ids = frozenset({"local-rule"})
@@ -552,6 +592,7 @@ def self_test() -> int:
         failures.append("planted 'late bare nosem with CRLF' not refused")
     else:
         print("refused as expected (late bare nosem with CRLF)")
+    failures.extend(formatter_self_test(local_ids))
     failures.extend(encoding_self_test(local_ids))
     failures.extend(exceptions_self_test())
     for failure in failures:

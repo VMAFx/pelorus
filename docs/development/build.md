@@ -574,8 +574,9 @@ of the statement or expression it answers and name its rules plus a reason:
 `# nosemgrep: <full rule id>[, <id>] - <reason>` and `# nosec <Bxxx> - <reason>`
 ([ADR-0241](../adr/0241-suppression-marker-binding.md)). The fast-suite test
 `suppression-markers` runs `scripts/check-suppression-markers.py --self-test`,
-which refuses a misplaced, bare or reasonless marker and then scans the tree;
-`suppression-markers-self-test` runs the planted cases alone
+which refuses a misplaced, bare or reasonless marker, plus formatter comments
+(`fmt: skip/off/on`, `yapf: disable/enable`, `autopep8: off/on`), then scans the
+tree; `suppression-markers-self-test` runs the planted cases alone
 (`--self-test-only`) on every platform, Windows included. Each Python file is
 read in its declared encoding (PEP 263), and one that does not decode is a
 finding.

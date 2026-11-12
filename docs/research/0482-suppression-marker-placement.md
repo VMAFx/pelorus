@@ -9,7 +9,7 @@
 
 ## Verdict
 
-Semgrep binds a marker to the line where the finding starts, or the line before it. Which line that is depends on the rule: a call-level rule starts on the line of the call, while a taint rule whose sink is an argument starts on that argument's line. A static check cannot see a rule's granularity, so `scripts/check-suppression-markers.py` accepts any statement or expression start line and refuses lines that start no node.
+Semgrep binds a marker to the line where the finding starts, or the line before it. Which line that is depends on the rule: a call-level rule starts on the line of the call, while a taint rule whose sink is an argument starts on that argument's line. A static check cannot see a rule's granularity, so `scripts/check-suppression-markers.py` accepts any statement or expression start line and refuses lines that start no node; it also refuses formatter suppression comments (`fmt: skip/off/on`, `yapf: disable/enable`, `autopep8: off/on`; [ADR-0256](../adr/0256-mc-sad-gain-wall-time-threshold.md)).
 
 ## Measurements
 
