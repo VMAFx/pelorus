@@ -25,10 +25,14 @@ Use FFmpeg 9's precompiled-SPIR-V model and preserve the released patch order.
    `ffmpeg-patches/files/` LGPL-2.1-or-later (ADR-0171).
 4. Register C and shader objects, the alphabetical extern, and
    `*_filter_deps="vulkan spirv_compiler"`. Any interop producer or consumer
-   using libpelorus separately uses `enabled pelorus_<name>_vulkan_filter &&
-   require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h
-   pel_blob_pack && add_extralibs $libpelorus_extralibs`; pure transforms do
-   not link libpelorus.
+   using libpelorus uses the lines that the generator's
+   `libpelorus_link("pelorus_<name>_vulkan")` emits:
+   `pelorus_<name>_vulkan_filter_extralibs="libpelorus_extralibs"` and
+   `enabled pelorus_<name>_vulkan_filter && require_pkg_config libpelorus
+   "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack`. Per-filter extralibs
+   carries the libpelorus link flags into executable links and
+   `libavfilter.pc`; global `add_extralibs` is refused by
+   `scripts/check-build-config.py`. Pure transforms do not link libpelorus.
 5. Add an explicit synthetic generator commit after the existing shipped patch
    sequence. Extend its filename map, `series.txt`, replay patch-count assertion,
    and filter-registration list; never shift existing patch identities. Update

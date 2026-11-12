@@ -126,6 +126,7 @@ OPERATIONAL_GUIDANCE = (
     ROOT / ".claude" / "agents" / "ffmpeg-patch-reviewer.md",
 )
 EXPLICIT_COMMAND_GUIDANCE = OPERATIONAL_GUIDANCE[:1] + OPERATIONAL_GUIDANCE[2:4]
+LINK_GUIDANCE = OPERATIONAL_GUIDANCE[1:2] + OPERATIONAL_GUIDANCE[3:]
 LIBPELORUS_FLOOR_INPUTS = tuple(
     ROOT / "ffmpeg-patches" / f".commit-msg-{name}.txt"
     for name in ("deband", "analyze", "denoise", "grain_estimate", "mc")
@@ -383,7 +384,7 @@ def validate_pin_projection_text(
 
 
 def validate_guidance_text(
-    relative: str, source: str, require_command: bool
+    relative: str, source: str, require_command: bool, *, require_link: bool = False
 ) -> list[str]:
     """Reject retired command, shader, and configure models from live guidance."""
     errors: list[str] = []
@@ -395,12 +396,35 @@ def validate_guidance_text(
         "spirv_library",
         "filter's inline GLSL",
         "mirrored inline",
+        "add_extralibs $libpelorus_extralibs",
     )
     for token in forbidden:
         if token in source:
             errors.append(f"{relative}: contains obsolete guidance {token}")
     if require_command and "FFMPEG_REPO=/absolute/path" not in source:
         errors.append(f"{relative}: missing explicit FFMPEG_REPO command")
+    if require_link and '_filter_extralibs="libpelorus_extralibs"' not in source:
+        errors.append(f"{relative}: missing per-filter libpelorus_extralibs guidance")
+    return errors
+
+
+def validate_operational_guidance() -> list[str]:
+    """Check each operational guidance file for retired and missing configure models."""
+    errors: list[str] = []
+    for path in OPERATIONAL_GUIDANCE:
+        relative = path.relative_to(ROOT).as_posix()
+        source, read_errors = read_tracked_text(path)
+        errors.extend(read_errors)
+        if read_errors:
+            continue
+        errors.extend(
+            validate_guidance_text(
+                relative,
+                source,
+                path in EXPLICIT_COMMAND_GUIDANCE,
+                require_link=path in LINK_GUIDANCE,
+            )
+        )
     return errors
 
 
@@ -426,15 +450,7 @@ def validate_current_surfaces(values: dict[str, str]) -> list[str]:
             )
         )
 
-    for path in OPERATIONAL_GUIDANCE:
-        relative = path.relative_to(ROOT).as_posix()
-        source, read_errors = read_tracked_text(path)
-        errors.extend(read_errors)
-        if read_errors:
-            continue
-        errors.extend(
-            validate_guidance_text(relative, source, path in EXPLICIT_COMMAND_GUIDANCE)
-        )
+    errors.extend(validate_operational_guidance())
 
     for path in LIBPELORUS_FLOOR_INPUTS:
         relative = path.relative_to(ROOT).as_posix()
@@ -1196,6 +1212,33 @@ def surface_validator_regressions() -> list[str]:
         )
     ):
         return ["surface regression: retired shader dependency was accepted"]
+    return link_guidance_validator_regressions()
+
+
+def link_guidance_validator_regressions() -> list[str]:
+    """Reject global libpelorus links and require the per-filter guidance."""
+    path = LINK_GUIDANCE[0]
+    relative = path.relative_to(ROOT).as_posix()
+    skill = path.read_text(encoding="utf-8")
+    retired = skill + "\n`... pel_blob_pack && add_extralibs $libpelorus_extralibs`\n"
+    if not any(
+        "contains obsolete guidance add_extralibs $libpelorus_extralibs" in error
+        for error in validate_guidance_text(relative, retired, False, require_link=True)
+    ):
+        return ["surface regression: global libpelorus link was accepted"]
+    missing = skill.replace(
+        '_filter_extralibs="libpelorus_extralibs"',
+        '_filter_extralibs="other_extralibs"',
+    )
+    if missing == skill:
+        return ["surface regression: per-filter link mutation changed nothing"]
+    if not any(
+        "missing per-filter libpelorus_extralibs guidance" in error
+        for error in validate_guidance_text(relative, missing, False, require_link=True)
+    ):
+        return ["surface regression: missing per-filter libpelorus link was accepted"]
+    if validate_guidance_text(relative, skill, False, require_link=True):
+        return ["surface regression: current per-filter libpelorus link was rejected"]
     return []
 
 
