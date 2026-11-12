@@ -44,6 +44,20 @@ def enumeration_case(runner: ModuleType, record: dict, folder: Path, mode: str) 
     return str(len(runner.enumerate_devices(STUB_FFMPEG, env)))
 
 
+def make_link(kind: str, source: Path, target: Path, allow_skip: bool) -> str | None:
+    """Create a real link or name an explicitly permitted unsupported operation."""
+    try:
+        if kind == "symlink":
+            target.symlink_to(source)
+        else:
+            os.link(source, target)
+    except OSError as exc:
+        if allow_skip:
+            return f"SKIP: {kind} creation not supported: {exc}"
+        raise
+    return None
+
+
 def alias_case(runner: ModuleType, folder: Path, kind: str) -> tuple[int, str]:
     """Refuse each output alias before changing any source byte."""
     source, target = folder / (kind + ".glsl"), folder / (kind + "-out.glsl")
@@ -51,10 +65,10 @@ def alias_case(runner: ModuleType, folder: Path, kind: str) -> tuple[int, str]:
         runner.ROOT / "ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl"
     ).read_bytes()
     source.write_bytes(original)
-    if kind == "symlink":
-        target.symlink_to(source)
-    elif kind == "hardlink":
-        os.link(source, target)
+    if kind in ("symlink", "hardlink"):
+        skip = make_link(kind, source, target, allow_skip=os.name == "nt")
+        if skip is not None:
+            return 0, skip
     else:
         target = source
     message = ""
@@ -67,6 +81,74 @@ def alias_case(runner: ModuleType, folder: Path, kind: str) -> tuple[int, str]:
         and source.read_bytes() == original,
         "alias refused; bytes unchanged",
     )
+
+
+def link_error_case(
+    folder: Path, kind: str, allow_skip: bool, error: type[Exception]
+) -> tuple[int, str]:
+    """Inject link errors without changing platform identity or real link cases."""
+    owner, name = (Path, "symlink_to") if kind == "symlink" else (os, "link")
+    with patch.object(owner, name, side_effect=error("injected link failure")):
+        message = make_link(kind, folder / "source", folder / "target", allow_skip)
+    if allow_skip:
+        return expect(
+            message == f"SKIP: {kind} creation not supported: injected link failure",
+            f"{kind} skip message returned",
+        )
+    return 0, "link created"
+
+
+def skip_output_case(expected: int, rc: int) -> tuple[int, str]:
+    """Accept a named skip only as a successful result the case expects."""
+    output = io.StringIO()
+    with redirect_stdout(output):
+        passed = _tests.run_case(
+            "canned-skip", partial(tuple, (rc, "SKIP: canned")), expected, "absent"
+        )
+    line = output.getvalue()
+    skip = rc == 0 and expected == 0
+    return expect(
+        passed == skip
+        and (
+            line == "skip canned-skip: SKIP: canned\n"
+            if skip
+            else line.startswith("FAIL canned-skip:")
+        ),
+        "skip output and status",
+    )
+
+
+def alias_skip_case(runner: ModuleType, folder: Path) -> tuple[int, str]:
+    """Return a named link skip before attempting the shader transformation."""
+    message = "SKIP: symlink creation not supported: injected link failure"
+    with (
+        patch.object(sys.modules[__name__], "make_link", return_value=message),
+        patch.object(runner, "tree_shader") as shader,
+    ):
+        result = alias_case(runner, folder, "symlink")
+    shader.assert_not_called()
+    return expect(result == (0, message), "alias skip before shader")
+
+
+def link_skip_cases(runner: ModuleType, folder: Path) -> list[tuple]:
+    """Collect positive, negative, and exception boundary cases for named skips."""
+    cases = []
+    for kind in ("symlink", "hardlink"):
+        for allow_skip in (True, False):
+            call = partial(link_error_case, folder, kind, allow_skip, OSError)
+            suffix = "skip" if allow_skip else "raise"
+            message = kind + " skip message returned" if allow_skip else "injected"
+            cases.append(
+                (f"link-{kind}-{suffix}", call, 0 if allow_skip else 1, message)
+            )
+    call = partial(link_error_case, folder, "symlink", True, ValueError)
+    cases.append(("link-value-error", call, 1, "injected link failure"))
+    for expected, rc in ((0, 0), (1, 0), (77, 77)):
+        call = partial(skip_output_case, expected, rc)
+        cases.append((f"skip-output-{expected}", call, 0, "skip output and status"))
+    call = partial(alias_skip_case, runner, folder)
+    cases.append(("alias-skip-before-shader", call, 0, "alias skip before shader"))
+    return cases
 
 
 def driver_parse_case(runner: ModuleType) -> tuple[int, str]:
@@ -195,4 +277,5 @@ def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
     for mode in ("make", "check", "duplicate"):
         call = partial(record_main_case, runner, record, folder, mode)
         cases.append(("record-main-" + mode, call, 0, mode))
+    cases += link_skip_cases(runner, folder)
     return cases

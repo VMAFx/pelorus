@@ -31,7 +31,11 @@ def run_case(name: str, call: Callable, expected: int, fragment: str) -> bool:
         rc, message = value if isinstance(value, tuple) else (0, str(value))
     except (ValueError, OSError, AssertionError, ArithmeticError) as exc:
         rc, message = 1, str(exc)
-    ok = rc == expected and fragment in message
+    skip = rc == 0 and message.startswith("SKIP: ")
+    ok = rc == expected and (skip or fragment in message)
+    if ok and skip:
+        print(f"skip {name}: {message}")
+        return True
     print(
         f"ok {name}"
         if ok
@@ -438,6 +442,6 @@ def self_test(runner: ModuleType) -> int:
         review = importlib.import_module("mc-gain-self-test-review")
         cases += review.review_cases(runner, record, folder)
         passed = [run_case(*case) for case in cases]
-        assert len(passed) == 101, f"unexpected case count: {len(passed)}"
+        assert len(passed) == 110, f"unexpected case count: {len(passed)}"
         print(f"{sum(passed)}/{len(passed)} cases passed")
         return 0 if all(passed) else 1
