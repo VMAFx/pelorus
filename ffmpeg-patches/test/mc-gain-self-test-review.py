@@ -130,6 +130,29 @@ def alias_skip_case(runner: ModuleType, folder: Path) -> tuple[int, str]:
     return expect(result == (0, message), "alias skip before shader")
 
 
+def alias_link_error_case(
+    runner: ModuleType, folder: Path, kind: str
+) -> tuple[int, str]:
+    """Check the real alias link failure against the host's exact skip policy."""
+    owner, name = (Path, "symlink_to") if kind == "symlink" else (os, "link")
+    message = "injected link failure"
+    expected = (
+        (0, f"SKIP: {kind} creation not supported: {message}")
+        if os.name == "nt"
+        else (1, message)
+    )
+    with (
+        patch.object(owner, name, side_effect=OSError(message)),
+        patch.object(runner, "tree_shader") as shader,
+    ):
+        try:
+            result = alias_case(runner, folder, kind)
+        except OSError as exc:
+            result = 1, str(exc)
+    shader.assert_not_called()
+    return expect(result == expected, f"{kind} alias link error follows host policy")
+
+
 def link_skip_cases(runner: ModuleType, folder: Path) -> list[tuple]:
     """Collect positive, negative, and exception boundary cases for named skips."""
     cases = []
@@ -148,6 +171,10 @@ def link_skip_cases(runner: ModuleType, folder: Path) -> list[tuple]:
         cases.append((f"skip-output-{expected}", call, 0, "skip output and status"))
     call = partial(alias_skip_case, runner, folder)
     cases.append(("alias-skip-before-shader", call, 0, "alias skip before shader"))
+    for kind in ("symlink", "hardlink"):
+        call = partial(alias_link_error_case, runner, folder, kind)
+        message = f"{kind} alias link error follows host policy"
+        cases.append((f"alias-{kind}-link-error", call, 0, message))
     return cases
 
 
