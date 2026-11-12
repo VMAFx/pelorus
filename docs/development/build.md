@@ -360,8 +360,10 @@ from distorting its wall-time arms. Its runner requires explicit device-list
 end markers and errors at the eight-index cap. A known driver mismatch returns
 `SKIP: inconclusive` before measurement; the normal `no guarded device` allowance
 does not cover it. Re-record with `--make-record --tree-ffmpeg BIN` after a driver
-or workload change. Entries include `workload_sha256` and require bsize=8/32;
-the command validates rounded JSON lines and fails if no entries are emitted
+or workload change. Replace matching device entries with the emitted lines;
+after a workload change, replace the whole `devices` list because old entries
+are bound to the old workload. Entries include `workload_sha256` and require
+bsize=8/32; the command validates rounded JSON lines and fails if none are emitted
 ([ADR-0256](../adr/0256-mc-sad-gain-wall-time-threshold.md),
 `ffmpeg-patches/test/mc-gain-smoke.py --self-test`).
 

@@ -99,7 +99,7 @@ def entry_schema(kind: str) -> dict[str, type]:
     return schema
 
 
-def validate_record(record: dict) -> dict:
+def validate_record(record: dict, *, require_workload_match: bool) -> dict:
     """Validate the record before running any hardware commands."""
     fields(
         record, dict(schema_version=int, workload=dict, devices=list, unguarded=list)
@@ -119,8 +119,10 @@ def validate_record(record: dict) -> dict:
                 raise ValueError("duplicate device")
             seen.add(key)
             validate_entry(entry, kind)
-            if kind == "devices" and entry["workload_sha256"] != workload_fingerprint(
-                record["workload"]
+            if (
+                require_workload_match
+                and kind == "devices"
+                and entry["workload_sha256"] != workload_fingerprint(record["workload"])
             ):
                 raise ValueError(
                     f"device {entry['name']} {entry['device_id']} measured with another workload; "
@@ -163,10 +165,13 @@ def validate_entry(entry: dict, kind: str) -> None:
     date.fromisoformat(entry["measured"])
 
 
-def load_record(path: Path) -> dict:
+def load_record(path: Path, *, require_workload_match: bool = True) -> dict:
     """Read a validated record and retain its path in every diagnostic."""
     try:
-        return validate_record(json.loads(path.read_text(encoding="utf-8")))
+        return validate_record(
+            json.loads(path.read_text(encoding="utf-8")),
+            require_workload_match=require_workload_match,
+        )
     except (OSError, ValueError, TypeError) as exc:
         raise ValueError(f"record invalid: {path}: {exc}") from exc
 
@@ -402,7 +407,7 @@ def parse_drivers(text: str) -> dict[tuple[str, str], str]:
 
 def separated(sub: float, se_sub: float, old: float, se_tree: float) -> bool:
     """Require a gain exceeding twice the combined ratio standard error."""
-    return old - sub > 2 * math.sqrt(se_sub**2 + se_tree**2)
+    return old - sub > 2 * math.hypot(se_sub, se_tree)
 
 
 def make_record(binary: Path, tree: Path, workload: dict, runs: int) -> int:
@@ -506,7 +511,7 @@ def main() -> int:
         if args.tree_shader:
             tree_shader(*args.tree_shader)
             return 0
-        record = load_record(args.record)
+        record = load_record(args.record, require_workload_match=not args.make_record)
         if args.self_test:
             selftest = importlib.import_module("mc-gain-self-test")
             return selftest.self_test(sys.modules[__name__])

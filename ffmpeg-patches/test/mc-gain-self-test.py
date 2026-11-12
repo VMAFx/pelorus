@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import redirect_stdout, redirect_stderr
+import importlib
 import io
 from functools import partial
 import json
@@ -73,6 +74,8 @@ def canned_cases(runner: ModuleType, record: dict) -> list[tuple]:
         ("stats-outlier", runner.stats([1, 2, 3, 4, 100]) == values),
         ("overall-inconclusive-last", runner.summarize(mixed) == expected),
         ("separation-2-se", not runner.separated(3.0, 0.0, 4.0, 0.5)),
+        ("separation-quadrature-edge", not runner.separated(3.0, 0.375, 4.25, 0.5)),
+        ("separation-quadrature", runner.separated(3.0, 0.375, 4.5, 0.5)),
     )
     cases += [(n, partial(expect, ok, n), 0, n) for n, ok in checks]
     overall = (
@@ -118,7 +121,7 @@ def invalid_mutations() -> tuple[tuple[str, Callable, str], ...]:
         ("rate-zero", lambda b: w(b).update(rate=0), bounds),
         ("frames-zero", lambda b: w(b).update(frames=0), bounds),
         ("wrong-workload", lambda b: d(b).update(workload_sha256="0" * 16), stale),
-        ("changed-workload", lambda b: w(b).update(frames=65), stale),
+        ("changed-workload", lambda b: w(b).update(frames=w(b)["frames"] + 1), stale),
         ("missing-workload-hash", lambda b: d(b).pop("workload_sha256", None), keys),
         ("bool-int", lambda b: d(b).update(runs=True), "wrong field type"),
         ("int-float", lambda b: d(b).update(ratio_subgroup=1), "wrong field type"),
@@ -317,6 +320,7 @@ def measurement_case(
 def record_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
     """Validate emitted lines and reject schema drift, noise, or rounded collapse."""
     entry, workload = record["devices"][0], record["workload"]
+    measured, runs = "2026-11-12", 15
     device = runner.Device(0, entry["name"], entry["device_id"])
     ratios = {
         "emit": [(3.1145038167938934, 0), (5.8102189781021885, 0)],
@@ -336,11 +340,11 @@ def record_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
         patch.object(runner, "measure", return_value={}),
         patch.object(runner, "ratio", side_effect=ratios[mode]),
         patch.object(runner, "entry_schema", return_value=schema),
-        patch.object(runner.time, "strftime", return_value="2026-11-12"),
+        patch.object(runner.time, "strftime", return_value=measured),
         redirect_stdout(output),
         redirect_stderr(errors),
     ):
-        count = runner.make_record(STUB_FFMPEG, STUB_FFMPEG, workload, 15)
+        count = runner.make_record(STUB_FFMPEG, STUB_FFMPEG, workload, runs)
     if mode != "emit":
         return expect(
             count == 0
@@ -350,10 +354,17 @@ def record_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
         )
     line = output.getvalue()
     parsed = json.loads(line)
-    runner.validate_record(dict(record, devices=[parsed]))
+    runner.validate_record(dict(record, devices=[parsed]), require_workload_match=True)
     return expect(
         count == 1
-        and parsed == dict(entry, ratio_subgroup=3.115, ratio_tree=5.810)
+        and parsed
+        == dict(
+            entry,
+            measured=measured,
+            runs=runs,
+            ratio_subgroup=3.115,
+            ratio_tree=5.810,
+        )
         and '"ratio_tree": 5.810}' in line
         and not errors.getvalue(),
         "record-line-exact",
@@ -386,141 +397,6 @@ def regression_cases(runner: ModuleType, record: dict, folder: Path) -> list[tup
             prefix + "    float sg = subgroupAdd(d);", len(prefix) + 15
         )
         cases.append((name, partial(expect, start == expected, name), 0, name))
-    return cases
-
-
-def enumeration_case(runner: ModuleType, record: dict, folder: Path, mode: str) -> str:
-    """Exercise explicit end markers, failed probes, and the enumeration cap."""
-    entry = record["devices"][0]
-    line = f"Device 0 selected: {entry['name']} (discrete) ({entry['device_id']})"
-    knobs = {
-        "failed": dict(probe_index=1, probe_rc=1, probe_output="initialization failed"),
-        "blank": dict(probe_rc=0, probe_output="unrelated output"),
-        "none": dict(probe_rc=1, probe_output="No devices found: unavailable!"),
-        "none-later": dict(probe_index=1, probe_output="No devices found"),
-        "failed-valid": dict(
-            probe_index=1, probe_rc=1, probe_output=line.replace("Device 0", "Device 1")
-        ),
-        "wrong-index": dict(probe_index=1, probe_output=line),
-    }
-    names = [entry] * (7 if mode == "seven" else 8 if mode == "cap" else 2)
-    _, env = stub_fixture(runner, folder, names, 3, probe=knobs.get(mode))
-    if mode == "timeout":
-        with patch.object(
-            runner, "run_ffmpeg", return_value=runner.RunResult(124, "timed out", "")
-        ):
-            return str(runner.enumerate_devices(STUB_FFMPEG, env))
-    return str(len(runner.enumerate_devices(STUB_FFMPEG, env)))
-
-
-def alias_case(runner: ModuleType, folder: Path, kind: str) -> tuple[int, str]:
-    """Refuse each output alias before changing any source byte."""
-    source, target = folder / (kind + ".glsl"), folder / (kind + "-out.glsl")
-    original = (
-        runner.ROOT / "ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl"
-    ).read_bytes()
-    source.write_bytes(original)
-    if kind == "symlink":
-        target.symlink_to(source)
-    elif kind == "hardlink":
-        os.link(source, target)
-    else:
-        target = source
-    message = ""
-    try:
-        runner.tree_shader(source, target)
-    except ValueError as exc:
-        message = str(exc)
-    return expect(
-        message == "tree shader output aliases its input"
-        and source.read_bytes() == original,
-        "alias refused; bytes unchanged",
-    )
-
-
-def driver_parse_case(runner: ModuleType) -> tuple[int, str]:
-    """Retain different device names sharing a PCI ID and unknown metadata."""
-    text = "deviceID = 0xffff\nGPU0:\n deviceName = first\n deviceID = 0xABCD\n driverName = mesa\n driverInfo = 1.2\nGPU1:\n deviceName = second\n deviceID = 0xabcd\n driverName = other\n driverInfo = 3.4\nGPU2:\n deviceName = unknown\n deviceID = 0x1234\nGPU3:\n deviceName = incomplete\n"
-    expected = {
-        ("first", "0xabcd"): "mesa 1.2",
-        ("second", "0xabcd"): "other 3.4",
-        ("unknown", "0x1234"): "unknown",
-    }
-    return expect(
-        runner.parse_drivers(text) == expected and runner.parse_drivers("") == {},
-        "driver identities retained",
-    )
-
-
-def driver_case(
-    runner: ModuleType, record: dict, folder: Path, mode: str
-) -> tuple[int, str]:
-    """Measure matching or unknown drivers and skip stale drivers before arms."""
-    entry = record["devices"][0]
-    scenario, env = stub_fixture(runner, folder, [entry], entry["ratio_subgroup"])
-    driver = {
-        "matching": entry["driver"],
-        "stale": "changed driver",
-        "unknown": "unknown",
-    }[mode]
-    with patch.object(
-        runner, "driver_map", return_value={(entry["name"], entry["device_id"]): driver}
-    ):
-        code, message = runner.check(STUB_FFMPEG, record, 5, env)
-    calls = scenario.with_suffix(".calls").read_text().splitlines()
-    stale = mode == "stale"
-    fragment = (
-        "stale record: driver changed driver differs from recorded" if stale else "PASS"
-    )
-    timed = not calls if stale else len(calls) == 18
-    return expect(code == (77 if stale else 0) and fragment in message and timed, mode)
-
-
-def empty_main_case(runner: ModuleType) -> tuple[int, str]:
-    """Return a CLI failure when record generation emits no device entries."""
-    errors = io.StringIO()
-    argv = ["mc-gain-smoke.py", "--make-record", "--tree-ffmpeg", str(STUB_FFMPEG)]
-    with (
-        patch.object(sys, "argv", argv),
-        patch.dict(os.environ, FFMPEG_BIN=str(STUB_FFMPEG)),
-        patch.object(runner, "resolve_ffmpeg_bin", return_value=STUB_FFMPEG),
-        patch.object(runner, "make_record", return_value=0),
-        redirect_stderr(errors),
-    ):
-        code = runner.main()
-    return expect(
-        code == 1 and "no device entries emitted" in errors.getvalue(),
-        "empty main refused",
-    )
-
-
-def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
-    """Collect review regressions with named positive and boundary cases."""
-    cases = []
-    enumeration = partial(enumeration_case, runner, record, folder)
-    for mode, rc, msg in (
-        ("failed", 1, "device enumeration failed"),
-        ("blank", 1, "device enumeration failed"),
-        ("timeout", 1, "device enumeration failed"),
-        ("none", 0, "0"),
-        ("none-later", 1, "device enumeration failed"),
-        ("failed-valid", 1, "device enumeration failed"),
-        ("wrong-index", 1, "device enumeration failed"),
-        ("seven", 0, "7"),
-        ("cap", 1, "cap 8"),
-    ):
-        cases.append(("enumeration-" + mode, partial(enumeration, mode), rc, msg))
-    for kind in ("same", "symlink", "hardlink"):
-        call = partial(alias_case, runner, folder, kind)
-        cases.append(("alias-" + kind, call, 0, "bytes unchanged"))
-    for mode in ("matching", "stale", "unknown"):
-        call = partial(driver_case, runner, record, folder, mode)
-        cases.append(("driver-" + mode, call, 0, mode))
-    call = partial(driver_parse_case, runner)
-    cases.append(("driver-parser", call, 0, "driver identities retained"))
-    call = partial(empty_main_case, runner)
-    cases.append(("record-empty-main", call, 0, "empty main refused"))
-    cases.append(("shipped-record", partial(runner.validate_record, record), 0, ""))
     return cases
 
 
@@ -559,8 +435,9 @@ def self_test(runner: ModuleType) -> int:
         call = partial(runner.tree_shader, source, folder / "bad.glsl")
         cases.append(("tree-refused", call, 1, "no subgroupAdd("))
         cases += regression_cases(runner, record, folder)
-        cases += review_cases(runner, record, folder)
+        review = importlib.import_module("mc-gain-self-test-review")
+        cases += review.review_cases(runner, record, folder)
         passed = [run_case(*case) for case in cases]
-        assert len(passed) == 96, f"unexpected case count: {len(passed)}"
+        assert len(passed) == 101, f"unexpected case count: {len(passed)}"
         print(f"{sum(passed)}/{len(passed)} cases passed")
         return 0 if all(passed) else 1
