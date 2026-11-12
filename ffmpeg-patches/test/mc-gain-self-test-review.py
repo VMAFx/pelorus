@@ -9,8 +9,10 @@ from functools import partial
 import importlib
 import io
 import json
+import math
 import os
 from pathlib import Path
+import re
 import sys
 from types import ModuleType
 from unittest.mock import patch
@@ -273,6 +275,91 @@ def record_main_case(
     )
 
 
+def separation_case(runner: ModuleType, mode: str) -> tuple[int, str]:
+    """Pin covariance signs, equality, and each prefix's own net denominator."""
+    rows = {
+        "shared-passthrough-edge": (0.5, 2.0, 0.5, 1, 1, 0.75, False),
+        "shared-passthrough": (0.5, 2.5, 0.5, 2, 2, 0.5, True),
+        "same-side": (3.0, 5.0, 0.4, 1, 1, 0.8, True),
+        "net32-per-prefix": (3.0, 5.0, 0.5, 1, 2, 0.0, True),
+    }
+    sub, tree, sep, ns, nt, expected, accepted = rows[mode]
+    samples = _tests.separation_samples(
+        sub, 0, tree, 0, sep=sep, net_sub=ns, net_tree=nt
+    )
+    gap, se_gap = runner.separation(samples)
+    return expect(
+        gap == tree - sub
+        and math.isclose(se_gap, expected, rel_tol=1e-12)
+        and runner.separated(samples) == accepted,
+        f"{mode}: gap={gap}, se_gap={se_gap}, accepted={runner.separated(samples)}",
+    )
+
+
+def budget_margin_case(runner: ModuleType) -> tuple[int, str]:
+    """Read only the mc-gain test block and retain a sixty-second margin."""
+    text = (runner.ROOT / "meson.build").read_text(encoding="utf-8")
+    block = re.search(r"test\('mc-gain',(?:(?!\btest\().)*", text, re.S)
+    assert block is not None, "mc-gain test block missing"
+    timeout = re.search(r"\btimeout:\s*(\d+)\b", block[0])
+    assert timeout is not None, "mc-gain timeout missing"
+    return expect(
+        runner.RUN_BUDGET_S + 60 <= int(timeout[1]), "budget below Meson timeout"
+    )
+
+
+def budget_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
+    """Refuse expired measurements before calls and clamp a timed-out arm."""
+    device = runner.Device(0, "canned", "0xabcd")
+    arms = runner.measurement_arms(STUB_FFMPEG, record["workload"])
+    remaining = -1.0 if mode == "exhausted" else 3.0
+    calls: list[float] = []
+
+    def run(argv: list[str], timeout: float, env: dict | None = None) -> object:
+        """Record the allowed timeout without starting a subprocess."""
+        calls.append(timeout)
+        return runner.RunResult(124, "timed out", "")
+
+    with (
+        patch.object(runner.time, "monotonic", return_value=1000.0),
+        patch.object(runner, "run_ffmpeg", side_effect=run),
+    ):
+        message = ""
+        try:
+            runner.measure(
+                device, record["workload"], arms, 5, deadline=1000 + remaining
+            )
+        except ValueError as exc:
+            message = str(exc)
+    elapsed = runner.RUN_BUDGET_S - remaining
+    prefix = (
+        f"mc-gain budget {runner.RUN_BUDGET_S} s exhausted after {elapsed:.3f} s at "
+    )
+    return expect(
+        message == prefix + "device 0 canned 0xabcd arm sub32"
+        and calls == ([] if mode == "exhausted" else [3.0]),
+        f"{mode}: {message!r}, timeouts={calls}",
+    )
+
+
+def budget_main_case(runner: ModuleType) -> tuple[int, str]:
+    """Classify budget exhaustion as a CLI failure rather than a skip."""
+    errors = io.StringIO()
+    with (
+        patch.object(sys, "argv", ["mc-gain-smoke.py"]),
+        patch.dict(os.environ, FFMPEG_BIN=str(STUB_FFMPEG)),
+        patch.object(
+            runner, "check", side_effect=ValueError("mc-gain budget exhausted")
+        ),
+        redirect_stderr(errors),
+    ):
+        code = runner.main()
+    return expect(
+        code == 1 and errors.getvalue() == "mc-gain budget exhausted\n",
+        "budget main returns 1",
+    )
+
+
 def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
     """Collect review regressions with named positive and boundary cases."""
     cases = []
@@ -305,4 +392,21 @@ def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
         call = partial(record_main_case, runner, record, folder, mode)
         cases.append(("record-main-" + mode, call, 0, mode))
     cases += link_skip_cases(runner, folder)
+    for mode in (
+        "shared-passthrough-edge",
+        "shared-passthrough",
+        "same-side",
+        "net32-per-prefix",
+    ):
+        cases.append(
+            ("separation-" + mode, partial(separation_case, runner, mode), 0, mode)
+        )
+    call = partial(budget_margin_case, runner)
+    cases.append(("budget-below-meson-timeout", call, 0, "budget below Meson timeout"))
+    for mode in ("exhausted", "clamps-timeout"):
+        call = partial(budget_case, runner, record, mode)
+        cases.append(("budget-" + mode, call, 0, mode))
+    cases.append(
+        ("budget-main", partial(budget_main_case, runner), 0, "budget main returns 1")
+    )
     return cases

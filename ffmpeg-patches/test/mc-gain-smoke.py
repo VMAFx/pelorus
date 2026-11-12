@@ -43,6 +43,7 @@ _shader = importlib.import_module("check-mc-sad-reduction")
 strip_comments, extract_block_sad = _shader.strip_comments, _shader.extract_block_sad
 validate_shader_source = _shader.validate_shader_source
 PROBE_TIMEOUT_S, RUN_TIMEOUT_S = 60, 120
+RUN_BUDGET_S = 540
 MAX_DEVICES = 8
 DEVICE_RE = re.compile(
     r"Device (\d+) selected: (.+) "
@@ -182,7 +183,38 @@ def parse_device(output: str) -> Device | None:
     return Device(int(match[1]), match[2], match[3].lower()) if match else None
 
 
-def enumerate_devices(binary: Path, env: dict | None = None) -> list[Device]:
+def budget_error(deadline: float, context: str) -> ValueError:
+    """Name the total budget, elapsed time, and interrupted stage."""
+    elapsed = time.monotonic() - deadline + RUN_BUDGET_S
+    return ValueError(
+        f"mc-gain budget {RUN_BUDGET_S} s exhausted after {elapsed:.3f} s at {context}"
+    )
+
+
+def run_stage(
+    argv: list[str],
+    stage_timeout: float,
+    context: str,
+    env: dict | None = None,
+    deadline: float | None = None,
+) -> RunResult:
+    """Clamp each stage to the remaining check budget and diagnose exhaustion."""
+    remaining = stage_timeout if deadline is None else deadline - time.monotonic()
+    if deadline is not None and remaining <= 0:
+        raise budget_error(deadline, context)
+    timeout = min(stage_timeout, remaining)
+    result = run_ffmpeg(argv, timeout, env=env)
+    if deadline is not None and (
+        time.monotonic() >= deadline
+        or (timeout < stage_timeout and result.returncode == 124)
+    ):
+        raise budget_error(deadline, context)
+    return result
+
+
+def enumerate_devices(
+    binary: Path, env: dict | None = None, deadline: float | None = None
+) -> list[Device]:
     """Require explicit end markers and refuse incomplete or capped enumeration."""
     devices = []
     for index in range(MAX_DEVICES):
@@ -190,8 +222,12 @@ def enumerate_devices(binary: Path, env: dict | None = None) -> list[Device]:
             f"-hide_banner -nostdin -v verbose -init_hw_device vulkan=vk:{index} "
             "-f lavfi -i nullsrc=size=64x64 -frames:v 1 -f null -"
         ).split()
-        result: RunResult = run_ffmpeg(
-            ffmpeg_argv(binary) + args, PROBE_TIMEOUT_S, env=env
+        result = run_stage(
+            ffmpeg_argv(binary) + args,
+            PROBE_TIMEOUT_S,
+            f"device {index} enumeration",
+            env,
+            deadline,
         )
         if f"Unable to find device with index {index}!" in result.stdout:
             return devices
@@ -228,7 +264,12 @@ def bench_time(result: RunResult, arm: str, device: Device) -> float:
 
 
 def measure(
-    dev: Device, w: dict, arms: tuple, runs: int, env: dict | None = None
+    dev: Device,
+    w: dict,
+    arms: tuple,
+    runs: int,
+    env: dict | None = None,
+    deadline: float | None = None,
 ) -> dict:
     """Discard one warm-up per arm and alternate arm order in bounded rounds."""
     samples: dict[str, list[float]] = {arm[0]: [] for arm in arms}
@@ -243,7 +284,13 @@ def measure(
             ).split()
             args += ["-vf", chain(bsize), "-f", "null", "-"]
             value = bench_time(
-                run_ffmpeg(ffmpeg_argv(binary) + args, RUN_TIMEOUT_S, env=env),
+                run_stage(
+                    ffmpeg_argv(binary) + args,
+                    RUN_TIMEOUT_S,
+                    f"device {dev.index} {dev.name} {dev.device_id} arm {label}",
+                    env,
+                    deadline,
+                ),
                 label,
                 dev,
             )
@@ -259,19 +306,20 @@ def stats(values: list[float]) -> tuple[float, float, float]:
     return median, sigma, 1.2533 * sigma / math.sqrt(len(values))
 
 
-def ratio(samples: dict, prefix: str = "sub") -> tuple[float, float]:
-    """Propagate se_R = sqrt(se8² + R² se32² + (R-1)² sep²) / net32.
-
-    The shared passthrough median correlates both net terms; its derivative
-    is (R-1)/net32, so its uncertainty cancels when R equals one.
-    """
+def ratio_terms(samples: dict, prefix: str) -> tuple[float, float, float, float, float]:
+    """Share the medians, positive net times, and errors used by both deltas."""
     medp, _, sep = stats(samples["passthrough"])
     med8, _, se8 = stats(samples[prefix + "8"])
     med32, _, se32 = stats(samples[prefix + "32"])
     net8, net32 = med8 - medp, med32 - medp
     if net8 <= 0 or net32 <= 0:
         raise ValueError("non-positive net time")
-    r = net8 / net32
+    return net8 / net32, net32, se8, se32, sep
+
+
+def ratio(samples: dict, prefix: str = "sub") -> tuple[float, float]:
+    """Propagate se_R with shared passthrough derivative (R-1)/net32."""
+    r, net32, se8, se32, sep = ratio_terms(samples, prefix)
     se = math.sqrt(se8**2 + r**2 * se32**2 + (r - 1) ** 2 * sep**2) / net32
     return r, se
 
@@ -327,12 +375,15 @@ def check(
     runs: int,
     env: dict | None = None,
     drivers: dict[tuple[str, str], str] | None = None,
+    deadline: float | None = None,
 ) -> tuple[int, str]:
     """Measure guarded devices only after checking known driver metadata."""
+    if deadline is None:
+        deadline = time.monotonic() + RUN_BUDGET_S
     if drivers is None:
-        drivers = driver_map()
+        drivers = driver_map(deadline)
     results = []
-    for device in enumerate_devices(binary, env):
+    for device in enumerate_devices(binary, env, deadline):
         entry = matching_entry(rec["devices"], device)
         if entry is None:
             missing = matching_entry(rec["unguarded"], device)
@@ -357,7 +408,7 @@ def check(
             continue
         w = rec["workload"]
         arms = measurement_arms(binary, w)
-        results.append(judge(measure(device, w, arms, runs, env), entry))
+        results.append(judge(measure(device, w, arms, runs, env, deadline), entry))
     return summarize(results or [(78, "SKIP: no guarded device: no Vulkan device")])
 
 
@@ -379,12 +430,17 @@ def measurement_arms(binary: Path, w: dict, prefix: str = "sub") -> tuple:
     )
 
 
-def driver_map() -> dict[tuple[str, str], str]:
+def driver_map(deadline: float | None = None) -> dict[tuple[str, str], str]:
     """Read optional vulkaninfo driver metadata with a sixty-second deadline."""
     binary = shutil.which("vulkaninfo")
     if binary is None:
         return {}
-    result: RunResult = run_ffmpeg([binary, "--summary"], PROBE_TIMEOUT_S)
+    result = run_stage(
+        [binary, "--summary"],
+        PROBE_TIMEOUT_S,
+        "driver metadata vulkaninfo",
+        deadline=deadline,
+    )
     if result.returncode:
         return {}
     return parse_drivers(result.stdout)
@@ -405,9 +461,24 @@ def parse_drivers(text: str) -> dict[tuple[str, str], str]:
     return drivers
 
 
-def separated(sub: float, se_sub: float, old: float, se_tree: float) -> bool:
-    """Require a gain exceeding twice the combined ratio standard error."""
-    return old - sub > 2 * math.hypot(se_sub, se_tree)
+def separation(samples: dict) -> tuple[float, float]:
+    """Propagate the ratio gap with its shared passthrough covariance."""
+    rs, ns, e8s, e32s, sep = ratio_terms(samples, "sub")
+    rt, nt, e8t, e32t, _ = ratio_terms(samples, "tree")
+    variance = (
+        (e8s / ns) ** 2
+        + (rs * e32s / ns) ** 2
+        + (e8t / nt) ** 2
+        + (rt * e32t / nt) ** 2
+        + ((rt - 1) / nt - (rs - 1) / ns) ** 2 * sep**2
+    )
+    return rt - rs, math.sqrt(variance)
+
+
+def separated(samples: dict) -> bool:
+    """Require the gain to exceed twice the standard error of the gap."""
+    gap, se_gap = separation(samples)
+    return gap > 2 * se_gap
 
 
 def make_record(binary: Path, tree: Path, workload: dict, runs: int) -> int:
@@ -420,8 +491,8 @@ def make_record(binary: Path, tree: Path, workload: dict, runs: int) -> int:
             + measurement_arms(tree, workload, "tree")[1:]
         )
         samples = measure(device, workload, arms, runs)
-        sub, se_sub = ratio(samples)
-        old, se_tree = ratio(samples, "tree")
+        sub, _ = ratio(samples)
+        old, _ = ratio(samples, "tree")
         entry = dict(
             name=device.name,
             device_id=device.device_id,
@@ -439,7 +510,7 @@ def make_record(binary: Path, tree: Path, workload: dict, runs: int) -> int:
             validate_entry(printed, "devices")
         except ValueError:
             valid = False
-        if not separated(sub, se_sub, old, se_tree) or not valid:
+        if not separated(samples) or not valid:
             message = (
                 f"no gain on {device.name} {device.device_id}: "
                 "add an unguarded entry naming an issue"

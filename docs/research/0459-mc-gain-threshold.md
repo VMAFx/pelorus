@@ -66,7 +66,9 @@ For medians `p`, `m8`, `m32`, define `net8 = m8 - p`, `net32 = m32 - p`, `R = ne
 
 The shared passthrough median correlates the two net times; its derivative is `(R - 1)/net32`, so its uncertainty cancels at `R = 1`. The `ratio-error-exact` and `ratio-unity` self-test cases verify this formula.
 
-Let `mid = (ratio_subgroup + ratio_tree)/2` and `gap = ratio_tree - ratio_subgroup`. First reject `R < ratio_subgroup - gap` as stale-low; then reject `abs(R - mid) < 2 × se_R` as noisy. Otherwise `R <= mid` passes and larger ratios fail. New record entries require a separation exceeding `2 × sqrt(se_sub² + se_tree²)`.
+Let `mid = (ratio_subgroup + ratio_tree)/2` and `gap = ratio_tree - ratio_subgroup`. First reject `R < ratio_subgroup - gap` as stale-low; then reject `abs(R - mid) < 2 × se_R` as noisy. Otherwise `R <= mid` passes and larger ratios fail. New record entries require the strict separation `gap > 2 × se_gap`.
+
+The record's subgroup and tree ratios also share the passthrough median. With ratios `Rs`, `Rt` and their respective net32 times `n32s`, `n32t`, the gap's passthrough derivative is `(Rt - 1)/n32t - (Rs - 1)/n32s`. Thus `se_gap² = (se8s/n32s)² + (Rs × se32s/n32s)² + (se8t/n32t)² + (Rt × se32t/n32t)² + ((Rt - 1)/n32t - (Rs - 1)/n32s)² × sep²`. The self-test pins are `separation-shared-passthrough-edge` (gap 1.5, `se_gap = 0.75`, refused), `separation-shared-passthrough` (`Rs = 0.5`, `Rt = 2.5`, both net32 times 2, `sep = 0.5`: gap 2, `se_gap = 0.5`, accepted), `separation-same-side`, and `separation-net32-per-prefix`. The latter two protect covariance cancellation and each prefix's denominator.
 
 A failure dominates all passes (exit 1). Passes with no inconclusive guarded device return 0. Other outcomes return 77. Inconclusive skip lines appear last, preventing the CI allowance `MC_GAIN_SKIP="no guarded device"` from masking a noisy guarded-device result.
 
@@ -77,6 +79,8 @@ On Mesa 26.2.6 ANV, the Arc A380 subgroup reduction is about 85 % slower than th
 ## Limits
 
 Records apply to a specific FFmpeg device name and PCI identifier. A known current driver different from the recorded driver skips timing with `SKIP: inconclusive` and a stale-record diagnostic; unknown current metadata permits measurement (`check`, driver self-test cases). A driver change requires re-recording; stale-low catches ratios below the recorded range, including uniformly faster subgroup and tree implementations that might otherwise allow a reverted reduction to pass. The Meson `mc-gain` test runs serially to avoid sharing the GPU with other tests (`meson.build`). Concurrent external load may still cause inconclusive or failed results: rerun on an idle device. These measurements do not replace the broader GPU performance work in #167.
+
+Check mode owns one monotonic `RUN_BUDGET_S = 540` deadline for driver metadata, enumeration, warm-ups, and measured arms. Each call is clamped to the remaining budget or its stage limit (60 s for probes, 120 s for arms), whichever is smaller. Exhaustion before a call or a clamped timeout returns 1 with elapsed seconds and the interrupted stage. The 60 s margin below Meson's 600 s timeout is pinned by `budget-below-meson-timeout`; `budget-exhausted`, `budget-clamps-timeout`, and `budget-main` pin the failure diagnostic and status. Meson's `--timeout-multiplier` below 1 can still undercut that margin. Manual record generation retains per-call deadlines and has no total deadline (`None`).
 
 ## Sources
 

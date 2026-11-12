@@ -51,6 +51,32 @@ def expect(condition: bool, message: str) -> tuple[int, str]:
     return 0, message
 
 
+def sample_triplet(median: float, se: float) -> list[float]:
+    """Construct three samples with the requested median standard error."""
+    spread = se * math.sqrt(3) / 1.2533 / 1.4826
+    return [median - spread, median, median + spread]
+
+
+def separation_samples(
+    sub: float,
+    se_sub: float,
+    tree: float,
+    se_tree: float,
+    p: float = 0,
+    sep: float = 0,
+    net_sub: float = 1,
+    net_tree: float = 1,
+) -> dict:
+    """Build independent arm noise with one shared passthrough sample."""
+    return {
+        "passthrough": sample_triplet(p, sep),
+        "sub8": sample_triplet(p + sub * net_sub, se_sub * net_sub),
+        "sub32": [p + net_sub] * 3,
+        "tree8": sample_triplet(p + tree * net_tree, se_tree * net_tree),
+        "tree32": [p + net_tree] * 3,
+    }
+
+
 def canned_cases(runner: ModuleType, record: dict) -> list[tuple]:
     """Cover statistics, ratio orientation, decision boundaries, and skip ordering."""
     entry = dict(record["devices"][0], ratio_subgroup=3.0, ratio_tree=5.0)
@@ -77,9 +103,18 @@ def canned_cases(runner: ModuleType, record: dict) -> list[tuple]:
     checks = (
         ("stats-outlier", runner.stats([1, 2, 3, 4, 100]) == values),
         ("overall-inconclusive-last", runner.summarize(mixed) == expected),
-        ("separation-2-se", not runner.separated(3.0, 0.0, 4.0, 0.5)),
-        ("separation-quadrature-edge", not runner.separated(3.0, 0.375, 4.25, 0.5)),
-        ("separation-quadrature", runner.separated(3.0, 0.375, 4.5, 0.5)),
+        (
+            "separation-2-se",
+            not runner.separated(separation_samples(3.0, 0.0, 4.0, 0.5, p=-3)),
+        ),
+        (
+            "separation-quadrature-edge",
+            not runner.separated(separation_samples(3.0, 0.375, 4.25, 0.5, p=-3)),
+        ),
+        (
+            "separation-quadrature",
+            runner.separated(separation_samples(3.0, 0.375, 4.5, 0.5, p=-3)),
+        ),
     )
     cases += [(n, partial(expect, ok, n), 0, n) for n, ok in checks]
     overall = (
@@ -331,9 +366,10 @@ def record_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
         "noise": [(3, 0.6), (4.5, 0.8)],
         "collapse": [(3.0001, 0), (3.0002, 0)],
         "schema": [(3, 0), (5, 0)],
-        "empty": [],
+        "empty": [(3, 0), (5, 0)],
     }
     schema = runner.entry_schema("devices")
+    samples = separation_samples(*ratios[mode][0], *ratios[mode][1])
     if mode == "schema":
         schema["required"] = str
     output, errors = io.StringIO(), io.StringIO()
@@ -341,8 +377,7 @@ def record_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
     with (
         patch.object(runner, "driver_map", return_value={device[1:]: entry["driver"]}),
         patch.object(runner, "enumerate_devices", return_value=devices),
-        patch.object(runner, "measure", return_value={}),
-        patch.object(runner, "ratio", side_effect=ratios[mode]),
+        patch.object(runner, "measure", return_value=samples),
         patch.object(runner, "entry_schema", return_value=schema),
         patch.object(runner.time, "strftime", return_value=measured),
         redirect_stdout(output),
@@ -442,6 +477,6 @@ def self_test(runner: ModuleType) -> int:
         review = importlib.import_module("mc-gain-self-test-review")
         cases += review.review_cases(runner, record, folder)
         passed = [run_case(*case) for case in cases]
-        assert len(passed) == 112, f"unexpected case count: {len(passed)}"
+        assert len(passed) == 120, f"unexpected case count: {len(passed)}"
         print(f"{sum(passed)}/{len(passed)} cases passed")
         return 0 if all(passed) else 1

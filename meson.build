@@ -1099,6 +1099,8 @@ test('mc-gain-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 if build_machine.system() != 'windows'
+  # Check mode owns a 540 s budget, leaving 60 s before this test's timeout.
+  # --timeout-multiplier below 1 can still undercut that margin (ADR-0256).
   test('mc-gain',
        python_prog,
        args: ['-I', meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'mc-gain-smoke.py'],
