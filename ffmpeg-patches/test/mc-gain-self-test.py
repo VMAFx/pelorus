@@ -15,6 +15,8 @@ import json
 import math
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 from types import ModuleType
 from unittest.mock import patch
@@ -98,6 +100,7 @@ def canned_cases(runner: ModuleType, record: dict) -> list[tuple]:
 
 def invalid_mutations() -> tuple[tuple[str, Callable, str], ...]:
     """Describe independent invalid records and their required diagnostics."""
+    bounds = "invalid workload bounds"
     return (
         ("missing-key", lambda b: b.pop("workload"), "missing or extra key"),
         ("extra-key", lambda b: b.update(extra=True), "missing or extra key"),
@@ -110,6 +113,10 @@ def invalid_mutations() -> tuple[tuple[str, Callable, str], ...]:
         ),
         ("bad-id", lambda b: b["devices"][0].update(device_id="2684"), "bad device_id"),
         ("runs-four", lambda b: b["devices"][0].update(runs=4), "invalid runs"),
+        ("bsize-seven", lambda b: b["workload"].update(reduction_bsize=7), bounds),
+        ("bsize-33", lambda b: b["workload"].update(fetch_bsize=33), bounds),
+        ("rate-zero", lambda b: b["workload"].update(rate=0), bounds),
+        ("frames-zero", lambda b: b["workload"].update(frames=0), bounds),
         (
             "no-issue",
             lambda b: b["unguarded"][0].update(reason="slower"),
@@ -132,7 +139,7 @@ def invalid_mutations() -> tuple[tuple[str, Callable, str], ...]:
             lambda b: b["workload"].update(
                 reduction_bsize=b["workload"]["fetch_bsize"]
             ),
-            "invalid workload bounds",
+            bounds,
         ),
         (
             "date-nonpadded",
@@ -148,7 +155,7 @@ def invalid_mutations() -> tuple[tuple[str, Callable, str], ...]:
 
 
 def invalid_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
-    """Exercise record rejection through the path-bearing loader diagnostic."""
+    """Exercise invalid records and the accepted lower run-count boundary."""
     cases = []
     for name, mutate, fragment in invalid_mutations():
         bad = json.loads(json.dumps(record))
@@ -163,6 +170,44 @@ def invalid_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]
                 f"record invalid: {path}: {fragment}",
             )
         )
+    good = json.loads(json.dumps(record))
+    good["devices"][0]["runs"] = 5
+    path = folder / "runs-five.json"
+    path.write_text(json.dumps(good), encoding="utf-8")
+    cases.append(("runs-five", partial(runner.load_record, path), 0, ""))
+    return cases
+
+
+def cli_cases(runner: ModuleType) -> list[tuple]:
+    """Check CLI argument refusals before the missing-binary skip."""
+    path = getattr(runner, "__file__", None)
+    path = Path(path) if path else runner.ROOT / "ffmpeg-patches/test/mc-gain-smoke.py"
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.pop("FFMPEG_BIN", None)
+    invalid = "--runs must be in 5..50"
+    skipped = "SKIP: FFMPEG_BIN unset or not found"
+    cases = []
+    for name, argv, expected, fragment in (
+        ("cli-runs-4", ["--runs", "4"], 2, invalid),
+        ("cli-runs-51", ["--runs", "51"], 2, invalid),
+        ("cli-runs-5", ["--runs", "5"], 77, skipped),
+        ("cli-runs-50", ["--runs", "50"], 77, skipped),
+        ("cli-record-no-tree", ["--make-record"], 2, "requires --tree-ffmpeg"),
+    ):
+        result = subprocess.run(
+            [sys.executable, "-I", str(path), *argv],
+            env=env,
+            timeout=10,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        message = result.stderr if expected == 2 else result.stdout
+        detail = f"rc={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
+        call = partial(
+            expect, result.returncode == expected and fragment in message, detail
+        )
+        cases.append((name, call, 0, fragment))
     return cases
 
 
@@ -211,9 +256,8 @@ def id_case(
     lower, upper = "0x13c0", "0x13C0"
     entry = dict(record["devices"][0], device_id=upper if uppercase_record else lower)
     printed = [dict(entry, device_id=lower if uppercase_record else upper)]
-    return stub_case(
-        runner, folder, dict(record, devices=[entry]), printed, entry["ratio_subgroup"]
-    )
+    ratio = float(entry["ratio_subgroup"])
+    return stub_case(runner, folder, dict(record, devices=[entry]), printed, ratio)
 
 
 def shader_case(runner: ModuleType, folder: Path) -> tuple[int, str]:
@@ -406,6 +450,7 @@ def self_test(runner: ModuleType) -> int:
             canned_cases(runner, record)
             + invalid_cases(runner, record, folder)
             + parsing_cases(runner, entry[0])
+            + cli_cases(runner)
         )
         cases += [
             (n, partial(stub_case, runner, folder, record, ds, r, mis), rc, msg)
@@ -419,6 +464,6 @@ def self_test(runner: ModuleType) -> int:
         cases.append(("tree-refused", call, 1, "no subgroupAdd("))
         cases += regression_cases(runner, record, folder)
         passed = [run_case(*case) for case in cases]
-        assert len(passed) == 57, f"unexpected case count: {len(passed)}"
+        assert len(passed) == 67, f"unexpected case count: {len(passed)}"
         print(f"{sum(passed)}/{len(passed)} cases passed")
         return 0 if all(passed) else 1
