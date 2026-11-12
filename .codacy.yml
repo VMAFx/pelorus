@@ -12,15 +12,6 @@
 # than the category allows (B 3 days, C 10, D 120), an expired entry, and any line that is not
 # a comment, engines:, an unquoted engine key, exclude_paths: or a block list item.
 engines:
-  bandit:
-    exclude_paths:
-      # B310 (urlopen with a permitted scheme). The engine adoption in pull request 479
-      # renders this file with download_player_archive, whose urlopen call (:269 there) sits
-      # behind a guard that refuses every URL that is not https (:265 there), so the scheme
-      # the rule warns about cannot reach it. The file is engine-managed; the fix belongs
-      # upstream in cordanaLLM/praetor#1802. Remove this entry once that fix is adopted.
-      # exception: category B, entered 2026-11-08, expires 2026-11-11
-      - "tools/figures/mkdocs_hook.py"
   flawfinder:
     exclude_paths:
       # flawfinder_open (CWE-362) fires on every open() call. The one call here, in
@@ -60,9 +51,6 @@ engines:
       - "libpelorus/test/abi_history/abi_history_check.c"
   opengrep:
     exclude_paths:
-      # python urllib urlopen rule, same call and same https-only guard as the bandit entry.
-      # exception: category B, entered 2026-11-08, expires 2026-11-11
-      - "tools/figures/mkdocs_hook.py"
       # Semgrep_c_misc_rule-fopen-open, same call and same O_EXCL | O_NOFOLLOW reasoning
       # as the flawfinder entry.
       # exception: category D, entered 2026-11-04, expires 2027-03-04
