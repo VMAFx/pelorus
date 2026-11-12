@@ -165,7 +165,7 @@ def unpermitted_stub_case() -> tuple[int, str]:
     output = io.StringIO()
     with redirect_stdout(output):
         passed = _tests.run_case(
-            "stub-subgroup", partial(tuple, (0, "SKIP: no guarded device")), 0, "PASS"
+            "stub-subgroup", partial(tuple, (0, "SKIP: PASS unavailable")), 0, "PASS"
         )
     return expect(
         not passed and output.getvalue().startswith("FAIL stub-subgroup:"),

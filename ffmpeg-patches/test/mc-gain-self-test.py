@@ -33,8 +33,8 @@ def run_case(
         rc, message = value if isinstance(value, tuple) else (0, str(value))
     except (ValueError, OSError, AssertionError, ArithmeticError) as exc:
         rc, message = 1, str(exc)
-    skip = allow_skip and rc == 0 and message.startswith("SKIP: ")
-    ok = rc == expected and (skip or fragment in message)
+    skip = rc == 0 and message.startswith("SKIP: ")
+    ok = rc == expected and (allow_skip if skip else fragment in message)
     if ok and skip:
         print(f"skip {name}: {message}")
         return True
