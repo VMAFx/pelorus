@@ -5,6 +5,7 @@
 The runner starts this file through the Python interpreter.
 """
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -13,11 +14,14 @@ import sys
 
 def main() -> int:
     """Print the selected device and log each timed arm from the scenario."""
-    args = sys.argv[1:]
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("-init_hw_device", required=True)
+    parser.add_argument("-vf", default=None)
+    args, _ = parser.parse_known_args()
     path = Path(os.environ["MC_GAIN_STUB"])
     scenario = json.loads(path.read_text(encoding="utf-8"))
-    index = int(args[args.index("-init_hw_device") + 1].split(":")[-1])
-    enumeration = "-vf" not in args
+    index = int(args.init_hw_device.split(":")[-1])
+    enumeration = args.vf is None
     if enumeration:
         with path.with_suffix(".log").open("a", encoding="utf-8") as log:
             log.write(str(index) + "\n")
@@ -33,7 +37,7 @@ def main() -> int:
     )
     print(f"Device {index} selected: {name} (discrete) ({device['device_id']})")
     if not enumeration:
-        arm = args[args.index("-vf") + 1]
+        arm = args.vf
         with path.with_suffix(".calls").open("a", encoding="utf-8") as log:
             log.write(arm + "\n")
         value = scenario["times"][arm]

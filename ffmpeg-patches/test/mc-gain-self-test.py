@@ -15,7 +15,6 @@ import json
 import math
 import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 from types import ModuleType
@@ -194,13 +193,11 @@ def cli_cases(runner: ModuleType) -> list[tuple]:
         ("cli-runs-50", ["--runs", "50"], 77, skipped),
         ("cli-record-no-tree", ["--make-record"], 2, "requires --tree-ffmpeg"),
     ):
-        result = subprocess.run(
+        result = runner.run_ffmpeg(
             [sys.executable, "-I", str(path), *argv],
+            10,
             env=env,
-            timeout=10,
-            check=False,
-            capture_output=True,
-            text=True,
+            merge_stderr=False,
         )
         message = result.stderr if expected == 2 else result.stdout
         detail = f"rc={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
