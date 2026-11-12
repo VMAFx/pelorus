@@ -125,8 +125,20 @@ OPERATIONAL_GUIDANCE = (
     ROOT / ".claude" / "skills" / "ffmpeg-build-patches" / "SKILL.md",
     ROOT / ".claude" / "agents" / "ffmpeg-patch-reviewer.md",
 )
-EXPLICIT_COMMAND_GUIDANCE = OPERATIONAL_GUIDANCE[:1] + OPERATIONAL_GUIDANCE[2:4]
-LINK_GUIDANCE = OPERATIONAL_GUIDANCE[1:2] + OPERATIONAL_GUIDANCE[3:]
+EXPLICIT_COMMAND_GUIDANCE = (
+    ROOT / "docs" / "development" / "build.md",
+    ROOT / ".claude" / "skills" / "ffmpeg-apply-patches" / "SKILL.md",
+    ROOT / ".claude" / "skills" / "ffmpeg-build-patches" / "SKILL.md",
+)
+LINK_GUIDANCE = (
+    ROOT / ".claude" / "skills" / "add-vulkan-filter" / "SKILL.md",
+    ROOT / ".claude" / "skills" / "ffmpeg-build-patches" / "SKILL.md",
+    ROOT / ".agents" / "agents" / "ffmpeg-patch-reviewer.md",
+    ROOT / ".claude" / "agents" / "ffmpeg-patch-reviewer.md",
+    ROOT / ".codex" / "agents" / "ffmpeg-patch-reviewer.md",
+    ROOT / ".gemini" / "agents" / "ffmpeg-patch-reviewer.md",
+    ROOT / ".github" / "agents" / "ffmpeg-patch-reviewer.md",
+)
 LIBPELORUS_FLOOR_INPUTS = tuple(
     ROOT / "ffmpeg-patches" / f".commit-msg-{name}.txt"
     for name in ("deband", "analyze", "denoise", "grain_estimate", "mc")
@@ -411,7 +423,7 @@ def validate_guidance_text(
 def validate_operational_guidance() -> list[str]:
     """Check each operational guidance file for retired and missing configure models."""
     errors: list[str] = []
-    for path in OPERATIONAL_GUIDANCE:
+    for path in dict.fromkeys((*OPERATIONAL_GUIDANCE, *LINK_GUIDANCE)):
         relative = path.relative_to(ROOT).as_posix()
         source, read_errors = read_tracked_text(path)
         errors.extend(read_errors)
@@ -1203,21 +1215,69 @@ def surface_validator_regressions() -> list[str]:
     ):
         return ["surface regression: stale README pin was accepted"]
 
-    skill = OPERATIONAL_GUIDANCE[2].read_text(encoding="utf-8")
+    path = ROOT / ".claude" / "skills" / "ffmpeg-apply-patches" / "SKILL.md"
+    skill = path.read_text(encoding="utf-8")
     retired = skill + '\n`*_filter_deps="vulkan spirv_library"`\n'
     if not any(
         "contains obsolete guidance spirv_library" in error
         for error in validate_guidance_text(
-            OPERATIONAL_GUIDANCE[2].relative_to(ROOT).as_posix(), retired, True
+            path.relative_to(ROOT).as_posix(), retired, True
         )
     ):
         return ["surface regression: retired shader dependency was accepted"]
     return link_guidance_validator_regressions()
 
 
+def tracked_reviewer_agent_copies() -> tuple[list[str], list[str]]:
+    """List every tracked ffmpeg-patch-reviewer agent copy, repository-relative."""
+    command = (
+        "git",
+        "-C",
+        str(ROOT),
+        "ls-files",
+        "-z",
+        "--",
+        "*/agents/ffmpeg-patch-reviewer.md",
+    )
+    try:
+        result = subprocess.run(  # nosec B603 - constant git ls-files argv, no shell, explicit timeout  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command plus the repository root, no shell, explicit deadline
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=SUBPROCESS_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return [], [f"surface regression: could not run {shlex.join(command)}: {error}"]
+    copies = sorted(name for name in result.stdout.split("\0") if name)
+    if result.returncode != 0 or not copies:
+        return [], [
+            f"surface regression: no tracked reviewer-agent copy from "
+            f"{shlex.join(command)} (rc {result.returncode})"
+        ]
+    return copies, []
+
+
 def link_guidance_validator_regressions() -> list[str]:
     """Reject global libpelorus links and require the per-filter guidance."""
-    path = LINK_GUIDANCE[0]
+    copies, errors = tracked_reviewer_agent_copies()
+    if errors:
+        return errors
+    for relative in copies:
+        if ROOT / relative not in LINK_GUIDANCE:
+            return [
+                f"surface regression: reviewer-agent copy {relative} "
+                "missing from link guidance"
+            ]
+    for path in LINK_GUIDANCE:
+        errors = _link_guidance_path_regressions(path)
+        if errors:
+            return errors
+    return []
+
+
+def _link_guidance_path_regressions(path: Path) -> list[str]:
+    """Exercise retired, missing, and current per-filter links in one file."""
     relative = path.relative_to(ROOT).as_posix()
     skill = path.read_text(encoding="utf-8")
     retired = skill + "\n`... pel_blob_pack && add_extralibs $libpelorus_extralibs`\n"
@@ -1225,20 +1285,26 @@ def link_guidance_validator_regressions() -> list[str]:
         "contains obsolete guidance add_extralibs $libpelorus_extralibs" in error
         for error in validate_guidance_text(relative, retired, False, require_link=True)
     ):
-        return ["surface regression: global libpelorus link was accepted"]
+        return [f"surface regression: global libpelorus link was accepted: {relative}"]
     missing = skill.replace(
         '_filter_extralibs="libpelorus_extralibs"',
         '_filter_extralibs="other_extralibs"',
     )
     if missing == skill:
-        return ["surface regression: per-filter link mutation changed nothing"]
+        return [
+            f"surface regression: per-filter link mutation changed nothing: {relative}"
+        ]
     if not any(
         "missing per-filter libpelorus_extralibs guidance" in error
         for error in validate_guidance_text(relative, missing, False, require_link=True)
     ):
-        return ["surface regression: missing per-filter libpelorus link was accepted"]
+        return [
+            f"surface regression: missing per-filter libpelorus link was accepted: {relative}"
+        ]
     if validate_guidance_text(relative, skill, False, require_link=True):
-        return ["surface regression: current per-filter libpelorus link was rejected"]
+        return [
+            f"surface regression: current per-filter libpelorus link was rejected: {relative}"
+        ]
     return []
 
 
