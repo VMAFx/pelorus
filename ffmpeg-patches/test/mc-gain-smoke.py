@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import date
+import hashlib
 import importlib
 import json
 import math
@@ -42,6 +43,7 @@ _shader = importlib.import_module("check-mc-sad-reduction")
 strip_comments, extract_block_sad = _shader.strip_comments, _shader.extract_block_sad
 validate_shader_source = _shader.validate_shader_source
 PROBE_TIMEOUT_S, RUN_TIMEOUT_S = 60, 120
+MAX_DEVICES = 8
 DEVICE_RE = re.compile(
     r"Device (\d+) selected: (.+) "
     r"\((?:integrated|discrete|virtual|software|unknown)\) \((0x[0-9a-fA-F]+)\)"
@@ -73,10 +75,28 @@ def ffmpeg_argv(binary: Path) -> list[str]:
 
 def fields(value: object, schema: dict[str, type]) -> None:
     """Require exactly the allow-listed keys and their JSON types."""
-    if type(value) is not dict or value.keys() != schema.keys():
+    if not isinstance(value, dict) or value.keys() != schema.keys():
         raise ValueError("missing or extra key")
-    if any(type(value[k]) is not t for k, t in schema.items()):
+    if any(
+        not isinstance(value[k], t) or (isinstance(value[k], bool) and t is not bool)
+        for k, t in schema.items()
+    ):
         raise ValueError("wrong field type")
+
+
+def entry_schema(kind: str) -> dict[str, type]:
+    """Share the ordered device field schema with record emission."""
+    schema = dict(name=str, device_id=str)
+    extra = dict(
+        driver=str,
+        measured=str,
+        runs=int,
+        workload_sha256=str,
+        ratio_subgroup=float,
+        ratio_tree=float,
+    )
+    schema.update(extra if kind == "devices" else dict(reason=str))
+    return schema
 
 
 def validate_record(record: dict) -> dict:
@@ -89,11 +109,7 @@ def validate_record(record: dict) -> dict:
     validate_workload(record["workload"])
     seen: set[tuple[str, str]] = set()
     for kind in ("devices", "unguarded"):
-        schema = dict(name=str, device_id=str)
-        extra = dict(
-            driver=str, measured=str, runs=int, ratio_subgroup=float, ratio_tree=float
-        )
-        schema.update(extra if kind == "devices" else dict(reason=str))
+        schema = entry_schema(kind)
         for entry in record[kind]:
             fields(entry, schema)
             if not re.fullmatch(r"0x[0-9a-fA-F]+", entry["device_id"]):
@@ -103,11 +119,18 @@ def validate_record(record: dict) -> dict:
                 raise ValueError("duplicate device")
             seen.add(key)
             validate_entry(entry, kind)
+            if kind == "devices" and entry["workload_sha256"] != workload_fingerprint(
+                record["workload"]
+            ):
+                raise ValueError(
+                    f"device {entry['name']} {entry['device_id']} measured with another workload; "
+                    "re-record with --make-record"
+                )
     return record
 
 
 def validate_workload(w: dict) -> None:
-    """Require the recorded source and positive, ordered workload bounds."""
+    """Require a positive source workload with the exact net8/net32 block sizes."""
     schema = dict(source=str, size=str)
     schema.update(
         dict.fromkeys(("rate", "frames", "reduction_bsize", "fetch_bsize"), int)
@@ -116,8 +139,14 @@ def validate_workload(w: dict) -> None:
     if w["source"] != "testsrc2" or not re.fullmatch(r"[1-9]\d*x[1-9]\d*", w["size"]):
         raise ValueError("invalid workload source or size")
     small, big = w["reduction_bsize"], w["fetch_bsize"]
-    if not (w["rate"] > 0 and w["frames"] > 0 and 8 <= small < big <= 32):
+    if not (w["rate"] > 0 and w["frames"] > 0 and small == 8 and big == 32):
         raise ValueError("invalid workload bounds")
+
+
+def workload_fingerprint(w: dict) -> str:
+    """Bind device measurements to the canonical JSON workload with SHA-256."""
+    encoded = json.dumps(w, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
 
 
 def validate_entry(entry: dict, kind: str) -> None:
@@ -149,9 +178,9 @@ def parse_device(output: str) -> Device | None:
 
 
 def enumerate_devices(binary: Path, env: dict | None = None) -> list[Device]:
-    """Enumerate at most eight devices and stop at the first missing index."""
+    """Require explicit end markers and refuse incomplete or capped enumeration."""
     devices = []
-    for index in range(8):
+    for index in range(MAX_DEVICES):
         args = (
             f"-hide_banner -nostdin -v verbose -init_hw_device vulkan=vk:{index} "
             "-f lavfi -i nullsrc=size=64x64 -frames:v 1 -f null -"
@@ -159,15 +188,17 @@ def enumerate_devices(binary: Path, env: dict | None = None) -> list[Device]:
         result: RunResult = run_ffmpeg(
             ffmpeg_argv(binary) + args, PROBE_TIMEOUT_S, env=env
         )
-        if "Unable to find device with index" in result.stdout:
-            break
+        if f"Unable to find device with index {index}!" in result.stdout:
+            return devices
+        if index == 0 and "No devices found" in result.stdout:
+            return []
         device = parse_device(result.stdout)
-        if device is None:
-            break
-        if result.returncode or device.index != index:
+        if device is None or result.returncode or device.index != index:
             raise ValueError(f"device enumeration failed: {result.stdout[-400:]}")
         devices.append(device)
-    return devices
+    raise ValueError(
+        f"device enumeration reached cap {MAX_DEVICES} without an end marker"
+    )
 
 
 def chain(bsize: int | None) -> str:
@@ -224,7 +255,11 @@ def stats(values: list[float]) -> tuple[float, float, float]:
 
 
 def ratio(samples: dict, prefix: str = "sub") -> tuple[float, float]:
-    """Subtract the passthrough median and propagate median errors into net8/net32."""
+    """Propagate se_R = sqrt(se8² + R² se32² + (R-1)² sep²) / net32.
+
+    The shared passthrough median correlates both net terms; its derivative
+    is (R-1)/net32, so its uncertainty cancels when R equals one.
+    """
     medp, _, sep = stats(samples["passthrough"])
     med8, _, se8 = stats(samples[prefix + "8"])
     med32, _, se32 = stats(samples[prefix + "32"])
@@ -232,7 +267,7 @@ def ratio(samples: dict, prefix: str = "sub") -> tuple[float, float]:
     if net8 <= 0 or net32 <= 0:
         raise ValueError("non-positive net time")
     r = net8 / net32
-    se = r * math.sqrt((se8**2 + sep**2) / net8**2 + (se32**2 + sep**2) / net32**2)
+    se = math.sqrt(se8**2 + r**2 * se32**2 + (r - 1) ** 2 * sep**2) / net32
     return r, se
 
 
@@ -282,9 +317,15 @@ def summarize(results: list[tuple[int, str]]) -> tuple[int, str]:
 
 
 def check(
-    binary: Path, rec: dict, runs: int, env: dict | None = None
+    binary: Path,
+    rec: dict,
+    runs: int,
+    env: dict | None = None,
+    drivers: dict[tuple[str, str], str] | None = None,
 ) -> tuple[int, str]:
-    """Measure only guarded devices and preserve explicit uncovered reasons."""
+    """Measure guarded devices only after checking known driver metadata."""
+    if drivers is None:
+        drivers = driver_map()
     results = []
     for device in enumerate_devices(binary, env):
         entry = matching_entry(rec["devices"], device)
@@ -295,6 +336,17 @@ def check(
                 (
                     78,
                     f"SKIP: no guarded device: {device.name} {device.device_id}: {reason}",
+                )
+            )
+            continue
+        current = drivers.get(device[1:], "unknown")
+        if current != "unknown" and current != entry["driver"]:
+            results.append(
+                (
+                    77,
+                    f"SKIP: inconclusive: {device.name} {device.device_id}: stale record: "
+                    f"driver {current} differs from recorded {entry['driver']}; "
+                    "re-record with --make-record",
                 )
             )
             continue
@@ -322,7 +374,7 @@ def measurement_arms(binary: Path, w: dict, prefix: str = "sub") -> tuple:
     )
 
 
-def driver_map() -> dict[str, str]:
+def driver_map() -> dict[tuple[str, str], str]:
     """Read optional vulkaninfo driver metadata with a sixty-second deadline."""
     binary = shutil.which("vulkaninfo")
     if binary is None:
@@ -330,14 +382,21 @@ def driver_map() -> dict[str, str]:
     result: RunResult = run_ffmpeg([binary, "--summary"], PROBE_TIMEOUT_S)
     if result.returncode:
         return {}
+    return parse_drivers(result.stdout)
+
+
+def parse_drivers(text: str) -> dict[tuple[str, str], str]:
+    """Parse summary sections by device name and PCI ID without merging ICDs."""
     drivers = {}
-    pattern = r"^\s*(deviceID|driverName|driverInfo)\s*=\s*(.*?)\s*$"
-    for section in re.split(r"GPU\d+:", result.stdout)[1:]:
+    pattern = r"^\s*(deviceName|deviceID|driverName|driverInfo)\s*=\s*(.*?)\s*$"
+    for section in re.split(r"^\s*GPU\d+:", text, flags=re.M)[1:]:
         values = dict(re.findall(pattern, section, re.M))
-        if "deviceID" in values:
+        if "deviceName" in values and "deviceID" in values:
             keys = ("driverName", "driverInfo")
             driver = " ".join(values.get(k, "") for k in keys).strip()
-            drivers[values["deviceID"].lower()] = driver or "unknown"
+            drivers[(values["deviceName"], values["deviceID"].lower())] = (
+                driver or "unknown"
+            )
     return drivers
 
 
@@ -346,9 +405,10 @@ def separated(sub: float, se_sub: float, old: float, se_tree: float) -> bool:
     return old - sub > 2 * math.sqrt(se_sub**2 + se_tree**2)
 
 
-def make_record(binary: Path, tree: Path, workload: dict, runs: int) -> None:
-    """Emit JSON device entries only when subgroup and tree ratios separate."""
+def make_record(binary: Path, tree: Path, workload: dict, runs: int) -> int:
+    """Count emitted entries whose separated ratios validate after rounding."""
     drivers = driver_map()
+    emitted = 0
     for device in enumerate_devices(binary):
         arms = (
             measurement_arms(binary, workload)
@@ -357,22 +417,33 @@ def make_record(binary: Path, tree: Path, workload: dict, runs: int) -> None:
         samples = measure(device, workload, arms, runs)
         sub, se_sub = ratio(samples)
         old, se_tree = ratio(samples, "tree")
-        if not separated(sub, se_sub, old, se_tree):
+        entry = dict(
+            name=device.name,
+            device_id=device.device_id,
+            driver=drivers.get(device[1:], "unknown"),
+            measured=time.strftime("%Y-%m-%d"),
+            runs=runs,
+            workload_sha256=workload_fingerprint(workload),
+        )
+        metadata = json.dumps(entry)[:-1]
+        line = f'{metadata}, "ratio_subgroup": {sub:.3f}, "ratio_tree": {old:.3f}}}'
+        valid = True
+        try:
+            printed = json.loads(line)
+            fields(printed, entry_schema("devices"))
+            validate_entry(printed, "devices")
+        except ValueError:
+            valid = False
+        if not separated(sub, se_sub, old, se_tree) or not valid:
             message = (
                 f"no gain on {device.name} {device.device_id}: "
                 "add an unguarded entry naming an issue"
             )
             print(message, file=sys.stderr)
             continue
-        entry = dict(
-            name=device.name,
-            device_id=device.device_id,
-            driver=drivers.get(device.device_id, "unknown"),
-            measured=time.strftime("%Y-%m-%d"),
-            runs=runs,
-        )
-        metadata = json.dumps(entry)[:-1]
-        print(f'{metadata}, "ratio_subgroup": {sub:.3f}, "ratio_tree": {old:.3f}}}')
+        print(line)
+        emitted += 1
+    return emitted
 
 
 def reduction_start(text: str, position: int) -> int:
@@ -384,7 +455,11 @@ def reduction_start(text: str, position: int) -> int:
 
 
 def tree_shader(source: Path, target: Path) -> None:
-    """Replace the subgroup reduction and prove that the result is the tree."""
+    """Refuse aliased output and replace only the subgroup reduction with a tree."""
+    if source.resolve() == target.resolve() or (
+        target.exists() and os.path.samefile(source, target)
+    ):
+        raise ValueError("tree shader output aliases its input")
     text = source.read_bytes().decode("utf-8")
     body, _, offset = extract_block_sad(strip_comments(text))
     position = body.find("subgroupAdd(")
@@ -397,6 +472,17 @@ def tree_shader(source: Path, target: Path) -> None:
     if not validate_shader_source(output):
         raise ValueError("tree shader unexpectedly passes subgroup validation")
     target.write_bytes(output.encode("utf-8"))
+
+
+def record_mode(binary: Path, tree_value: str, workload: dict, runs: int) -> int:
+    """Resolve the comparison binary and fail when no record entry is emitted."""
+    tree = resolve_ffmpeg_bin(tree_value)
+    if tree is None:
+        raise ValueError("tree FFmpeg not found")
+    if not make_record(binary, tree, workload, runs):
+        print("no device entries emitted", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main() -> int:
@@ -430,11 +516,7 @@ def main() -> int:
             print("SKIP: FFMPEG_BIN unset or not found")
             return 77
         if args.make_record:
-            tree = resolve_ffmpeg_bin(args.tree_ffmpeg)
-            if tree is None:
-                raise ValueError("tree FFmpeg not found")
-            make_record(binary, tree, record["workload"], args.runs)
-            return 0
+            return record_mode(binary, args.tree_ffmpeg, record["workload"], args.runs)
         code, message = check(binary, record, args.runs)
         print(message)
         return code

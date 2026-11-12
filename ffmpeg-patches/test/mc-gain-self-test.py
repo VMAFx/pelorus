@@ -27,7 +27,7 @@ def run_case(name: str, call: Callable, expected: int, fragment: str) -> bool:
     """Check one canned input against its expected status and message fragment."""
     try:
         value = call()
-        rc, message = value if type(value) is tuple else (0, str(value))
+        rc, message = value if isinstance(value, tuple) else (0, str(value))
     except (ValueError, OSError, AssertionError, ArithmeticError) as exc:
         rc, message = 1, str(exc)
     ok = rc == expected and fragment in message
@@ -67,19 +67,14 @@ def canned_cases(runner: ModuleType, record: dict) -> list[tuple]:
         for n, r, se, rc, msg in decisions
     ]
     values = (3, 1.4826, 1.2533 * 1.4826 / math.sqrt(5))
-    mixed = [
-        (77, "SKIP: inconclusive: noisy"),
-        (78, "SKIP: no guarded device"),
-        (0, "PASS"),
-    ]
-    expected = (77, "SKIP: no guarded device\nPASS\nSKIP: inconclusive: noisy")
+    mixed = [(77, "inconclusive"), (78, "unguarded"), (0, "PASS")]
+    expected = (77, "unguarded\nPASS\ninconclusive")
     checks = (
         ("stats-outlier", runner.stats([1, 2, 3, 4, 100]) == values),
         ("overall-inconclusive-last", runner.summarize(mixed) == expected),
         ("separation-2-se", not runner.separated(3.0, 0.0, 4.0, 0.5)),
     )
     cases += [(n, partial(expect, ok, n), 0, n) for n, ok in checks]
-    nonpositive = dict(samples, sub8=[9.0] * 5)
     overall = (
         ("overall-fail-pass", [(1, "FAIL"), (0, "PASS")], 1, "FAIL"),
         ("overall-pass", [(0, "PASS")], 0, "PASS"),
@@ -89,7 +84,7 @@ def canned_cases(runner: ModuleType, record: dict) -> list[tuple]:
         (n, partial(runner.summarize, data), rc, msg) for n, data, rc, msg in overall
     ]
     cases.append(("ratio-orientation", partial(runner.judge, samples, entry), 1, "R=5"))
-    call = partial(runner.judge, nonpositive, entry)
+    call = partial(runner.judge, dict(samples, sub8=[9.0] * 5), entry)
     cases.append(("non-positive", call, 77, "non-positive net time"))
     for arm in ("sub8", "sub32"):
         call = partial(runner.judge, dict(samples, **{arm: [10.0] * 5}), entry)
@@ -99,57 +94,39 @@ def canned_cases(runner: ModuleType, record: dict) -> list[tuple]:
 
 def invalid_mutations() -> tuple[tuple[str, Callable, str], ...]:
     """Describe independent invalid records and their required diagnostics."""
-    bounds = "invalid workload bounds"
+    bounds, keys = "invalid workload bounds", "missing or extra key"
+    stale = "measured with another workload; re-record with --make-record"
+    d = lambda b: b["devices"][0]
+    w = lambda b: b["workload"]
+    equal_ratio = lambda b: d(b).update(ratio_tree=d(b)["ratio_subgroup"])
+    duplicate_ids = lambda b: b["devices"].extend(
+        dict(d(b), device_id=i) for i in ("0x13c0", "0x13C0")
+    )
+    ratio_error = "ratio_tree must exceed positive ratio_subgroup"
+    issue_error = "unguarded reason must name #N"
+    date_error = "invalid runs or measured date"
     return (
-        ("missing-key", lambda b: b.pop("workload"), "missing or extra key"),
-        ("extra-key", lambda b: b.update(extra=True), "missing or extra key"),
-        (
-            "bad-ratio",
-            lambda b: b["devices"][0].update(
-                ratio_tree=b["devices"][0]["ratio_subgroup"]
-            ),
-            "ratio_tree must exceed positive ratio_subgroup",
-        ),
-        ("bad-id", lambda b: b["devices"][0].update(device_id="2684"), "bad device_id"),
-        ("runs-four", lambda b: b["devices"][0].update(runs=4), "invalid runs"),
-        ("bsize-seven", lambda b: b["workload"].update(reduction_bsize=7), bounds),
-        ("bsize-33", lambda b: b["workload"].update(fetch_bsize=33), bounds),
-        ("rate-zero", lambda b: b["workload"].update(rate=0), bounds),
-        ("frames-zero", lambda b: b["workload"].update(frames=0), bounds),
-        (
-            "no-issue",
-            lambda b: b["unguarded"][0].update(reason="slower"),
-            "unguarded reason must name #N",
-        ),
-        (
-            "duplicate",
-            lambda b: b["devices"].append(b["devices"][0]),
-            "duplicate device",
-        ),
-        (
-            "duplicate-id-case",
-            lambda b: b["devices"].extend(
-                dict(b["devices"][0], device_id=i) for i in ("0x13c0", "0x13C0")
-            ),
-            "duplicate device",
-        ),
-        (
-            "equal-workload-bsize",
-            lambda b: b["workload"].update(
-                reduction_bsize=b["workload"]["fetch_bsize"]
-            ),
-            bounds,
-        ),
-        (
-            "date-nonpadded",
-            lambda b: b["devices"][0].update(measured="2026-1-12"),
-            "",
-        ),
-        (
-            "date-basic",
-            lambda b: b["devices"][0].update(measured="20260112"),
-            "invalid runs or measured date",
-        ),
+        ("missing-key", lambda b: b.pop("workload"), keys),
+        ("extra-key", lambda b: b.update(extra=True), keys),
+        ("bad-ratio", equal_ratio, ratio_error),
+        ("bad-id", lambda b: d(b).update(device_id="2684"), "bad device_id"),
+        ("runs-four", lambda b: d(b).update(runs=4), "invalid runs"),
+        ("bsize-seven", lambda b: w(b).update(reduction_bsize=7), bounds),
+        ("bsize-16", lambda b: w(b).update(reduction_bsize=16), bounds),
+        ("bsize-33", lambda b: w(b).update(fetch_bsize=33), bounds),
+        ("rate-zero", lambda b: w(b).update(rate=0), bounds),
+        ("frames-zero", lambda b: w(b).update(frames=0), bounds),
+        ("wrong-workload", lambda b: d(b).update(workload_sha256="0" * 16), stale),
+        ("changed-workload", lambda b: w(b).update(frames=65), stale),
+        ("missing-workload-hash", lambda b: d(b).pop("workload_sha256", None), keys),
+        ("bool-int", lambda b: d(b).update(runs=True), "wrong field type"),
+        ("int-float", lambda b: d(b).update(ratio_subgroup=1), "wrong field type"),
+        ("no-issue", lambda b: b["unguarded"][0].update(reason="slower"), issue_error),
+        ("duplicate", lambda b: b["devices"].append(d(b)), "duplicate device"),
+        ("duplicate-id-case", duplicate_ids, "duplicate device"),
+        ("equal-workload-bsize", lambda b: w(b).update(reduction_bsize=32), bounds),
+        ("date-nonpadded", lambda b: d(b).update(measured="2026-1-12"), ""),
+        ("date-basic", lambda b: d(b).update(measured="20260112"), date_error),
     )
 
 
@@ -161,14 +138,11 @@ def invalid_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]
         mutate(bad)
         path = folder / (name + ".json")
         path.write_text(json.dumps(bad), encoding="utf-8")
-        cases.append(
-            (
-                name,
-                partial(runner.load_record, path),
-                1,
-                f"record invalid: {path}: {fragment}",
-            )
-        )
+        if fragment.startswith("measured with another workload"):
+            device = bad["devices"][0]
+            fragment = f"device {device['name']} {device['device_id']} {fragment}"
+        call = partial(runner.load_record, path)
+        cases.append((name, call, 1, f"record invalid: {path}: {fragment}"))
     good = json.loads(json.dumps(record))
     good["devices"][0]["runs"] = 5
     path = folder / "runs-five.json"
@@ -179,8 +153,7 @@ def invalid_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]
 
 def cli_cases(runner: ModuleType) -> list[tuple]:
     """Check CLI argument refusals before the missing-binary skip."""
-    path = getattr(runner, "__file__", None)
-    path = Path(path) if path else runner.ROOT / "ffmpeg-patches/test/mc-gain-smoke.py"
+    path = Path(runner.__file__)
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.pop("FFMPEG_BIN", None)
     invalid = "--runs must be in 5..50"
@@ -201,9 +174,8 @@ def cli_cases(runner: ModuleType) -> list[tuple]:
         )
         message = result.stderr if expected == 2 else result.stdout
         detail = f"rc={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
-        call = partial(
-            expect, result.returncode == expected and fragment in message, detail
-        )
+        ok = result.returncode == expected and fragment in message
+        call = partial(expect, ok, detail)
         cases.append((name, call, 0, fragment))
     return cases
 
@@ -214,11 +186,13 @@ def stub_fixture(
     names: list[dict],
     r: float,
     mismatch: bool = False,
+    probe: dict[str, object] | None = None,
 ) -> tuple[Path, dict[str, str]]:
     """Write a stub scenario and retain the inherited Git isolation barrier."""
     scenario = folder / "scenario.json"
     times = {runner.chain(None): 1, runner.chain(8): 1 + r, runner.chain(32): 2}
     data = dict(devices=names, times=times, mismatch=mismatch)
+    data.update(probe or {})
     scenario.write_text(json.dumps(data), encoding="utf-8")
     log = scenario.with_suffix(".log")
     log.write_text("", encoding="utf-8")
@@ -239,7 +213,8 @@ def stub_case(
     """Run the complete check with the Python stub and verify probe stopping."""
     scenario, env = stub_fixture(runner, folder, names, r, mismatch)
     log = scenario.with_suffix(".log")
-    result = runner.check(STUB_FFMPEG, record, 5, env)
+    with patch.object(runner, "driver_map", return_value={}):
+        result = runner.check(STUB_FFMPEG, record, 5, env)
     assert log.read_text().splitlines() == [str(i) for i in range(len(names) + 1)], (
         "enumeration continued past index error"
     )
@@ -299,18 +274,21 @@ def parsing_cases(runner: ModuleType, entry: dict) -> list[tuple]:
     return cases
 
 
-def ratio_case(runner: ModuleType) -> tuple[int, str]:
+def ratio_case(runner: ModuleType, unity: bool = False) -> tuple[int, str]:
     """Pin R and its propagated error with spread in every arm."""
     samples = {
         "passthrough": [1, 2, 3, 4, 5],
         "sub8": [18, 18, 21, 24, 24],
         "sub32": [7, 8, 9, 10, 11],
     }
+    if unity:
+        samples["sub8"] = samples["sub32"]
     r, se = runner.ratio(samples)
     base = 1.2533 * 1.4826 / math.sqrt(5)
-    expected = 3 * base * math.sqrt(10 / 18**2 + 2 / 6**2)
+    expected = base * math.sqrt(2 if unity else 22) / 6
     return expect(
-        r == 3 and math.isclose(se, expected, rel_tol=1e-12), "ratio-error-exact"
+        r == (1 if unity else 3) and math.isclose(se, expected, rel_tol=1e-12),
+        "ratio-error-exact",
     )
 
 
@@ -335,84 +313,64 @@ def measurement_case(
     )
 
 
-def record_case(runner: ModuleType, entry: dict, separated: bool) -> tuple[int, str]:
-    """Verify emitted record formatting and refusal at 1.5 combined standard errors."""
+def record_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
+    """Validate emitted lines and reject uncertainty or rounded ratio collapse."""
+    entry, workload = record["devices"][0], record["workload"]
     device = runner.Device(0, entry["name"], entry["device_id"])
-    ratios = [(3.1145038167938934, 0), (5.8102189781021885, 0)]
-    if not separated:
-        ratios = [(3, 0.6), (4.5, 0.8)]
+    ratios = {
+        "emit": [(3.1145038167938934, 0), (5.8102189781021885, 0)],
+        "noise": [(3, 0.6), (4.5, 0.8)],
+        "collapse": [(3.0001, 0), (3.0002, 0)],
+        "empty": [],
+    }
     output, errors = io.StringIO(), io.StringIO()
+    devices = [] if mode == "empty" else [device]
     with (
-        patch.object(
-            runner, "driver_map", return_value={device.device_id: entry["driver"]}
-        ),
-        patch.object(runner, "enumerate_devices", return_value=[device]),
+        patch.object(runner, "driver_map", return_value={device[1:]: entry["driver"]}),
+        patch.object(runner, "enumerate_devices", return_value=devices),
         patch.object(runner, "measure", return_value={}),
-        patch.object(runner, "ratio", side_effect=ratios),
+        patch.object(runner, "ratio", side_effect=ratios[mode]),
         patch.object(runner.time, "strftime", return_value="2026-11-12"),
         redirect_stdout(output),
         redirect_stderr(errors),
     ):
-        runner.make_record(
-            STUB_FFMPEG, STUB_FFMPEG, {"reduction_bsize": 8, "fetch_bsize": 32}, 15
-        )
-    if not separated:
+        count = runner.make_record(STUB_FFMPEG, STUB_FFMPEG, workload, 15)
+    if mode != "emit":
         return expect(
-            not output.getvalue() and "no gain on" in errors.getvalue(),
-            "separation-1.5-se",
+            count == 0
+            and not output.getvalue()
+            and (mode == "empty" or "no gain on" in errors.getvalue()),
+            mode,
         )
-    expected = (
-        '{"name": "NVIDIA GeForce RTX 4090", "device_id": "0x2684", '
-        '"driver": "NVIDIA 620.70.06", "measured": "2026-11-12", "runs": 15, '
-        '"ratio_subgroup": 3.115, "ratio_tree": 5.810}\n'
-    )
+    line = output.getvalue()
+    parsed = json.loads(line)
+    runner.validate_record(dict(record, devices=[parsed]))
     return expect(
-        output.getvalue() == expected and not errors.getvalue(), "record-line-exact"
+        count == 1
+        and parsed == dict(entry, ratio_subgroup=3.115, ratio_tree=5.810)
+        and '"ratio_tree": 5.810}' in line
+        and not errors.getvalue(),
+        "record-line-exact",
     )
 
 
 def regression_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
     """Collect independent regression assertions without hardware access."""
-    entry = record["devices"][0]
-    cases = [
-        ("ratio-error-exact", partial(ratio_case, runner), 0, "ratio-error-exact"),
-        (
-            "record-id-uppercase",
-            partial(id_case, runner, folder, record, True),
-            0,
-            "PASS",
-        ),
-        (
-            "printed-id-uppercase",
-            partial(id_case, runner, folder, record, False),
-            0,
-            "PASS",
-        ),
-        (
-            "warmup-discarded",
-            partial(measurement_case, runner, record, folder, False),
-            0,
-            "warmup",
-        ),
-        (
-            "alternating-rounds",
-            partial(measurement_case, runner, record, folder, True),
-            0,
-            "alternating",
-        ),
-        (
-            "record-line-exact",
-            partial(record_case, runner, entry, True),
-            0,
-            "record-line-exact",
-        ),
-        (
-            "separation-1.5-se",
-            partial(record_case, runner, entry, False),
-            0,
-            "separation-1.5-se",
-        ),
-    ]
+    id_call = partial(id_case, runner, folder, record)
+    measured = partial(measurement_case, runner, record, folder)
+    rows = (
+        ("ratio-error-exact", partial(ratio_case, runner), "ratio-error-exact"),
+        ("ratio-unity", partial(ratio_case, runner, True), "ratio-error-exact"),
+        ("record-id-uppercase", partial(id_call, True), "PASS"),
+        ("printed-id-uppercase", partial(id_call, False), "PASS"),
+        ("warmup-discarded", partial(measured, False), "warmup"),
+        ("alternating-rounds", partial(measured, True), "alternating"),
+    )
+    cases = [(n, call, 0, msg) for n, call, msg in rows]
+    for mode in ("emit", "noise", "collapse", "empty"):
+        call = partial(record_case, runner, record, mode)
+        msg = "record-line-exact" if mode == "emit" else mode
+        cases.append(("record-" + mode, call, 0, msg))
     for name, prefix, expected in (
         ("tree-line-comments", "keep\n    // subgroupAdd(d)\n    // combine\n", 5),
         ("tree-no-comment", "keep\n", 5),
@@ -422,6 +380,132 @@ def regression_cases(runner: ModuleType, record: dict, folder: Path) -> list[tup
             prefix + "    float sg = subgroupAdd(d);", len(prefix) + 15
         )
         cases.append((name, partial(expect, start == expected, name), 0, name))
+    return cases
+
+
+def enumeration_case(runner: ModuleType, record: dict, folder: Path, mode: str) -> str:
+    """Exercise explicit end markers, failed probes, and the enumeration cap."""
+    entry = record["devices"][0]
+    knobs = {
+        "failed": dict(probe_index=1, probe_rc=1, probe_output="initialization failed"),
+        "blank": dict(probe_rc=0, probe_output="unrelated output"),
+        "none": dict(probe_rc=1, probe_output="No devices found: unavailable!"),
+    }
+    names = [entry] * (7 if mode == "seven" else 8 if mode == "cap" else 2)
+    _, env = stub_fixture(runner, folder, names, 3, probe=knobs.get(mode))
+    if mode == "timeout":
+        with patch.object(
+            runner, "run_ffmpeg", return_value=runner.RunResult(124, "timed out", "")
+        ):
+            return str(runner.enumerate_devices(STUB_FFMPEG, env))
+    return str(len(runner.enumerate_devices(STUB_FFMPEG, env)))
+
+
+def alias_case(runner: ModuleType, folder: Path, kind: str) -> tuple[int, str]:
+    """Refuse each output alias before changing any source byte."""
+    source, target = folder / (kind + ".glsl"), folder / (kind + "-out.glsl")
+    original = (
+        runner.ROOT / "ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl"
+    ).read_bytes()
+    source.write_bytes(original)
+    if kind == "symlink":
+        target.symlink_to(source)
+    elif kind == "hardlink":
+        os.link(source, target)
+    else:
+        target = source
+    message = ""
+    try:
+        runner.tree_shader(source, target)
+    except ValueError as exc:
+        message = str(exc)
+    return expect(
+        message == "tree shader output aliases its input"
+        and source.read_bytes() == original,
+        "alias refused; bytes unchanged",
+    )
+
+
+def driver_parse_case(runner: ModuleType) -> tuple[int, str]:
+    """Retain different device names sharing a PCI ID and unknown metadata."""
+    text = "deviceID = 0xffff\nGPU0:\n deviceName = first\n deviceID = 0xABCD\n driverName = mesa\n driverInfo = 1.2\nGPU1:\n deviceName = second\n deviceID = 0xabcd\n driverName = other\n driverInfo = 3.4\nGPU2:\n deviceName = unknown\n deviceID = 0x1234\nGPU3:\n deviceName = incomplete\n"
+    expected = {
+        ("first", "0xabcd"): "mesa 1.2",
+        ("second", "0xabcd"): "other 3.4",
+        ("unknown", "0x1234"): "unknown",
+    }
+    return expect(
+        runner.parse_drivers(text) == expected and runner.parse_drivers("") == {},
+        "driver identities retained",
+    )
+
+
+def driver_case(
+    runner: ModuleType, record: dict, folder: Path, mode: str
+) -> tuple[int, str]:
+    """Measure matching or unknown drivers and skip stale drivers before arms."""
+    entry = record["devices"][0]
+    scenario, env = stub_fixture(runner, folder, [entry], entry["ratio_subgroup"])
+    driver = {
+        "matching": entry["driver"],
+        "stale": "changed driver",
+        "unknown": "unknown",
+    }[mode]
+    with patch.object(
+        runner, "driver_map", return_value={(entry["name"], entry["device_id"]): driver}
+    ):
+        code, message = runner.check(STUB_FFMPEG, record, 5, env)
+    calls = scenario.with_suffix(".calls").read_text().splitlines()
+    stale = mode == "stale"
+    fragment = (
+        "stale record: driver changed driver differs from recorded" if stale else "PASS"
+    )
+    timed = not calls if stale else len(calls) == 18
+    return expect(code == (77 if stale else 0) and fragment in message and timed, mode)
+
+
+def empty_main_case(runner: ModuleType) -> tuple[int, str]:
+    """Return a CLI failure when record generation emits no device entries."""
+    errors = io.StringIO()
+    argv = ["mc-gain-smoke.py", "--make-record", "--tree-ffmpeg", str(STUB_FFMPEG)]
+    with (
+        patch.object(sys, "argv", argv),
+        patch.dict(os.environ, FFMPEG_BIN=str(STUB_FFMPEG)),
+        patch.object(runner, "resolve_ffmpeg_bin", return_value=STUB_FFMPEG),
+        patch.object(runner, "make_record", return_value=0),
+        redirect_stderr(errors),
+    ):
+        code = runner.main()
+    return expect(
+        code == 1 and "no device entries emitted" in errors.getvalue(),
+        "empty main refused",
+    )
+
+
+def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
+    """Collect review regressions with named positive and boundary cases."""
+    cases = []
+    enumeration = partial(enumeration_case, runner, record, folder)
+    for mode, rc, msg in (
+        ("failed", 1, "device enumeration failed"),
+        ("blank", 1, "device enumeration failed"),
+        ("timeout", 1, "device enumeration failed"),
+        ("none", 0, "0"),
+        ("seven", 0, "7"),
+        ("cap", 1, "cap 8"),
+    ):
+        cases.append(("enumeration-" + mode, partial(enumeration, mode), rc, msg))
+    for kind in ("same", "symlink", "hardlink"):
+        call = partial(alias_case, runner, folder, kind)
+        cases.append(("alias-" + kind, call, 0, "bytes unchanged"))
+    for mode in ("matching", "stale", "unknown"):
+        call = partial(driver_case, runner, record, folder, mode)
+        cases.append(("driver-" + mode, call, 0, mode))
+    call = partial(driver_parse_case, runner)
+    cases.append(("driver-parser", call, 0, "driver identities retained"))
+    call = partial(empty_main_case, runner)
+    cases.append(("record-empty-main", call, 0, "empty main refused"))
+    cases.append(("shipped-record", partial(runner.validate_record, record), 0, ""))
     return cases
 
 
@@ -460,7 +544,8 @@ def self_test(runner: ModuleType) -> int:
         call = partial(runner.tree_shader, source, folder / "bad.glsl")
         cases.append(("tree-refused", call, 1, "no subgroupAdd("))
         cases += regression_cases(runner, record, folder)
+        cases += review_cases(runner, record, folder)
         passed = [run_case(*case) for case in cases]
-        assert len(passed) == 67, f"unexpected case count: {len(passed)}"
+        assert len(passed) == 91, f"unexpected case count: {len(passed)}"
         print(f"{sum(passed)}/{len(passed)} cases passed")
         return 0 if all(passed) else 1

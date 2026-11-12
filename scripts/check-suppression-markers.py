@@ -548,6 +548,72 @@ def formatter_self_test(local_ids: frozenset[str]) -> list[str]:
     return failures
 
 
+def nonpython_self_test() -> list[str]:
+    """Refuse each planted marker shape in shell and C sources."""
+    plants = (
+        ("planted.sh", "run x  # nosemgrep: python.lang.a.b - why\n", "marker in a shell file"),
+        ("planted.c", "// explanation nosemgrep: rule.id - reason\n", "late marker in a C comment"),
+        ("planted.c", "call(); // reviewed nosemgrep\n", "bare late marker in a C comment"),
+        ("planted.c", "call(); // reviewed nosec\n", "bare late nosec in a C comment"),
+        ("planted.c", "/* late bare nosemgrep */\n", "late bare nosemgrep in a C block comment"),
+        ("planted.c", "// late bare nosem\n", "late bare nosem in a C comment"),
+        (
+            "planted.c",
+            "/* late bare nosemgrep */ do_work();\n",
+            "nosemgrep before code on same line",
+        ),
+        ("planted.c", "// late bare nosem\r\n", "late bare nosem with CRLF"),
+    )
+    failures: list[str] = []
+    for name, source, label in plants:
+        if not other_findings(name, source):
+            failures.append(f"planted '{label}' not refused")
+        else:
+            print(f"refused as expected ({label})")
+    return failures
+
+
+def wiring_failures(source: str) -> list[str]:
+    """Report each module-level *_self_test function that self_test never reaches.
+
+    The walk follows direct calls by name with an explicit worklist bounded by
+    the function count, so a helper reached through another helper counts.
+    """
+    tree = ast.parse(source)
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    worklist = ["self_test"] if "self_test" in functions else []
+    reached = set(worklist)
+    for _ in range(len(functions)):
+        if not worklist:
+            break
+        calls = {
+            call.func.id
+            for call in ast.walk(functions[worklist.pop()])
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+        }
+        pending = sorted(calls.intersection(functions).difference(reached))
+        reached.update(pending)
+        worklist.extend(pending)
+    helpers = sorted(name for name in functions if name.endswith("_self_test"))
+    return [f"{name} not reachable from self_test" for name in helpers if name not in reached]
+
+
+def wiring_self_test() -> list[str]:
+    """Check this file's wiring, then plant a disconnected and an indirectly reached helper."""
+    failures = wiring_failures(Path(__file__).read_text(encoding="utf-8"))
+    dead = "def helper_self_test(): pass\ndef self_test(): pass\n"
+    indirect = (
+        "def helper_self_test(): pass\n"
+        "def bridge(): helper_self_test()\n"
+        "def self_test(): bridge()\n"
+    )
+    if wiring_failures(dead) != ["helper_self_test not reachable from self_test"]:
+        failures.append("planted 'disconnected self-test helper' not refused")
+    if wiring_failures(indirect):
+        failures.append("planted 'indirectly reached self-test helper' refused")
+    return failures
+
+
 def self_test() -> int:
     """Plant each refused shape and the valid sources; 0 when all behave."""
     local_ids = frozenset({"local-rule"})
@@ -561,41 +627,11 @@ def self_test() -> int:
             failures.append(f"planted '{label}' not refused as '{expect}': {got}")
         else:
             print(f"refused as expected ({label}): {got[0]}")
-    if not other_findings("planted.sh", "run x  # nosemgrep: python.lang.a.b - why\n"):
-        failures.append("planted 'marker in a shell file' not refused")
-    else:
-        print("refused as expected (marker in a shell file)")
-    if not other_findings("planted.c", "// explanation nosemgrep: rule.id - reason\n"):
-        failures.append("planted 'late marker in a C comment' not refused")
-    else:
-        print("refused as expected (late marker in a C comment)")
-    if not other_findings("planted.c", "call(); // reviewed nosemgrep\n"):
-        failures.append("planted 'bare late marker in a C comment' not refused")
-    else:
-        print("refused as expected (bare late marker in a C comment)")
-    if not other_findings("planted.c", "call(); // reviewed nosec\n"):
-        failures.append("planted 'bare late nosec in a C comment' not refused")
-    else:
-        print("refused as expected (bare late nosec in a C comment)")
-    if not other_findings("planted.c", "/* late bare nosemgrep */\n"):
-        failures.append("planted 'late bare nosemgrep in a C block comment' not refused")
-    else:
-        print("refused as expected (late bare nosemgrep in a C block comment)")
-    if not other_findings("planted.c", "// late bare nosem\n"):
-        failures.append("planted 'late bare nosem in a C comment' not refused")
-    else:
-        print("refused as expected (late bare nosem in a C comment)")
-    if not other_findings("planted.c", "/* late bare nosemgrep */ do_work();\n"):
-        failures.append("planted 'nosemgrep before code on same line' not refused")
-    else:
-        print("refused as expected (nosemgrep before code on same line)")
-    if not other_findings("planted.c", "// late bare nosem\r\n"):
-        failures.append("planted 'late bare nosem with CRLF' not refused")
-    else:
-        print("refused as expected (late bare nosem with CRLF)")
+    failures.extend(nonpython_self_test())
     failures.extend(formatter_self_test(local_ids))
     failures.extend(encoding_self_test(local_ids))
     failures.extend(exceptions_self_test())
+    failures.extend(wiring_self_test())
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
     return 1 if failures else 0

@@ -25,6 +25,9 @@ def main() -> int:
     if enumeration:
         with path.with_suffix(".log").open("a", encoding="utf-8") as log:
             log.write(str(index) + "\n")
+        if index == scenario.get("probe_index", 0) and "probe_output" in scenario:
+            print(scenario["probe_output"])
+            return scenario.get("probe_rc", 0)
     if index >= len(scenario["devices"]):
         print(f"Unable to find device with index {index}!")
         print(f"Device {index} selected: decoy (unknown) (0xffff)")

@@ -1103,6 +1103,8 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'mc-gain-smoke.py'],
        workdir: meson.project_source_root(),
+       # GPU wall-time arms must not share the device with other tests.
+       is_parallel: false,
        timeout: 600,
        suite: 'fast')
 endif

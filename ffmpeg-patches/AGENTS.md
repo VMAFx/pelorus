@@ -171,13 +171,15 @@ ffmpeg-patches/
    via libdav1d, ADR-0212): skip named by `GRAIN_SCORE_AV1_SMOKE_SKIP`.
    Mc gain smoke `test/mc-gain-smoke.py` (#459: wall-time ratio R = bsize 8
    net / bsize 32 net vs per-device `test/mc-gain-record.json`; R above
-   subgroup/tree midpoint = fail; inside 2 SE or below stale bound = exit 77
-   `SKIP: inconclusive`; unrecorded device = `SKIP: no guarded device`
+   subgroup/tree midpoint = fail; inside 2 SE, below stale bound or driver
+   differs from record = exit 77 `SKIP: inconclusive`; unrecorded device =
+   `SKIP: no guarded device`
    line, exit 77 only when no device guarded; no `FFMPEG_BIN` = exit 77;
    stub-FFmpeg decision self-test `test/mc-gain-self-test.py`): skip named
-   by `MC_GAIN_SKIP` (ADR-0256). Driver, workload or shader change ->
-   regenerate record lines with `--make-record --tree-ffmpeg`, never
-   hand-edit ratios.
+   by `MC_GAIN_SKIP` (ADR-0256). Driver or workload change -> regenerate
+   record lines with `--make-record --tree-ffmpeg`; never hand-edit
+   ratios. Shader change -> run smoke against existing record first; fail
+   = lost gain: fix shader, never re-record to pass.
 11. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git

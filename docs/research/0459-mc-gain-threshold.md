@@ -28,7 +28,7 @@ FFMPEG_BIN=/absolute/path/to/subgroup/ffmpeg \
   --tree-ffmpeg /absolute/path/to/ffmpeg-tree/ffmpeg
 ```
 
-The record mode interleaves passthrough, sub8, sub32, tree8 and tree32 for each enumerated device. Discard one warm-up per arm; alternate forward and reversed order for measured rounds. The default is 15 rounds, bounded to 5–50. Output is one JSON device entry per separated device; merge those entries into `mc-gain-record.json` while retaining the workload and unguarded list. Optional `vulkaninfo --summary` provides driver metadata with a 60 s deadline; otherwise it is `unknown`.
+The record mode interleaves passthrough, sub8, sub32, tree8 and tree32 for each enumerated device. Discard one warm-up per arm; alternate forward and reversed order for measured rounds. The default is 15 rounds, bounded to 5–50. Output is one JSON device entry per separated device whose three-decimal line passes the shared record validators; rounding that collapses the ratio gap emits no line, and no emitted entries makes the command return 1. Each entry includes `workload_sha256`, the first 16 hexadecimal digits of SHA-256 over the sorted, compact JSON workload; the runner rejects another workload and requires exactly bsize=8/32. Merge those entries into `mc-gain-record.json` while retaining the workload and unguarded list. Optional `vulkaninfo --summary` provides driver metadata with a 60 s deadline; otherwise it is `unknown`. Metadata is keyed by device name and lower-case PCI ID. The runner stops only at FFmpeg's explicit missing-index marker, or `No devices found` at index zero; other missing device lines and exhaustion of the eight-index cap are errors (`enumerate_devices`, `mc-gain-smoke.py --self-test`). Shader generation refuses output that aliases its input, including symlinks and hard links (the alias self-test cases).
 
 ## Measurements
 
@@ -62,7 +62,9 @@ Dividing the reduction-bound arm by that reference within the same binary separa
 
 ## Decision rule
 
-For medians `p`, `m8`, `m32`, define `net8 = m8 - p`, `net32 = m32 - p`, `R = net8/net32`. Either net time at or below zero is inconclusive. For each arm use `sigma = 1.4826 × MAD`, `se(median) = 1.2533 × sigma/sqrt(n)` and propagate `se_R = R × sqrt((se8² + sep²)/net8² + (se32² + sep²)/net32²)`.
+For medians `p`, `m8`, `m32`, define `net8 = m8 - p`, `net32 = m32 - p`, `R = net8/net32`. Either net time at or below zero is inconclusive. For each arm use `sigma = 1.4826 × MAD`, `se(median) = 1.2533 × sigma/sqrt(n)` and propagate `se_R = sqrt(se8² + R² × se32² + (R - 1)² × sep²) / net32`.
+
+The shared passthrough median correlates the two net times; its derivative is `(R - 1)/net32`, so its uncertainty cancels at `R = 1`. The `ratio-error-exact` and `ratio-unity` self-test cases verify this formula.
 
 Let `mid = (ratio_subgroup + ratio_tree)/2` and `gap = ratio_tree - ratio_subgroup`. First reject `R < ratio_subgroup - gap` as stale-low; then reject `abs(R - mid) < 2 × se_R` as noisy. Otherwise `R <= mid` passes and larger ratios fail. New record entries require a separation exceeding `2 × sqrt(se_sub² + se_tree²)`.
 
@@ -74,7 +76,7 @@ On Mesa 26.2.6 ANV, the Arc A380 subgroup reduction is about 85 % slower than th
 
 ## Limits
 
-Records apply to a specific FFmpeg device name and PCI identifier. A driver change requires re-recording; stale-low catches ratios below the recorded range, including uniformly faster subgroup and tree implementations that might otherwise allow a reverted reduction to pass. Concurrent load may still cause inconclusive or failed results: rerun on an idle device. These measurements do not replace the broader GPU performance work in #167.
+Records apply to a specific FFmpeg device name and PCI identifier. A known current driver different from the recorded driver skips timing with `SKIP: inconclusive` and a stale-record diagnostic; unknown current metadata permits measurement (`check`, driver self-test cases). A driver change requires re-recording; stale-low catches ratios below the recorded range, including uniformly faster subgroup and tree implementations that might otherwise allow a reverted reduction to pass. The Meson `mc-gain` test runs serially to avoid sharing the GPU with other tests (`meson.build`). Concurrent external load may still cause inconclusive or failed results: rerun on an idle device. These measurements do not replace the broader GPU performance work in #167.
 
 ## Sources
 

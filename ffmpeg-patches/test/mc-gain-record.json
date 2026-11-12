@@ -15,6 +15,7 @@
       "driver": "NVIDIA 620.70.06",
       "measured": "2026-11-12",
       "runs": 15,
+      "workload_sha256": "005265f2d0df3528",
       "ratio_subgroup": 3.115,
       "ratio_tree": 5.810
     },
@@ -24,6 +25,7 @@
       "driver": "radv Mesa 26.2.6-arch3.1",
       "measured": "2026-11-12",
       "runs": 15,
+      "workload_sha256": "005265f2d0df3528",
       "ratio_subgroup": 11.432,
       "ratio_tree": 12.736
     }

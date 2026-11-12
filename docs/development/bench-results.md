@@ -852,7 +852,13 @@ time: `ffmpeg-patches/test/mc-gain-smoke.py`
 `subgroupAdd`, with more than two `barrier()` calls or with a stride-halving loop,
 and requires `OpGroupNonUniformFAdd` in the compiled SPIR-V. The wall-time check
 compares the passthrough-subtracted bsize=8 / bsize=32 ratio with the recorded
-subgroup/tree midpoint. Arc A380 (ANV) inverts the gain and remains unguarded
+subgroup/tree midpoint. Each entry's `workload_sha256` binds those ratios to
+the record workload; the runner requires exactly bsize=8/32, and a known driver
+mismatch is inconclusive before timing. The runner's `--self-test` verifies
+shared-passthrough uncertainty, explicit enumeration end markers and cap errors,
+and validation of rounded `--make-record` output; no emitted entry returns 1.
+The Meson `mc-gain` test runs serially to protect GPU wall times (`meson.build`).
+Arc A380 (ANV) inverts the gain and remains unguarded
 under #602. CI has no GPU runner, so the 0.765 → 0.727 s figure stays a dated
 RTX 4090 record.
 

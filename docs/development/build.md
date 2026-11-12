@@ -355,6 +355,16 @@ NVENC_SMOKE_SKIP="Cannot load libcuda.so.1" \
   FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 ```
 
+The Meson `mc-gain` test runs serially (`meson.build`) to keep other GPU tests
+from distorting its wall-time arms. Its runner requires explicit device-list
+end markers and errors at the eight-index cap. A known driver mismatch returns
+`SKIP: inconclusive` before measurement; the normal `no guarded device` allowance
+does not cover it. Re-record with `--make-record --tree-ffmpeg BIN` after a driver
+or workload change. Entries include `workload_sha256` and require bsize=8/32;
+the command validates rounded JSON lines and fails if no entries are emitted
+([ADR-0256](../adr/0256-mc-sad-gain-wall-time-threshold.md),
+`ffmpeg-patches/test/mc-gain-smoke.py --self-test`).
+
 ### Windows replay (MSYS2 UCRT64)
 
 `ffmpeg-patches/test/build-and-run.sh` also runs under MSYS2 UCRT64 bash ([ADR-0213](../adr/0213-windows-replay-tester-zip.md)). Under MSYS2, the script automatically detects the environment (`$MSYSTEM == "UCRT64"`), sets `FFMPEG_EXE="$WORKTREE/ffmpeg.exe"`, prepends `$PRIVATE_PREFIX/bin` to `PATH` (for runtime resolution of `pelorus.dll`), and strips carriage returns (`\r`) from filter and BSF registration stdout checks. When `KEEP_DIR` is set on Windows, `build-and-run.sh` copies `ffmpeg.exe` and `$PRIVATE_PREFIX/bin/*.dll` directly into `$KEEP_DIR`. The dedicated path-filtered workflow `.github/workflows/windows-tester.yml` uses this mode on `windows-2025` runners to replay the patch stack and package the `pelorus-tester-windows-x64` artifact.
