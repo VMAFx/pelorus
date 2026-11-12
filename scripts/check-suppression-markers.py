@@ -45,6 +45,11 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from standards_exceptions import filter_excused, load_entries
+from suppression_selftests import (
+    formatter_self_test,
+    nonpython_self_test,
+    wiring_self_test,
+)
 from tracked_python import is_python, tracked_files
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -520,122 +525,6 @@ def exceptions_self_test() -> list[str]:
     return failures
 
 
-def formatter_self_test(local_ids: frozenset[str]) -> list[str]:
-    """Refuse formatter comment variants while accepting literal marker text."""
-    plants = (
-        ("inline", "x = 1  # fmt: skip\n"),
-        ("pair", "# fmt: off\nx = 1\n# fmt: on\n"),
-        ("fmt on", "# fmt: on\nx = 1\n"),
-        ("yapf", "# yapf: disable\nx = 1\n"),
-        ("compact", "x = 1  #fmt:skip\n"),
-        ("uppercase", "x = 1  # FMT: SKIP\n"),
-        ("spaced colon", "# fmt : skip\nx = 1\n"),
-        ("yapf enable", "# yapf: enable\nx = 1\n"),
-        ("autopep8 off", "# autopep8: off\nx = 1\n"),
-        ("autopep8 on", "# autopep8: on\nx = 1\n"),
-    )
-    failures: list[str] = []
-    message = "formatter suppression comment refused (ADR-0256)"
-    for label, source in plants:
-        got = python_findings("formatter.py", source, local_ids)
-        if not got or not all(message in item for item in got):
-            failures.append(f"formatter '{label}' not refused: {got}")
-        else:
-            print(f"refused as expected (formatter {label}): {got[0]}")
-    clean = 'text = "# fmt: skip"\n'
-    if got := python_findings("literal.py", clean, local_ids):
-        failures.append(f"formatter string literal refused: {got}")
-    return failures
-
-
-def nonpython_self_test() -> list[str]:
-    """Refuse each planted marker shape in shell and C sources."""
-    plants = (
-        (
-            "planted.sh",
-            "run x  # nosemgrep: python.lang.a.b - why\n",
-            "marker in a shell file",
-        ),
-        (
-            "planted.c",
-            "// explanation nosemgrep: rule.id - reason\n",
-            "late marker in a C comment",
-        ),
-        (
-            "planted.c",
-            "call(); // reviewed nosemgrep\n",
-            "bare late marker in a C comment",
-        ),
-        ("planted.c", "call(); // reviewed nosec\n", "bare late nosec in a C comment"),
-        (
-            "planted.c",
-            "/* late bare nosemgrep */\n",
-            "late bare nosemgrep in a C block comment",
-        ),
-        ("planted.c", "// late bare nosem\n", "late bare nosem in a C comment"),
-        (
-            "planted.c",
-            "/* late bare nosemgrep */ do_work();\n",
-            "nosemgrep before code on same line",
-        ),
-        ("planted.c", "// late bare nosem\r\n", "late bare nosem with CRLF"),
-    )
-    failures: list[str] = []
-    for name, source, label in plants:
-        if not other_findings(name, source):
-            failures.append(f"planted '{label}' not refused")
-        else:
-            print(f"refused as expected ({label})")
-    return failures
-
-
-def wiring_failures(source: str) -> list[str]:
-    """Report each module-level *_self_test function that self_test never reaches.
-
-    The walk follows direct calls by name with an explicit worklist bounded by
-    the function count, so a helper reached through another helper counts.
-    """
-    tree = ast.parse(source)
-    functions = {
-        node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
-    }
-    worklist = ["self_test"] if "self_test" in functions else []
-    reached = set(worklist)
-    for _ in range(len(functions)):
-        if not worklist:
-            break
-        calls = {
-            call.func.id
-            for call in ast.walk(functions[worklist.pop()])
-            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-        }
-        pending = sorted(calls.intersection(functions).difference(reached))
-        reached.update(pending)
-        worklist.extend(pending)
-    helpers = sorted(name for name in functions if name.endswith("_self_test"))
-    return [
-        f"{name} not reachable from self_test"
-        for name in helpers
-        if name not in reached
-    ]
-
-
-def wiring_self_test() -> list[str]:
-    """Check this file's wiring, then plant a disconnected and an indirectly reached helper."""
-    failures = wiring_failures(Path(__file__).read_text(encoding="utf-8"))
-    dead = "def helper_self_test(): pass\ndef self_test(): pass\n"
-    indirect = (
-        "def helper_self_test(): pass\n"
-        "def bridge(): helper_self_test()\n"
-        "def self_test(): bridge()\n"
-    )
-    if wiring_failures(dead) != ["helper_self_test not reachable from self_test"]:
-        failures.append("planted 'disconnected self-test helper' not refused")
-    if wiring_failures(indirect):
-        failures.append("planted 'indirectly reached self-test helper' refused")
-    return failures
-
-
 def self_test() -> int:
     """Plant each refused shape and the valid sources; 0 when all behave."""
     local_ids = frozenset({"local-rule"})
@@ -649,11 +538,11 @@ def self_test() -> int:
             failures.append(f"planted '{label}' not refused as '{expect}': {got}")
         else:
             print(f"refused as expected ({label}): {got[0]}")
-    failures.extend(nonpython_self_test())
-    failures.extend(formatter_self_test(local_ids))
+    failures.extend(nonpython_self_test(other_findings))
+    failures.extend(formatter_self_test(python_findings, local_ids))
     failures.extend(encoding_self_test(local_ids))
     failures.extend(exceptions_self_test())
-    failures.extend(wiring_self_test())
+    failures.extend(wiring_self_test(Path(__file__)))
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
     return 1 if failures else 0
