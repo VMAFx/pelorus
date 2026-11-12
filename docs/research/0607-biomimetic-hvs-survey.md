@@ -167,7 +167,7 @@ These are drafted, not filed. Each groups leads that share a filter and a bench 
 | Epic | Leads | Gate before filing |
 | --- | --- | --- |
 | E1 Perceptual banding control | A1, A2, A3, A4, A5, B6 | none |
-| E2 Denoise and grain loop | B1, B2, B3, B4, B5, F6 | none |
+| E2 Denoise and grain loop | B1, B2, B3, B4, B5, F6, M4 | none |
 | E3 Temporal perception | F2, F3, F4, M6 | F3 licence check |
 | E4 Chroma perception | C1, C2, C4, C5, C6 | chroma-aware metric for C4 |
 | E5 HDR-out perceptual path | A4-PQ, A6, C3, M5 | HDR-out recipe decision (ADR) |
