@@ -204,10 +204,7 @@ def run_stage(
         raise budget_error(deadline, context)
     timeout = min(stage_timeout, remaining)
     result = run_ffmpeg(argv, timeout, env=env)
-    if deadline is not None and (
-        time.monotonic() >= deadline
-        or (timeout < stage_timeout and result.returncode == 124)
-    ):
+    if deadline is not None and timeout < stage_timeout and result.returncode == 124:
         raise budget_error(deadline, context)
     return result
 

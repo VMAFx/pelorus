@@ -309,16 +309,22 @@ def budget_margin_case(runner: ModuleType) -> tuple[int, str]:
 
 
 def budget_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
-    """Refuse expired measurements before calls and clamp a timed-out arm."""
+    """Pin exhausted boundaries and distinguish clamped from stage timeouts."""
     device = runner.Device(0, "canned", "0xabcd")
     arms = runner.measurement_arms(STUB_FFMPEG, record["workload"])
-    remaining = -1.0 if mode == "exhausted" else 3.0
+    remaining = {
+        "exhausted": -1.0,
+        "boundary": 0.0,
+        "clamps-timeout": 3.0,
+        "unclamped-timeout": 500.0,
+    }[mode]
     calls: list[float] = []
+    output = "Device 0 selected: canned (discrete) (0xabcd)\ntimed out"
 
     def run(argv: list[str], timeout: float, env: dict | None = None) -> object:
         """Record the allowed timeout without starting a subprocess."""
         calls.append(timeout)
-        return runner.RunResult(124, "timed out", "")
+        return runner.RunResult(124, output, "")
 
     with (
         patch.object(runner.time, "monotonic", return_value=1000.0),
@@ -335,10 +341,58 @@ def budget_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
     prefix = (
         f"mc-gain budget {runner.RUN_BUDGET_S} s exhausted after {elapsed:.3f} s at "
     )
+    expected = prefix + "device 0 canned 0xabcd arm sub32"
+    timeouts = [] if remaining <= 0 else [min(runner.RUN_TIMEOUT_S, remaining)]
+    if mode == "unclamped-timeout":
+        expected = f"sub32: failed or missing bench line: {output}"
     return expect(
-        message == prefix + "device 0 canned 0xabcd arm sub32"
-        and calls == ([] if mode == "exhausted" else [3.0]),
+        message == expected and calls == timeouts,
         f"{mode}: {message!r}, timeouts={calls}",
+    )
+
+
+def budget_check_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
+    """Pin check's explicit deadlines and its default budget through every stage."""
+    clock = [1000.0]
+    calls: list[list[str]] = []
+    entry = record["devices"][0]
+    line = f"Device 0 selected: {entry['name']} (discrete) ({entry['device_id']})"
+
+    def run(argv: list[str], timeout: float, env: dict | None = None) -> object:
+        """Answer enumeration and advance the local clock before any arm."""
+        calls.append(argv)
+        if "vulkan=vk:0" in argv:
+            return runner.RunResult(0, line, "")
+        clock[0] = 1000.0 + runner.RUN_BUDGET_S + 1
+        return runner.RunResult(1, "Unable to find device with index 1!", "")
+
+    default = mode == "check-default-budget"
+    kwargs = {} if default else {"deadline": 999.0}
+    drivers = None if mode == "check-metadata" else {}
+    with (
+        patch.object(runner.time, "monotonic", side_effect=lambda: clock[0]),
+        patch.object(runner, "run_ffmpeg", side_effect=run),
+        patch.object(runner.shutil, "which", return_value="/canned/vulkaninfo"),
+    ):
+        message = ""
+        try:
+            runner.check(STUB_FFMPEG, record, 5, drivers=drivers, **kwargs)
+        except ValueError as exc:
+            message = str(exc)
+    context = {
+        "check-metadata": "driver metadata vulkaninfo",
+        "check-enumeration": "device 0 enumeration",
+        "check-default-budget": (
+            f"device 0 {entry['name']} {entry['device_id'].lower()} arm sub32"
+        ),
+    }[mode]
+    expected = (
+        f"mc-gain budget {runner.RUN_BUDGET_S} s exhausted after "
+        f"{runner.RUN_BUDGET_S + 1:.3f} s at {context}"
+    )
+    return expect(
+        message == expected and len(calls) == (2 if default else 0),
+        f"{mode}: {message!r}, calls={len(calls)}",
     )
 
 
@@ -403,8 +457,11 @@ def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
         )
     call = partial(budget_margin_case, runner)
     cases.append(("budget-below-meson-timeout", call, 0, "budget below Meson timeout"))
-    for mode in ("exhausted", "clamps-timeout"):
+    for mode in ("exhausted", "clamps-timeout", "boundary", "unclamped-timeout"):
         call = partial(budget_case, runner, record, mode)
+        cases.append(("budget-" + mode, call, 0, mode))
+    for mode in ("check-metadata", "check-enumeration", "check-default-budget"):
+        call = partial(budget_check_case, runner, record, mode)
         cases.append(("budget-" + mode, call, 0, mode))
     cases.append(
         ("budget-main", partial(budget_main_case, runner), 0, "budget main returns 1")
