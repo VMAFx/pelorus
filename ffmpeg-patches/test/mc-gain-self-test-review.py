@@ -277,6 +277,24 @@ def record_main_case(
 
 def separation_case(runner: ModuleType, mode: str) -> tuple[int, str]:
     """Pin covariance signs, equality, and each prefix's own net denominator."""
+    if mode == "all-terms":
+        samples = {
+            "passthrough": _tests.sample_triplet(10, 0.1),
+            "sub8": _tests.sample_triplet(13, 0.2),
+            "sub32": _tests.sample_triplet(12, 0.3),
+            "tree8": _tests.sample_triplet(20, 0.4),
+            "tree32": _tests.sample_triplet(15, 0.5),
+        }
+        gap, se_gap = runner.separation(samples)
+        # (0.2/2)² = 0.01; (1.5·0.3/2)² = 0.050625;
+        # (0.4/5)² = 0.0064; (2·0.5/5)² = 0.04;
+        # ((2-1)/5 - (1.5-1)/2)²·0.1² = 0.000025.
+        return expect(
+            math.isclose(gap, 0.5, rel_tol=1e-12)
+            and math.isclose(se_gap, math.sqrt(0.10705), rel_tol=1e-12)
+            and not runner.separated(samples),
+            f"{mode}: gap={gap}, se_gap={se_gap}, accepted={runner.separated(samples)}",
+        )
     rows = {
         "shared-passthrough-edge": (0.5, 2.0, 0.5, 1, 1, 0.75, False),
         "shared-passthrough": (0.5, 2.5, 0.5, 2, 2, 0.5, True),
@@ -451,6 +469,7 @@ def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
         "shared-passthrough",
         "same-side",
         "net32-per-prefix",
+        "all-terms",
     ):
         cases.append(
             ("separation-" + mode, partial(separation_case, runner, mode), 0, mode)

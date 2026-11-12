@@ -477,6 +477,6 @@ def self_test(runner: ModuleType) -> int:
         review = importlib.import_module("mc-gain-self-test-review")
         cases += review.review_cases(runner, record, folder)
         passed = [run_case(*case) for case in cases]
-        assert len(passed) == 125, f"unexpected case count: {len(passed)}"
+        assert len(passed) == 126, f"unexpected case count: {len(passed)}"
         print(f"{sum(passed)}/{len(passed)} cases passed")
         return 0 if all(passed) else 1
