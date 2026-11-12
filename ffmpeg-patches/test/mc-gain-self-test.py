@@ -24,14 +24,16 @@ from unittest.mock import patch
 STUB_FFMPEG = Path(__file__).resolve().with_name("mc-gain-stub-ffmpeg.py")
 
 
-def run_case(name: str, call: Callable, expected: int, fragment: str) -> bool:
-    """Check one canned input against its expected status and message fragment."""
+def run_case(
+    name: str, call: Callable, expected: int, fragment: str, allow_skip: bool = False
+) -> bool:
+    """Check status and fragment, allowing a named skip only with allow_skip permission."""
     try:
         value = call()
         rc, message = value if isinstance(value, tuple) else (0, str(value))
     except (ValueError, OSError, AssertionError, ArithmeticError) as exc:
         rc, message = 1, str(exc)
-    skip = rc == 0 and message.startswith("SKIP: ")
+    skip = allow_skip and rc == 0 and message.startswith("SKIP: ")
     ok = rc == expected and (skip or fragment in message)
     if ok and skip:
         print(f"skip {name}: {message}")
@@ -477,6 +479,6 @@ def self_test(runner: ModuleType) -> int:
         review = importlib.import_module("mc-gain-self-test-review")
         cases += review.review_cases(runner, record, folder)
         passed = [run_case(*case) for case in cases]
-        assert len(passed) == 132, f"unexpected case count: {len(passed)}"
+        assert len(passed) == 134, f"unexpected case count: {len(passed)}"
         print(f"{sum(passed)}/{len(passed)} cases passed")
         return 0 if all(passed) else 1

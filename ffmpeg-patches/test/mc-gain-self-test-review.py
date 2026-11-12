@@ -20,6 +20,9 @@ from unittest.mock import patch
 _tests = importlib.import_module("mc-gain-self-test")
 expect, stub_fixture = _tests.expect, _tests.stub_fixture
 STUB_FFMPEG = _tests.STUB_FFMPEG
+# Windows may refuse unprivileged link creation, so only there may a link case skip.
+LINK_SKIP = os.name == "nt"
+ALIAS_KINDS = (("same", False), ("symlink", LINK_SKIP), ("hardlink", LINK_SKIP))
 
 
 def enumeration_case(runner: ModuleType, record: dict, folder: Path, mode: str) -> str:
@@ -102,7 +105,7 @@ def alias_case(runner: ModuleType, folder: Path, kind: str) -> tuple[int, str]:
     ).read_bytes()
     source.write_bytes(original)
     if kind in ("symlink", "hardlink"):
-        skip = make_link(kind, source, target, allow_skip=os.name == "nt")
+        skip = make_link(kind, source, target, allow_skip=LINK_SKIP)
         if skip is not None:
             return 0, skip
     else:
@@ -134,15 +137,18 @@ def link_error_case(
     return 0, "link created"
 
 
-def skip_output_case(expected: int, rc: int) -> tuple[int, str]:
+def skip_output_case(expected: int, rc: int, allow_skip: bool) -> tuple[int, str]:
     """Accept a named skip only as a successful result the case expects."""
     output = io.StringIO()
+    args = ("canned-skip", partial(tuple, (rc, "SKIP: canned")), expected, "absent")
     with redirect_stdout(output):
-        passed = _tests.run_case(
-            "canned-skip", partial(tuple, (rc, "SKIP: canned")), expected, "absent"
+        passed = (
+            _tests.run_case(*args, allow_skip=True)
+            if allow_skip
+            else _tests.run_case(*args)
         )
     line = output.getvalue()
-    skip = rc == 0 and expected == 0
+    skip = allow_skip and rc == 0 and expected == 0
     return expect(
         passed == skip
         and (
@@ -150,7 +156,20 @@ def skip_output_case(expected: int, rc: int) -> tuple[int, str]:
             if skip
             else line.startswith("FAIL canned-skip:")
         ),
-        "skip output and status",
+        "skip output and status: " + ("permitted" if skip else "refused"),
+    )
+
+
+def unpermitted_stub_case() -> tuple[int, str]:
+    """Refuse a stub skip that arrives without explicit skip permission."""
+    output = io.StringIO()
+    with redirect_stdout(output):
+        passed = _tests.run_case(
+            "stub-subgroup", partial(tuple, (0, "SKIP: no guarded device")), 0, "PASS"
+        )
+    return expect(
+        not passed and output.getvalue().startswith("FAIL stub-subgroup:"),
+        "unpermitted skip refused",
     )
 
 
@@ -174,7 +193,7 @@ def alias_link_error_case(
     message = "injected link failure"
     expected = (
         (0, f"SKIP: {kind} creation not supported: {message}")
-        if os.name == "nt"
+        if LINK_SKIP
         else (1, message)
     )
     with (
@@ -202,9 +221,17 @@ def link_skip_cases(runner: ModuleType, folder: Path) -> list[tuple]:
             )
     call = partial(link_error_case, folder, "symlink", True, ValueError)
     cases.append(("link-value-error", call, 1, "injected link failure"))
-    for expected, rc in ((0, 0), (1, 0), (77, 77)):
-        call = partial(skip_output_case, expected, rc)
-        cases.append((f"skip-output-{expected}", call, 0, "skip output and status"))
+    for name, expected, rc, allow_skip, path in (
+        ("skip-output-0", 0, 0, True, "permitted"),
+        ("skip-output-1", 1, 0, True, "refused"),
+        ("skip-output-77", 77, 77, True, "refused"),
+        ("skip-output-0-unpermitted", 0, 0, False, "refused"),
+    ):
+        call = partial(skip_output_case, expected, rc, allow_skip)
+        cases.append((name, call, 0, "skip output and status: " + path))
+    cases.append(
+        ("skip-unpermitted-stub", unpermitted_stub_case, 0, "unpermitted skip refused")
+    )
     call = partial(alias_skip_case, runner, folder)
     cases.append(("alias-skip-before-shader", call, 0, "alias skip before shader"))
     for kind in ("symlink", "hardlink"):
@@ -488,9 +515,9 @@ def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
         ("cap", 1, "cap 8"),
     ):
         cases.append(("enumeration-" + mode, partial(enumeration, mode), rc, msg))
-    for kind in ("same", "symlink", "hardlink"):
+    for kind, allow_skip in ALIAS_KINDS:
         call = partial(alias_case, runner, folder, kind)
-        cases.append(("alias-" + kind, call, 0, "bytes unchanged"))
+        cases.append(("alias-" + kind, call, 0, "bytes unchanged", allow_skip))
     for mode in ("matching", "stale", "unknown"):
         call = partial(driver_case, runner, record, folder, mode)
         cases.append(("driver-" + mode, call, 0, mode))
