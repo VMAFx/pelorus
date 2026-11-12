@@ -113,6 +113,7 @@ def invalid_mutations() -> tuple[tuple[str, Callable, str], ...]:
         ("runs-four", lambda b: d(b).update(runs=4), "invalid runs"),
         ("bsize-seven", lambda b: w(b).update(reduction_bsize=7), bounds),
         ("bsize-16", lambda b: w(b).update(reduction_bsize=16), bounds),
+        ("fetch-bsize-16", lambda b: w(b).update(fetch_bsize=16), bounds),
         ("bsize-33", lambda b: w(b).update(fetch_bsize=33), bounds),
         ("rate-zero", lambda b: w(b).update(rate=0), bounds),
         ("frames-zero", lambda b: w(b).update(frames=0), bounds),
@@ -314,15 +315,19 @@ def measurement_case(
 
 
 def record_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
-    """Validate emitted lines and reject uncertainty or rounded ratio collapse."""
+    """Validate emitted lines and reject schema drift, noise, or rounded collapse."""
     entry, workload = record["devices"][0], record["workload"]
     device = runner.Device(0, entry["name"], entry["device_id"])
     ratios = {
         "emit": [(3.1145038167938934, 0), (5.8102189781021885, 0)],
         "noise": [(3, 0.6), (4.5, 0.8)],
         "collapse": [(3.0001, 0), (3.0002, 0)],
+        "schema": [(3, 0), (5, 0)],
         "empty": [],
     }
+    schema = runner.entry_schema("devices")
+    if mode == "schema":
+        schema["required"] = str
     output, errors = io.StringIO(), io.StringIO()
     devices = [] if mode == "empty" else [device]
     with (
@@ -330,6 +335,7 @@ def record_case(runner: ModuleType, record: dict, mode: str) -> tuple[int, str]:
         patch.object(runner, "enumerate_devices", return_value=devices),
         patch.object(runner, "measure", return_value={}),
         patch.object(runner, "ratio", side_effect=ratios[mode]),
+        patch.object(runner, "entry_schema", return_value=schema),
         patch.object(runner.time, "strftime", return_value="2026-11-12"),
         redirect_stdout(output),
         redirect_stderr(errors),
@@ -367,7 +373,7 @@ def regression_cases(runner: ModuleType, record: dict, folder: Path) -> list[tup
         ("alternating-rounds", partial(measured, True), "alternating"),
     )
     cases = [(n, call, 0, msg) for n, call, msg in rows]
-    for mode in ("emit", "noise", "collapse", "empty"):
+    for mode in ("emit", "noise", "collapse", "schema", "empty"):
         call = partial(record_case, runner, record, mode)
         msg = "record-line-exact" if mode == "emit" else mode
         cases.append(("record-" + mode, call, 0, msg))
@@ -386,10 +392,16 @@ def regression_cases(runner: ModuleType, record: dict, folder: Path) -> list[tup
 def enumeration_case(runner: ModuleType, record: dict, folder: Path, mode: str) -> str:
     """Exercise explicit end markers, failed probes, and the enumeration cap."""
     entry = record["devices"][0]
+    line = f"Device 0 selected: {entry['name']} (discrete) ({entry['device_id']})"
     knobs = {
         "failed": dict(probe_index=1, probe_rc=1, probe_output="initialization failed"),
         "blank": dict(probe_rc=0, probe_output="unrelated output"),
         "none": dict(probe_rc=1, probe_output="No devices found: unavailable!"),
+        "none-later": dict(probe_index=1, probe_output="No devices found"),
+        "failed-valid": dict(
+            probe_index=1, probe_rc=1, probe_output=line.replace("Device 0", "Device 1")
+        ),
+        "wrong-index": dict(probe_index=1, probe_output=line),
     }
     names = [entry] * (7 if mode == "seven" else 8 if mode == "cap" else 2)
     _, env = stub_fixture(runner, folder, names, 3, probe=knobs.get(mode))
@@ -491,6 +503,9 @@ def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
         ("blank", 1, "device enumeration failed"),
         ("timeout", 1, "device enumeration failed"),
         ("none", 0, "0"),
+        ("none-later", 1, "device enumeration failed"),
+        ("failed-valid", 1, "device enumeration failed"),
+        ("wrong-index", 1, "device enumeration failed"),
         ("seven", 0, "7"),
         ("cap", 1, "cap 8"),
     ):
@@ -546,6 +561,6 @@ def self_test(runner: ModuleType) -> int:
         cases += regression_cases(runner, record, folder)
         cases += review_cases(runner, record, folder)
         passed = [run_case(*case) for case in cases]
-        assert len(passed) == 91, f"unexpected case count: {len(passed)}"
+        assert len(passed) == 96, f"unexpected case count: {len(passed)}"
         print(f"{sum(passed)}/{len(passed)} cases passed")
         return 0 if all(passed) else 1

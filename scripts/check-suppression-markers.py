@@ -551,11 +551,27 @@ def formatter_self_test(local_ids: frozenset[str]) -> list[str]:
 def nonpython_self_test() -> list[str]:
     """Refuse each planted marker shape in shell and C sources."""
     plants = (
-        ("planted.sh", "run x  # nosemgrep: python.lang.a.b - why\n", "marker in a shell file"),
-        ("planted.c", "// explanation nosemgrep: rule.id - reason\n", "late marker in a C comment"),
-        ("planted.c", "call(); // reviewed nosemgrep\n", "bare late marker in a C comment"),
+        (
+            "planted.sh",
+            "run x  # nosemgrep: python.lang.a.b - why\n",
+            "marker in a shell file",
+        ),
+        (
+            "planted.c",
+            "// explanation nosemgrep: rule.id - reason\n",
+            "late marker in a C comment",
+        ),
+        (
+            "planted.c",
+            "call(); // reviewed nosemgrep\n",
+            "bare late marker in a C comment",
+        ),
         ("planted.c", "call(); // reviewed nosec\n", "bare late nosec in a C comment"),
-        ("planted.c", "/* late bare nosemgrep */\n", "late bare nosemgrep in a C block comment"),
+        (
+            "planted.c",
+            "/* late bare nosemgrep */\n",
+            "late bare nosemgrep in a C block comment",
+        ),
         ("planted.c", "// late bare nosem\n", "late bare nosem in a C comment"),
         (
             "planted.c",
@@ -580,7 +596,9 @@ def wiring_failures(source: str) -> list[str]:
     the function count, so a helper reached through another helper counts.
     """
     tree = ast.parse(source)
-    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    functions = {
+        node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+    }
     worklist = ["self_test"] if "self_test" in functions else []
     reached = set(worklist)
     for _ in range(len(functions)):
@@ -595,7 +613,11 @@ def wiring_failures(source: str) -> list[str]:
         reached.update(pending)
         worklist.extend(pending)
     helpers = sorted(name for name in functions if name.endswith("_self_test"))
-    return [f"{name} not reachable from self_test" for name in helpers if name not in reached]
+    return [
+        f"{name} not reachable from self_test"
+        for name in helpers
+        if name not in reached
+    ]
 
 
 def wiring_self_test() -> list[str]:
