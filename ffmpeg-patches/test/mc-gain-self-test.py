@@ -27,7 +27,7 @@ def run_case(name: str, call: Callable, expected: int, fragment: str) -> bool:
     try:
         value = call()
         rc, message = value if type(value) is tuple else (0, str(value))
-    except (ValueError, OSError, AssertionError) as exc:
+    except (ValueError, OSError, AssertionError, ArithmeticError) as exc:
         rc, message = 1, str(exc)
     ok = rc == expected and fragment in message
     print(
@@ -59,6 +59,7 @@ def canned_cases(runner: ModuleType, record: dict) -> list[tuple]:
         ("stale-range-pass", 1.5, 0, 0, "PASS"),
         ("stale-just-below", 1 - 1e-9, 0, 77, "stale record:"),
         ("stale-low", 0.9, 0, 77, "stale record:"),
+        ("stale-before-noisy", 0.5, 3.0, 77, "stale record:"),
     )
     cases = [
         (n, partial(runner.decide, r, se, entry), rc, msg)
@@ -74,6 +75,7 @@ def canned_cases(runner: ModuleType, record: dict) -> list[tuple]:
     checks = (
         ("stats-outlier", runner.stats([1, 2, 3, 4, 100]) == values),
         ("overall-inconclusive-last", runner.summarize(mixed) == expected),
+        ("separation-2-se", not runner.separated(3.0, 0.0, 4.0, 0.5)),
     )
     cases += [(n, partial(expect, ok, n), 0, n) for n, ok in checks]
     nonpositive = dict(samples, sub8=[9.0] * 5)
@@ -88,37 +90,69 @@ def canned_cases(runner: ModuleType, record: dict) -> list[tuple]:
     cases.append(("ratio-orientation", partial(runner.judge, samples, entry), 1, "R=5"))
     call = partial(runner.judge, nonpositive, entry)
     cases.append(("non-positive", call, 77, "non-positive net time"))
+    for arm in ("sub8", "sub32"):
+        call = partial(runner.judge, dict(samples, **{arm: [10.0] * 5}), entry)
+        cases.append((f"zero-net-{arm}", call, 77, "non-positive net time"))
     return cases
+
+
+def invalid_mutations() -> tuple[tuple[str, Callable, str], ...]:
+    """Describe independent invalid records and their required diagnostics."""
+    return (
+        ("missing-key", lambda b: b.pop("workload"), "missing or extra key"),
+        ("extra-key", lambda b: b.update(extra=True), "missing or extra key"),
+        (
+            "bad-ratio",
+            lambda b: b["devices"][0].update(
+                ratio_tree=b["devices"][0]["ratio_subgroup"]
+            ),
+            "ratio_tree must exceed positive ratio_subgroup",
+        ),
+        ("bad-id", lambda b: b["devices"][0].update(device_id="2684"), "bad device_id"),
+        ("runs-four", lambda b: b["devices"][0].update(runs=4), "invalid runs"),
+        (
+            "no-issue",
+            lambda b: b["unguarded"][0].update(reason="slower"),
+            "unguarded reason must name #N",
+        ),
+        (
+            "duplicate",
+            lambda b: b["devices"].append(b["devices"][0]),
+            "duplicate device",
+        ),
+        (
+            "duplicate-id-case",
+            lambda b: b["devices"].extend(
+                dict(b["devices"][0], device_id=i) for i in ("0x13c0", "0x13C0")
+            ),
+            "duplicate device",
+        ),
+        (
+            "equal-workload-bsize",
+            lambda b: b["workload"].update(
+                reduction_bsize=b["workload"]["fetch_bsize"]
+            ),
+            "invalid workload bounds",
+        ),
+        (
+            "date-nonpadded",
+            lambda b: b["devices"][0].update(measured="2026-1-12"),
+            "",
+        ),
+        (
+            "date-basic",
+            lambda b: b["devices"][0].update(measured="20260112"),
+            "invalid runs or measured date",
+        ),
+    )
 
 
 def invalid_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
     """Exercise record rejection through the path-bearing loader diagnostic."""
-    changes = (
-        ("missing-key", "missing or extra key"),
-        ("extra-key", "missing or extra key"),
-        ("bad-ratio", "ratio_tree must exceed positive ratio_subgroup"),
-        ("bad-id", "bad device_id"),
-        ("runs-four", "invalid runs"),
-        ("no-issue", "unguarded reason must name #N"),
-        ("duplicate", "duplicate device"),
-    )
     cases = []
-    for name, fragment in changes:
+    for name, mutate, fragment in invalid_mutations():
         bad = json.loads(json.dumps(record))
-        if name == "missing-key":
-            bad.pop("workload")
-        elif name == "extra-key":
-            bad["extra"] = True
-        elif name == "bad-ratio":
-            bad["devices"][0]["ratio_tree"] = bad["devices"][0]["ratio_subgroup"]
-        elif name == "bad-id":
-            bad["devices"][0]["device_id"] = "2684"
-        elif name == "runs-four":
-            bad["devices"][0]["runs"] = 4
-        elif name == "no-issue":
-            bad["unguarded"][0]["reason"] = "slower"
-        else:
-            bad["devices"].append(bad["devices"][0])
+        mutate(bad)
         path = folder / (name + ".json")
         path.write_text(json.dumps(bad), encoding="utf-8")
         cases.append(
@@ -168,6 +202,18 @@ def stub_case(
         "enumeration continued past index error"
     )
     return result
+
+
+def id_case(
+    runner: ModuleType, folder: Path, record: dict, uppercase_record: bool
+) -> tuple[int, str]:
+    """Match opposite-case record and printed PCI identifiers through measurement."""
+    lower, upper = "0x13c0", "0x13C0"
+    entry = dict(record["devices"][0], device_id=upper if uppercase_record else lower)
+    printed = [dict(entry, device_id=lower if uppercase_record else upper)]
+    return stub_case(
+        runner, folder, dict(record, devices=[entry]), printed, entry["ratio_subgroup"]
+    )
 
 
 def shader_case(runner: ModuleType, folder: Path) -> tuple[int, str]:
@@ -290,6 +336,18 @@ def regression_cases(runner: ModuleType, record: dict, folder: Path) -> list[tup
     cases = [
         ("ratio-error-exact", partial(ratio_case, runner), 0, "ratio-error-exact"),
         (
+            "record-id-uppercase",
+            partial(id_case, runner, folder, record, True),
+            0,
+            "PASS",
+        ),
+        (
+            "printed-id-uppercase",
+            partial(id_case, runner, folder, record, False),
+            0,
+            "PASS",
+        ),
+        (
             "warmup-discarded",
             partial(measurement_case, runner, record, folder, False),
             0,
@@ -361,6 +419,6 @@ def self_test(runner: ModuleType) -> int:
         cases.append(("tree-refused", call, 1, "no subgroupAdd("))
         cases += regression_cases(runner, record, folder)
         passed = [run_case(*case) for case in cases]
-        assert len(passed) == 47, f"unexpected case count: {len(passed)}"
+        assert len(passed) == 57, f"unexpected case count: {len(passed)}"
         print(f"{sum(passed)}/{len(passed)} cases passed")
         return 0 if all(passed) else 1

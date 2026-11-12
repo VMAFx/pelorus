@@ -525,6 +525,7 @@ def formatter_self_test(local_ids: frozenset[str]) -> list[str]:
     plants = (
         ("inline", "x = 1  # fmt: skip\n"),
         ("pair", "# fmt: off\nx = 1\n# fmt: on\n"),
+        ("fmt on", "# fmt: on\nx = 1\n"),
         ("yapf", "# yapf: disable\nx = 1\n"),
         ("compact", "x = 1  #fmt:skip\n"),
         ("uppercase", "x = 1  # FMT: SKIP\n"),
