@@ -222,6 +222,10 @@ GO_RENOVATE_TEMPLATES = {
     "datasourceTemplate": "golang-version",
 }
 RELEASE_TAG = re.compile(r"(?<![A-Za-z0-9_])n\d+\.\d+\.\d+(?![A-Za-z0-9_])")
+GLOBAL_LIBPELORUS_LINK = re.compile(
+    r"\badd_extralibs(?:\s|\\\r?\n)+(?P<quote>['\"]?)"
+    r"\$(?:libpelorus_extralibs\b|\{libpelorus_extralibs\})(?P=quote)"
+)
 FORMAT_PATCH_CONFIG = (
     "format.mboxrd=false",
     "format.pretty=medium",
@@ -408,11 +412,15 @@ def validate_guidance_text(
         "spirv_library",
         "filter's inline GLSL",
         "mirrored inline",
-        "add_extralibs $libpelorus_extralibs",
     )
+    collapsed = " ".join(source.split())
     for token in forbidden:
-        if token in source:
+        if token in collapsed:
             errors.append(f"{relative}: contains obsolete guidance {token}")
+    if GLOBAL_LIBPELORUS_LINK.search(source):
+        errors.append(
+            f"{relative}: contains obsolete guidance add_extralibs $libpelorus_extralibs"
+        )
     if require_command and "FFMPEG_REPO=/absolute/path" not in source:
         errors.append(f"{relative}: missing explicit FFMPEG_REPO command")
     if require_link and '_filter_extralibs="libpelorus_extralibs"' not in source:
@@ -933,12 +941,21 @@ def _consumer_generator_packaging_regressions(source: str) -> list[str]:
     ):
         failures.append("consumer regression: missing libpelorus probe was accepted")
 
-    global_extralibs = source + "\nadd_extralibs $libpelorus_extralibs\n"
-    if not any(
-        "must not add libpelorus to global executable extralibs" in error
-        for error in validate_generator_text(global_extralibs)
+    for name, link in (
+        ("single-line", "add_extralibs $libpelorus_extralibs"),
+        ("shell continuation", "add_extralibs \\\n    $libpelorus_extralibs"),
+        ("two spaces", "add_extralibs  $libpelorus_extralibs"),
+        ("double-quoted", 'add_extralibs "$libpelorus_extralibs"'),
+        ("braced", "add_extralibs ${libpelorus_extralibs}"),
     ):
-        failures.append("consumer regression: global libpelorus link was accepted")
+        global_extralibs = source + f"\n{link}\n"
+        if not any(
+            "must not add libpelorus to global executable extralibs" in error
+            for error in validate_generator_text(global_extralibs)
+        ):
+            failures.append(
+                f"consumer regression: global libpelorus link {name} was accepted"
+            )
 
     unknown_filter_dep = source.replace(
         'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"',
@@ -1225,6 +1242,14 @@ def surface_validator_regressions() -> list[str]:
         )
     ):
         return ["surface regression: retired shader dependency was accepted"]
+    wrapped = skill + "\nthe filter's\ninline GLSL\n"
+    if not any(
+        "contains obsolete guidance filter's inline GLSL" in error
+        for error in validate_guidance_text(
+            path.relative_to(ROOT).as_posix(), wrapped, True
+        )
+    ):
+        return ["surface regression: wrapped inline GLSL guidance was accepted"]
     return link_guidance_validator_regressions()
 
 
@@ -1280,12 +1305,25 @@ def _link_guidance_path_regressions(path: Path) -> list[str]:
     """Exercise retired, missing, and current per-filter links in one file."""
     relative = path.relative_to(ROOT).as_posix()
     skill = path.read_text(encoding="utf-8")
-    retired = skill + "\n`... pel_blob_pack && add_extralibs $libpelorus_extralibs`\n"
-    if not any(
-        "contains obsolete guidance add_extralibs $libpelorus_extralibs" in error
-        for error in validate_guidance_text(relative, retired, False, require_link=True)
+    for name, link in (
+        ("single-line", "add_extralibs $libpelorus_extralibs"),
+        ("Markdown wrap", "add_extralibs\n   $libpelorus_extralibs"),
+        ("two spaces", "add_extralibs  $libpelorus_extralibs"),
+        ("tab", "add_extralibs\t$libpelorus_extralibs"),
+        ("double-quoted", 'add_extralibs "$libpelorus_extralibs"'),
+        ("single-quoted", "add_extralibs '$libpelorus_extralibs'"),
+        ("braced", "add_extralibs ${libpelorus_extralibs}"),
     ):
-        return [f"surface regression: global libpelorus link was accepted: {relative}"]
+        retired = skill + f"\n`... pel_blob_pack && {link}`\n"
+        if not any(
+            "contains obsolete guidance add_extralibs $libpelorus_extralibs" in error
+            for error in validate_guidance_text(
+                relative, retired, False, require_link=True
+            )
+        ):
+            return [
+                f"surface regression: global libpelorus link {name} was accepted: {relative}"
+            ]
     missing = skill.replace(
         '_filter_extralibs="libpelorus_extralibs"',
         '_filter_extralibs="other_extralibs"',
@@ -2463,7 +2501,7 @@ def validate_generator_text(generator: str) -> list[str]:
             "ffmpeg-patches/generate.sh: synthetic commits must disable signing "
             "and hooks"
         )
-    if "add_extralibs $libpelorus_extralibs" in generator:
+    if GLOBAL_LIBPELORUS_LINK.search(generator):
         errors.append(
             "ffmpeg-patches/generate.sh: must not add libpelorus to global "
             "executable extralibs"
