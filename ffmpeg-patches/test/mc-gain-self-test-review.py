@@ -29,8 +29,18 @@ def enumeration_case(runner: ModuleType, record: dict, folder: Path, mode: str) 
     knobs = {
         "failed": dict(probe_index=1, probe_rc=1, probe_output="initialization failed"),
         "blank": dict(probe_rc=0, probe_output="unrelated output"),
-        "none": dict(probe_rc=1, probe_output="No devices found: unavailable!"),
-        "none-later": dict(probe_index=1, probe_output="No devices found"),
+        "none": dict(probe_rc=1, probe_output="No devices found: VK_SUCCESS!"),
+        "none-later": dict(probe_index=1, probe_output="No devices found: VK_SUCCESS!"),
+        "none-error": dict(
+            probe_rc=1,
+            probe_output=(
+                "[Vulkan @ 0x55] No devices found: VK_ERROR_INITIALIZATION_FAILED!\n"
+                "Device creation failed: -19."
+            ),
+        ),
+        "none-oom": dict(
+            probe_rc=1, probe_output="No devices found: VK_ERROR_OUT_OF_HOST_MEMORY!"
+        ),
         "no-driver": dict(
             probe_rc=1,
             probe_output=(
@@ -466,6 +476,8 @@ def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
         ("timeout", 1, "device enumeration failed"),
         ("none", 0, "0"),
         ("none-later", 1, "device enumeration failed"),
+        ("none-error", 1, "device enumeration failed"),
+        ("none-oom", 1, "device enumeration failed"),
         ("no-driver", 0, "0"),
         ("no-loader", 0, "0"),
         ("no-driver-later", 1, "device enumeration failed"),

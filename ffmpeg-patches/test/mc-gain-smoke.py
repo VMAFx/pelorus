@@ -46,7 +46,7 @@ PROBE_TIMEOUT_S, RUN_TIMEOUT_S = 60, 120
 RUN_BUDGET_S = 540
 MAX_DEVICES = 8
 NO_DEVICE_MARKERS = (
-    "No devices found",
+    "No devices found: VK_SUCCESS!",
     "Instance creation failure: VK_ERROR_INCOMPATIBLE_DRIVER",
     "Unable to open the libvulkan library!",
 )
