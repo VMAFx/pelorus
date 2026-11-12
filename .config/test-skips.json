@@ -60,6 +60,11 @@
     "issue": "the semgrep CI job runs this script in the pinned semgrep container, where exit 77 fails the step; build lanes without semgrep on PATH skip it"
   },
   {
+    "test": "pelorus:semgrep-strict-reader-fixture",
+    "reason": "SKIP: semgrep not found",
+    "issue": "#458: the semgrep CI job runs this script in the pinned semgrep container, where exit 77 fails the step; build lanes without semgrep on PATH skip it"
+  },
+  {
     "test": "pelorus:semgrep-io-unpack-deadline",
     "reason": "SKIP: semgrep not found",
     "issue": "the semgrep CI job runs this script in the pinned semgrep container, where exit 77 fails the step; build lanes without semgrep on PATH skip it"

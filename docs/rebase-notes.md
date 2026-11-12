@@ -140,6 +140,12 @@ retired).
   `scripts/check-vulkan-buffer-domain.py` (fast test `vulkan-buffer-domain`)
   refuses a storage buffer without it. A pure `TRANSFER_SRC` staging buffer
   may stay host-only.
+  The same check refuses element-wise host reads of `mapped_mem`, allowing
+  bulk copies and documented write-only uses
+  ([ADR-0255](adr/0255-mapped-memory-host-reads.md)); recheck sink argument
+  positions and the three expiring #596 exceptions after a rebase.
+  Destination bulk calls must remain standalone statements; alias declarations
+  need allow-listed types and every alias store must start a statement.
 - **Re-test after rebase**: `meson test --suite=fast` (`vulkan-buffer-domain`).
   Then confirm that `ff_vk_get_pooled_buffer()` and `ff_vk_create_buf()` keep
   their argument order in `libavutil/vulkan.h`, since the checker reads

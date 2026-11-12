@@ -4,7 +4,7 @@
 """Check that all tracked test-semgrep-*.py scripts use scripts/semgrep_harness.py.
 
 Enforces shared harness use, a nonempty tracked test list, and literal hermetic
-flags: False for ROOT/REPO_ROOT scans, True for planted trees.
+flags: False for ROOT, REPO_ROOT or repo_root scans, True for planted trees.
 """
 
 from __future__ import annotations
@@ -27,6 +27,8 @@ BANNED_MODULE_DEFS = frozenset({
     "resolve_executable",
     "ScanError",
 })
+# Names a test gives the repository tree; every other scan target is planted.
+REAL_TREE_NAMES = frozenset({"ROOT", "REPO_ROOT", "repo_root"})
 
 
 def loads_harness(tree: ast.AST) -> bool:
@@ -56,13 +58,13 @@ def check_hermetic_calls(tree: ast.AST, display_path: str) -> list[str]:
             continue
         keywords = {keyword.arg: keyword.value for keyword in node.keywords}
         target = node.args[1] if len(node.args) > 1 else keywords.get("target_dir")
-        real_tree = isinstance(target, ast.Name) and target.id in {"ROOT", "REPO_ROOT"}
+        real_tree = isinstance(target, ast.Name) and target.id in REAL_TREE_NAMES
         expected = not real_tree
         hermetic = keywords.get("hermetic")
         if not isinstance(hermetic, ast.Constant) or hermetic.value is not expected:
             violations.append(
                 f"{display_path}:{node.lineno}: run_semgrep must pass hermetic={expected} "
-                f"for {'ROOT/REPO_ROOT' if real_tree else 'a planted-tree target'}"
+                f"for {'ROOT/REPO_ROOT/repo_root' if real_tree else 'a planted-tree target'}"
             )
     return violations
 
@@ -139,6 +141,10 @@ def self_test_cases() -> list[tuple[str, str, str | None]]:
         ("p12", harness + planted.replace("tree,", "ROOT,").replace("False", "True"),
          "must pass hermetic=False"),
         ("p13", harness + planted.replace("False", "1"), "must pass hermetic=True"),
+        ("p14", harness + planted.replace("tree,", "repo_root,"), None),
+        ("p15", harness + planted.replace("tree,", "repo_root,").replace("False", "True"),
+         "must pass hermetic=False"),
+        ("p16", harness + planted.replace("tree,", "root,"), "must pass hermetic=True"),
     ]
 
 

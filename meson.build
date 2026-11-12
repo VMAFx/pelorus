@@ -303,7 +303,8 @@ test('vulkan-storage-domain',
 
 # ADR-0222 (#109): a storage buffer the shader reads must be device-local, or a
 # discrete GPU reads it over PCIe during the dispatch. --self-test plants a
-# host-only storage buffer per source shape and requires a refusal.
+# host-only storage buffer per source shape and requires a refusal. ADR-0255
+# also refuses element-wise mapped-memory host reads, allowing bulk copies and writes.
 test('vulkan-buffer-domain',
      python_prog,
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-vulkan-buffer-domain.py',
@@ -1166,6 +1167,14 @@ endif
 # (CI runs 41645525072 and 42050155443). Source-only self-tests run there;
 # the Linux jobs exercise git-dependent harnesses on every PR.
 if build_machine.system() != 'windows'
+  # Strict-reader fixtures must use bytes to preserve LF on Windows (ADR-0255).
+  # The real-tree scan calls git via Semgrep, so use the Linux harness lane.
+  test('semgrep-strict-reader-fixture',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'test-semgrep-strict-reader-fixture.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
   test('semgrep-chmod-mode',
        python_prog,
        args: [meson.project_source_root() / 'scripts' / 'test-semgrep-chmod-mode.py'],
