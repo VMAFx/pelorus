@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "workload": {
+    "source": "testsrc2",
+    "size": "1280x720",
+    "rate": 30,
+    "frames": 64,
+    "reduction_bsize": 8,
+    "fetch_bsize": 32
+  },
+  "devices": [
+    {
+      "name": "RTX 4090",
+      "device_id": "0x2684",
+      "driver": "NVIDIA 620.70.06",
+      "measured": "2026-11-12",
+      "runs": 11,
+      "ratio_subgroup": 3.339,
+      "ratio_tree": 5.526
+    },
+    {
+      "name": "AMD Ryzen 9 9950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO)",
+      "device_id": "0x13c0",
+      "driver": "radv Mesa 26.2.6",
+      "measured": "2026-11-12",
+      "runs": 11,
+      "ratio_subgroup": 11.395,
+      "ratio_tree": 12.679
+    }
+  ],
+  "unguarded": [
+    {
+      "name": "Intel(R) Arc(tm) A380 Graphics (DG2)",
+      "device_id": "0x56a5",
+      "reason": "subgroup reduction slower than the barrier tree (#602)"
+    }
+  ]
+}

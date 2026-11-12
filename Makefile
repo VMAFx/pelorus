@@ -74,6 +74,7 @@ docs-check:
 	python3 -I scripts/check-ci-test-wiring.py
 	python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --self-test
 	python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --check-doc
+	python3 -I ffmpeg-patches/test/mc-gain-smoke.py --self-test
 	python3 -I scripts/check-filter-stance.py --self-test
 	python3 -I scripts/check-filter-stance.py
 	python3 -I scripts/check-filter-knob-contracts.py --self-test

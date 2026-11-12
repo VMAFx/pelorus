@@ -845,10 +845,15 @@ win. **Measured, the picture is narrower than that headline:**
   *compute* does not reduce the fetch-bound cost that dominates mc/denoise; it
   only risks precision. Not pursued without a fetch-bound-removing change first.
 
-The gain is guarded by the mechanism, not by wall time: the fast-suite check
+The gain is guarded by the mechanism (#548) and, on recorded devices, by wall
+time: `ffmpeg-patches/test/mc-gain-smoke.py`
+([ADR-0256](../adr/0256-mc-sad-gain-wall-time-threshold.md)). The static check
 `scripts/check-mc-sad-reduction.py` refuses a `block_sad` without exactly one
 `subgroupAdd`, with more than two `barrier()` calls or with a stride-halving loop,
-and requires `OpGroupNonUniformFAdd` in the compiled SPIR-V. CI has no GPU runner,
+and requires `OpGroupNonUniformFAdd` in the compiled SPIR-V. The wall-time check
+compares the passthrough-subtracted bsize=8 / bsize=32 ratio with the recorded
+subgroup/tree midpoint. Arc A380 (ANV) inverts the gain and remains unguarded
+under #602. CI has no GPU runner,
 so the 0.765 → 0.727 s figure stays a dated RTX 4090 record.
 
 Honest verdict: the subgroup reduction is a small, real, validated win on the

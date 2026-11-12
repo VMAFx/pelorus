@@ -166,4 +166,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0251](0251-changelog-render-owed-on-pull-requests.md) | Pull requests fail while the default branch owes a changelog render for more than 20 h | Accepted |
 | [0252](0252-scheduled-changelog-render-pull-request.md) | A scheduled workflow opens the changelog render pull request as a signed bot commit | Accepted |
 | [0255](0255-mapped-memory-host-reads.md) | Copy mapped device memory before element-wise host reads | Accepted |
-| [0256](0256-mc-sad-gain-wall-time-threshold.md) | Guard the mc subgroup SAD gain with an in-binary wall-time ratio | Proposed |
+| [0256](0256-mc-sad-gain-wall-time-threshold.md) | Guard the mc subgroup SAD gain with an in-binary wall-time ratio | Accepted |
