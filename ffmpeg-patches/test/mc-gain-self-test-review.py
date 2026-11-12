@@ -31,6 +31,30 @@ def enumeration_case(runner: ModuleType, record: dict, folder: Path, mode: str) 
         "blank": dict(probe_rc=0, probe_output="unrelated output"),
         "none": dict(probe_rc=1, probe_output="No devices found: unavailable!"),
         "none-later": dict(probe_index=1, probe_output="No devices found"),
+        "no-driver": dict(
+            probe_rc=1,
+            probe_output=(
+                "[Vulkan @ 0x55] Instance creation failure: VK_ERROR_INCOMPATIBLE_DRIVER\n"
+                "Device creation failed: -542398533.\n"
+                "Failed to set value 'vulkan=vk:0' for option 'init_hw_device': "
+                "Generic error in an external library"
+            ),
+        ),
+        "no-loader": dict(
+            probe_rc=1,
+            probe_output=(
+                "Unable to open the libvulkan library!\nDevice creation failed: -1."
+            ),
+        ),
+        "no-driver-later": dict(
+            probe_index=1,
+            probe_rc=1,
+            probe_output="Instance creation failure: VK_ERROR_INCOMPATIBLE_DRIVER",
+        ),
+        "instance-other": dict(
+            probe_rc=1,
+            probe_output="Instance creation failure: VK_ERROR_OUT_OF_HOST_MEMORY",
+        ),
         "failed-valid": dict(
             probe_index=1, probe_rc=1, probe_output=line.replace("Device 0", "Device 1")
         ),
@@ -442,6 +466,10 @@ def review_cases(runner: ModuleType, record: dict, folder: Path) -> list[tuple]:
         ("timeout", 1, "device enumeration failed"),
         ("none", 0, "0"),
         ("none-later", 1, "device enumeration failed"),
+        ("no-driver", 0, "0"),
+        ("no-loader", 0, "0"),
+        ("no-driver-later", 1, "device enumeration failed"),
+        ("instance-other", 1, "device enumeration failed"),
         ("failed-valid", 1, "device enumeration failed"),
         ("wrong-index", 1, "device enumeration failed"),
         ("seven", 0, "7"),

@@ -605,6 +605,26 @@ if ! "$HERE/named-skip.sh" "mc subgroup gain smoke" "$mc_gain_status" \
     exit 1
 fi
 
+# CI runners have no Vulkan driver. An absent driver file emulates that, so
+# GPU host replays cover the path too; only the named skip passes (ADR-0256).
+echo "== mc subgroup gain without a Vulkan driver =="
+mc_gain_no_driver_status=0
+VK_DRIVER_FILES="$LOG_DIR/absent-vulkan-driver.json" \
+    VK_ICD_FILENAMES="$LOG_DIR/absent-vulkan-driver.json" \
+    FFMPEG_BIN="$FFMPEG_EXE" "$HERE/mc-gain-smoke.py" 2>&1 |
+    tee "$LOG_DIR/mc-gain-no-driver.log" ||
+    mc_gain_no_driver_status=$? # pipefail: the smoke's status, tee exits 0
+if [[ "$mc_gain_no_driver_status" != 77 ]] ||
+    ! "$HERE/named-skip.sh" "mc subgroup gain smoke without a Vulkan driver" \
+        "$mc_gain_no_driver_status" "$LOG_DIR/mc-gain-no-driver.log" \
+        "no guarded device: no Vulkan device"; then
+    echo "ERROR: driverless Vulkan emulation failed; rerun" \
+        "VK_DRIVER_FILES='$LOG_DIR/absent-vulkan-driver.json'" \
+        "VK_ICD_FILENAMES='$LOG_DIR/absent-vulkan-driver.json'" \
+        "FFMPEG_BIN='$FFMPEG_EXE' '$HERE/mc-gain-smoke.py'" >&2
+    exit 1
+fi
+
 # GPU smoke: Vulkan HEVC decode into hevc_vulkan with -force_key_frames, 60
 # runs (issue #309, series patch 0008). Exit 77 names why this host cannot run
 # it; it passes only when KEYFRAME_SMOKE_SKIP names that reason (ADR-0189). A

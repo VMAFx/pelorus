@@ -45,6 +45,11 @@ validate_shader_source = _shader.validate_shader_source
 PROBE_TIMEOUT_S, RUN_TIMEOUT_S = 60, 120
 RUN_BUDGET_S = 540
 MAX_DEVICES = 8
+NO_DEVICE_MARKERS = (
+    "No devices found",
+    "Instance creation failure: VK_ERROR_INCOMPATIBLE_DRIVER",
+    "Unable to open the libvulkan library!",
+)
 DEVICE_RE = re.compile(
     r"Device (\d+) selected: (.+) "
     r"\((?:integrated|discrete|virtual|software|unknown)\) \((0x[0-9a-fA-F]+)\)"
@@ -228,7 +233,7 @@ def enumerate_devices(
         )
         if f"Unable to find device with index {index}!" in result.stdout:
             return devices
-        if index == 0 and "No devices found" in result.stdout:
+        if index == 0 and any(marker in result.stdout for marker in NO_DEVICE_MARKERS):
             return []
         device = parse_device(result.stdout)
         if device is None or result.returncode or device.index != index:
