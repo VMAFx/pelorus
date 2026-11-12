@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD013 MD024 MD033 MD060 -->
-# Research 0606: human-vision leads for the pre-encode filters
+# Research 0607: human-vision leads for the pre-encode filters
 
 **Date:** 2026-11-12
 
