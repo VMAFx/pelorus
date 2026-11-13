@@ -1090,6 +1090,27 @@ if build_machine.system() != 'windows'
        suite: 'fast')
 endif
 
+# The mc subgroup gain uses a per-device wall-time ratio record (ADR-0256).
+# Self-tests use a stub; the hardware smoke skips when FFMPEG_BIN is unset.
+test('mc-gain-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'mc-gain-smoke.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+if build_machine.system() != 'windows'
+  # Check mode owns a 540 s budget, leaving 60 s before this test's timeout.
+  # --timeout-multiplier below 1 can still undercut that margin (ADR-0256).
+  test('mc-gain',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'mc-gain-smoke.py'],
+       workdir: meson.project_source_root(),
+       # GPU wall-time arms must not share the device with other tests.
+       is_parallel: false,
+       timeout: 600,
+       suite: 'fast')
+endif
+
 # The hardware rows of vulkan-format-matrix.sh decode the analyze maps with
 # analyze-maps-check.py; --self-test plants one defect per reader rule and
 # requires each to be rejected.

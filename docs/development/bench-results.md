@@ -845,11 +845,22 @@ win. **Measured, the picture is narrower than that headline:**
   *compute* does not reduce the fetch-bound cost that dominates mc/denoise; it
   only risks precision. Not pursued without a fetch-bound-removing change first.
 
-The gain is guarded by the mechanism, not by wall time: the fast-suite check
+The gain is guarded by the mechanism (#548) and, on recorded devices, by wall
+time: `ffmpeg-patches/test/mc-gain-smoke.py`
+([ADR-0256](../adr/0256-mc-sad-gain-wall-time-threshold.md)). The static check
 `scripts/check-mc-sad-reduction.py` refuses a `block_sad` without exactly one
 `subgroupAdd`, with more than two `barrier()` calls or with a stride-halving loop,
-and requires `OpGroupNonUniformFAdd` in the compiled SPIR-V. CI has no GPU runner,
-so the 0.765 → 0.727 s figure stays a dated RTX 4090 record.
+and requires `OpGroupNonUniformFAdd` in the compiled SPIR-V. The wall-time check
+compares the passthrough-subtracted bsize=8 / bsize=32 ratio with the recorded
+subgroup/tree midpoint. Each entry's `workload_sha256` binds those ratios to
+the record workload; the runner requires exactly bsize=8/32, and a known driver
+mismatch is inconclusive before timing. The runner's `--self-test` verifies
+shared-passthrough uncertainty, explicit enumeration end markers and cap errors,
+and validation of rounded `--make-record` output; no emitted entry returns 1.
+The Meson `mc-gain` test runs serially to protect GPU wall times (`meson.build`).
+Arc A380 (ANV) inverts the gain and remains unguarded
+under #602. CI has no GPU runner, so the 0.765 → 0.727 s figure stays a dated
+RTX 4090 record.
 
 Honest verdict: the subgroup reduction is a small, real, validated win on the
 slowest filter; the broader "free throughput" framing overstated it — the

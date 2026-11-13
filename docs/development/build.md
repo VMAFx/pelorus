@@ -335,8 +335,10 @@ and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke),
 `NVENC_HOP_SMOKE_SKIP` (hop smoke), `KEYFRAME_SMOKE_SKIP` (keyframe smoke),
 `FGS_SMOKE_SKIP` (grain smoke), `GRAIN_SCORE_SMOKE_SKIP` (grain score smoke)
 `GRAIN_SCORE_AV1_SMOKE_SKIP` (grain score AV1 smoke)
-and `DOC_RECIPES_SKIP` (documented zero-copy recipes,
-[ADR-0240](../adr/0240-doc-recipes-run-verbatim.md))
+`DOC_RECIPES_SKIP` (documented zero-copy recipes,
+[ADR-0240](../adr/0240-doc-recipes-run-verbatim.md)) and
+`MC_GAIN_SKIP` (mc subgroup gain check,
+[ADR-0256](../adr/0256-mc-sad-gain-wall-time-threshold.md))
 name the reason each smoke prints, so a GPU host whose driver or device went
 missing cannot pass by accident
 ([ADR-0189](../adr/0189-named-nvenc-smoke-skip.md)). On a machine without an
@@ -349,8 +351,21 @@ NVENC_SMOKE_SKIP="Cannot load libcuda.so.1" \
   FGS_SMOKE_SKIP="no HEVC encoder" \
   GRAIN_SCORE_SMOKE_SKIP="no HEVC decoder" \
   DOC_RECIPES_SKIP="no recipe device: cannot generate input clips" \
+  MC_GAIN_SKIP="no guarded device" \
   FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 ```
+
+The Meson `mc-gain` test runs serially (`meson.build`) to keep other GPU tests
+from distorting its wall-time arms. Its runner requires explicit device-list
+end markers and errors at the eight-index cap. A known driver mismatch returns
+`SKIP: inconclusive` before measurement; the normal `no guarded device` allowance
+does not cover it. Re-record with `--make-record --tree-ffmpeg BIN` after a driver
+or workload change. Replace matching device entries with the emitted lines;
+after a workload change, replace the whole `devices` list because old entries
+are bound to the old workload. Entries include `workload_sha256` and require
+bsize=8/32; the command validates rounded JSON lines and fails if none are emitted
+([ADR-0256](../adr/0256-mc-sad-gain-wall-time-threshold.md),
+`ffmpeg-patches/test/mc-gain-smoke.py --self-test`).
 
 ### Windows replay (MSYS2 UCRT64)
 
@@ -571,8 +586,9 @@ of the statement or expression it answers and name its rules plus a reason:
 `# nosemgrep: <full rule id>[, <id>] - <reason>` and `# nosec <Bxxx> - <reason>`
 ([ADR-0241](../adr/0241-suppression-marker-binding.md)). The fast-suite test
 `suppression-markers` runs `scripts/check-suppression-markers.py --self-test`,
-which refuses a misplaced, bare or reasonless marker and then scans the tree;
-`suppression-markers-self-test` runs the planted cases alone
+which refuses a misplaced, bare or reasonless marker, plus formatter comments
+(`fmt: skip/off/on`, `yapf: disable/enable`, `autopep8: off/on`), then scans the
+tree; `suppression-markers-self-test` runs the planted cases alone
 (`--self-test-only`) on every platform, Windows included. Each Python file is
 read in its declared encoding (PEP 263), and one that does not decode is a
 finding.
