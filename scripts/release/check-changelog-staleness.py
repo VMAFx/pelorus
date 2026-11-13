@@ -631,27 +631,11 @@ def make_test_env(tmp: pathlib.Path) -> dict[str, str]:
 def _fixture_git(
     repo: pathlib.Path,
     env: dict[str, str],
+    subcommand: str,
     *args: str,
 ) -> str:
-    """Run a git command in the fixture repo; wrap failures to RuntimeError."""
-    cmd = ["git", "-C", str(repo), *args]
-    try:
-        proc = subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-            cmd,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=SUBPROCESS_TIMEOUT_S,
-            check=True,
-        )
-        return proc.stdout.strip()
-    except subprocess.CalledProcessError as exc:
-        err = exc.stderr.strip()
-        raise RuntimeError(
-            f"git {' '.join(args)} failed in fixture {repo}: {err}"
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"git {' '.join(args)} timed out in fixture {repo}") from exc
+    """Run git in a fixture repo with an isolated env, delegating to run_git_log."""
+    return run_git_log(repo, list(args), env=env, subcommand=subcommand)
 
 
 def _fixture_render(
