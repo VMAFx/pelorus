@@ -209,6 +209,17 @@ requires bulk copy-out before element-wise host reads
 ([ADR-0255](../adr/0255-mapped-memory-host-reads.md)); GPU wall-time regression
 coverage remains with #167.
 
+Subgroup reduction speed is guarded on recorded devices by
+`ffmpeg-patches/test/mc-gain-smoke.py`
+([ADR-0256](../adr/0256-mc-sad-gain-wall-time-threshold.md)). On Arc A380
+(ANV), the subgroup reduction is slower than the tree (#602). The runner binds
+recorded ratios to the exact bsize=8/32 workload through `workload_sha256` and
+skips a known driver mismatch as inconclusive before timing. Its GPU-free
+`--self-test` covers workload binding, driver checks, explicit enumeration end
+markers, cap errors and covariance-aware ratio uncertainty. `--make-record`
+validates rounded JSON lines before emission and fails if none survive; the
+Meson `mc-gain` test runs serially (`meson.build`).
+
 The earlier mandelbrot pan check, which read about 7 px for a 10 px pan, was
 taken with the 4× predictor error and is superseded by the table above.
 

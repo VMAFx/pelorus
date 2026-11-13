@@ -15,6 +15,8 @@ ADR-0241. A suppression marker in a tracked Python file must:
 
 A bare ``nosemgrep`` suppresses every rule on the line, and the ``nosem``
 alias or a marker word in the middle of a comment is refused as well.
+Formatter comments for fmt (skip/off/on), yapf (disable/enable), and
+autopep8 (off/on) are refused (ADR-0256), including case and spacing variants.
 Markers inside string literals are text, not comments, and do not count.
 A marker in a tracked non-Python, non-Markdown file is refused, since this
 check reads Python only. UTF-16 non-Python files are decoded before scanning.
@@ -43,10 +45,20 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from standards_exceptions import filter_excused, load_entries
+from suppression_selftests import (
+    formatter_self_test,
+    nonpython_self_test,
+    wiring_self_test,
+)
 from tracked_python import is_python, tracked_files
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKER_WORD = re.compile(r"\bnos(?:emgrep|em|ec)\b", re.IGNORECASE)
+FORMATTER = re.compile(
+    r"\b(?:fmt\s*:\s*(?:skip|off|on)|yapf\s*:\s*(?:disable|enable)"
+    r"|autopep8\s*:\s*(?:off|on))\b",
+    re.IGNORECASE,
+)
 RULE_ID = r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*"
 NOSEMGREP = re.compile(rf"^nosemgrep:[ \t]*({RULE_ID}(?:[ \t]*,[ \t]*{RULE_ID})*)[ \t]+-[ \t]+\S")
 NOSEC = re.compile(r"^nosec[ \t]+(B\d{3}(?:[ \t]*,[ \t]*B\d{3})*)[ \t]+-[ \t]+\S")
@@ -136,9 +148,15 @@ def python_findings(name: str, text: str, local_ids: frozenset[str]) -> list[str
     }
     found: list[str] = []
     for tok in tokenize.generate_tokens(io.StringIO(text).readline):
-        if tok.type != tokenize.COMMENT or MARKER_WORD.search(tok.string) is None:
+        if tok.type != tokenize.COMMENT:
             continue
         line = tok.start[0]
+        if FORMATTER.search(tok.string):
+            found.append(
+                f"{name}:{line}: formatter suppression comment refused (ADR-0256)"
+            )
+        if MARKER_WORD.search(tok.string) is None:
+            continue
         problems = comment_findings(tok.string, local_ids)
         if line not in starts:
             problems.insert(0, "marker is not on the start line of a statement or expression")
@@ -520,40 +538,11 @@ def self_test() -> int:
             failures.append(f"planted '{label}' not refused as '{expect}': {got}")
         else:
             print(f"refused as expected ({label}): {got[0]}")
-    if not other_findings("planted.sh", "run x  # nosemgrep: python.lang.a.b - why\n"):
-        failures.append("planted 'marker in a shell file' not refused")
-    else:
-        print("refused as expected (marker in a shell file)")
-    if not other_findings("planted.c", "// explanation nosemgrep: rule.id - reason\n"):
-        failures.append("planted 'late marker in a C comment' not refused")
-    else:
-        print("refused as expected (late marker in a C comment)")
-    if not other_findings("planted.c", "call(); // reviewed nosemgrep\n"):
-        failures.append("planted 'bare late marker in a C comment' not refused")
-    else:
-        print("refused as expected (bare late marker in a C comment)")
-    if not other_findings("planted.c", "call(); // reviewed nosec\n"):
-        failures.append("planted 'bare late nosec in a C comment' not refused")
-    else:
-        print("refused as expected (bare late nosec in a C comment)")
-    if not other_findings("planted.c", "/* late bare nosemgrep */\n"):
-        failures.append("planted 'late bare nosemgrep in a C block comment' not refused")
-    else:
-        print("refused as expected (late bare nosemgrep in a C block comment)")
-    if not other_findings("planted.c", "// late bare nosem\n"):
-        failures.append("planted 'late bare nosem in a C comment' not refused")
-    else:
-        print("refused as expected (late bare nosem in a C comment)")
-    if not other_findings("planted.c", "/* late bare nosemgrep */ do_work();\n"):
-        failures.append("planted 'nosemgrep before code on same line' not refused")
-    else:
-        print("refused as expected (nosemgrep before code on same line)")
-    if not other_findings("planted.c", "// late bare nosem\r\n"):
-        failures.append("planted 'late bare nosem with CRLF' not refused")
-    else:
-        print("refused as expected (late bare nosem with CRLF)")
+    failures.extend(nonpython_self_test(other_findings))
+    failures.extend(formatter_self_test(python_findings, local_ids))
     failures.extend(encoding_self_test(local_ids))
     failures.extend(exceptions_self_test())
+    failures.extend(wiring_self_test(Path(__file__)))
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
     return 1 if failures else 0
