@@ -159,6 +159,74 @@ def test_driver_argv() -> bool:
     return ok
 
 
+def _cleanup_stub_pids(paths: Sequence[pathlib.Path]) -> None:
+    """Kill only recorded fixture pids if a cleanup regression leaves them alive."""
+    for path in paths:
+        pid = _read_pid(path)
+        if pid is not None and pid > 1 and not harness.process_tree.pid_gone(pid):
+            try:
+                os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+            except ProcessLookupError:
+                # Fixture exited between its liveness check and cleanup signal.
+                pass
+
+
+def test_interrupted_compiler_child() -> bool:
+    """A communicate interrupt propagates only after compiler and grandchild stop."""
+    tree = harness.process_tree
+    real_popen = tree.TreePopen
+    old_env = os.environ.get("PELORUS_TEST_GRANDCHILD_PID_FILE")
+    original = KeyboardInterrupt("planted compiler interrupt")
+    seen: list = []
+    with tempfile.TemporaryDirectory(prefix="pelorus-interrupted-child-") as tmp:
+        root = pathlib.Path(tmp)
+        stub, child, grandchild = root / "stub_cc.py", root / "compiler.pid", root / "grandchild.pid"
+        _write_stub(stub)
+
+        class InterruptingPopen(real_popen):
+            """Interrupt once the compiler has started its grandchild."""
+
+            def communicate(self, *args, **kwargs):
+                if not seen:
+                    seen.append(self)
+                    child.write_text(str(self.pid), encoding="utf-8")
+                    for _ in range(200):
+                        if _read_pid(grandchild) is not None:
+                            raise original
+                        time.sleep(0.05)
+                    raise AssertionError("interrupted child: no grandchild pid")
+                return super().communicate(*args, **kwargs)
+
+        vars(tree)["TreePopen"] = InterruptingPopen
+        os.environ["PELORUS_TEST_GRANDCHILD_PID_FILE"] = str(grandchild)
+        try:
+            try:
+                harness.build_and_run(OK_C, cc=[sys.executable, str(stub)])
+            except KeyboardInterrupt as exc:
+                if exc is not original:
+                    print("FAIL interrupted child: original KeyboardInterrupt masked")
+                    return False
+            else:
+                print("FAIL interrupted child: KeyboardInterrupt did not propagate")
+                return False
+            for path in (child, grandchild):
+                pid = _read_pid(path)
+                if pid is None or not tree.wait_pid_gone(pid):
+                    print(f"FAIL interrupted child: {path.name} pid {pid} still alive")
+                    return False
+            print("PASS: interrupt stops compiler and grandchild before propagating")
+            return True
+        finally:
+            vars(tree)["TreePopen"] = real_popen
+            _cleanup_stub_pids((grandchild, child))
+            for proc in seen:
+                proc.communicate(timeout=5)
+            if old_env is None:
+                os.environ.pop("PELORUS_TEST_GRANDCHILD_PID_FILE", None)
+            else:
+                os.environ["PELORUS_TEST_GRANDCHILD_PID_FILE"] = old_env
+
+
 def _remove_tree_calls(
     errors: Sequence[BaseException | None], is_windows: bool
 ) -> tuple[int, str, list[float]]:
@@ -251,9 +319,11 @@ def main() -> int:
         failures += 1
     if not test_build_and_run_cleanup():
         failures += 1
+    if not test_interrupted_compiler_child():
+        failures += 1
     if failures:
         return 1
-    print(f"patch-harness: {len(cases) + 4} cases ok")
+    print(f"patch-harness: {len(cases) + 5} cases ok")
     return 0
 
 

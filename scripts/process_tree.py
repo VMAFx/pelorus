@@ -170,9 +170,21 @@ def _new_job_with(pid: int) -> int:
         if _resume_process_threads(kernel32, pid) == 0:
             raise OSError(f"pid {pid} has no suspended thread to resume")
     except BaseException:
-        kernel32.CloseHandle(job)
+        _discard_failed_job(kernel32, job)
         raise
     return job
+
+
+def _discard_failed_job(kernel32: Any, job: int) -> None:
+    """End any resumed descendants, then close; retain the original start failure."""
+    for call, args in (
+        (kernel32.TerminateJobObject, (job, _JOB_KILL_EXIT_CODE)),
+        (kernel32.CloseHandle, (job,)),
+    ):
+        try:
+            call(*args)
+        except BaseException as exc:
+            print(f"process_tree: failed job cleanup: {exc}", file=sys.stderr)
 
 
 def _assign_to_job(kernel32: Any, job: int, pid: int) -> None:
@@ -319,10 +331,11 @@ def _windows_pid_gone(pid: int) -> bool:
         raise _windows_error(f"OpenProcess for pid {pid}", error)
     try:
         state = kernel32.WaitForSingleObject(handle, 0)
+        error = _last_error() if state not in (_WAIT_OBJECT_0, _WAIT_TIMEOUT) else 0
     finally:
         kernel32.CloseHandle(handle)
     if state not in (_WAIT_OBJECT_0, _WAIT_TIMEOUT):
-        raise _windows_error(f"WaitForSingleObject for pid {pid}", _last_error())
+        raise _windows_error(f"WaitForSingleObject for pid {pid}", error)
     return state == _WAIT_OBJECT_0
 
 
@@ -350,6 +363,8 @@ def pid_gone(pid: int) -> bool:
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
+    except PermissionError:
+        return False
     return False
 
 

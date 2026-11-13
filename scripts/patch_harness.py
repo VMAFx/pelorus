@@ -197,7 +197,7 @@ def _run_with_deadline(
     argv: Sequence[str],
     timeout: float,
 ) -> subprocess.CompletedProcess[str] | None:
-    """Run argv with tree kill on deadline (HISS-02, HISS-08).
+    """Run argv with tree kill on deadline or interrupted capture (HISS-02, HISS-08).
 
     ``TreePopen`` puts the child at the root of a process group (POSIX) or a
     job object (Windows), so ``stop_tree`` reaches every process it started.
@@ -218,20 +218,29 @@ def _run_with_deadline(
         stdout, stderr = proc.communicate(timeout=timeout)
         return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - result record only, executes nothing
     except subprocess.TimeoutExpired:
-        process_tree.stop_tree(proc)
-        try:
-            proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            if proc.stdout is not None:
-                proc.stdout.close()
-            if proc.stderr is not None:
-                proc.stderr.close()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                # Driver unresponsive to SIGKILL; abandon wait to report deadline timeout.
-                pass
+        _stop_and_reap(proc)
         return None
+    except BaseException:
+        _stop_and_reap(proc)
+        raise
+
+
+def _stop_and_reap(proc: subprocess.Popen) -> None:
+    """Stop the tree and bound both capture and reap, retaining the caller's error."""
+    process_tree.stop_tree(proc)
+    try:
+        proc.communicate(timeout=5)
+    except BaseException:
+        # A repeated capture/decode failure must still reap, then propagate the original.
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # Driver unresponsive to SIGKILL; caller still reports its original failure.
+            pass
 
 
 def is_msvc_driver(cc: Sequence[str]) -> bool:
