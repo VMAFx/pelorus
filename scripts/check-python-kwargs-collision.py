@@ -107,6 +107,10 @@ SELF_TEST_CASES: list[tuple[str, str, list[int]]] = [
      "def f(**kw):\n    def h() -> g(t=1, **kw):\n        pass\n", [2]),
     ("nested_star_annotation",
      "def f(**kw):\n    def h(*a: g(t=1, **kw), **kw: g(u=1, **kw)):\n        pass\n", [2, 2]),
+    ("postponed_annotation_pop",
+     'from __future__ import annotations\n\ndef f(**kw):\n    def h(x: kw.pop("t", None)):\n        pass\n    return g(t=1, **kw)\n', [6]),
+    ("lazy_annotation_pop",
+     'def f(**kw):\n    def h(x: kw.pop("t", None)):\n        pass\n    return g(t=1, **kw)\n', [4]),
 ]
 
 
@@ -123,13 +127,19 @@ def _function_body(func: ast.AST) -> list[ast.AST]:
     return [func.body] if isinstance(func, ast.Lambda) else func.body
 
 
-def _definition_values(func: ast.AST) -> list[ast.AST]:
-    """Defaults, decorators and annotations evaluated by a function's enclosing scope."""
+def _annotations(func: ast.AST) -> list[ast.AST]:
+    """Annotation expressions, whose evaluation may be deferred or omitted."""
     args = func.args
     params = [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]
+    return [param.annotation for param in params if param is not None and param.annotation is not None] + (
+        [func.returns] if getattr(func, "returns", None) is not None else [])
+
+
+def _definition_values(func: ast.AST) -> list[ast.AST]:
+    """Defaults, decorators and annotations checked in a function's enclosing scope."""
+    args = func.args
     values = [*args.defaults, *args.kw_defaults, *getattr(func, "decorator_list", [])]
-    values += [param.annotation for param in params if param is not None]
-    values.append(getattr(func, "returns", None))
+    values += _annotations(func)
     return [node for node in values if node is not None]
 
 
@@ -203,9 +213,11 @@ def _call_keyword_names(call: ast.Call) -> list[str]:
 def _check_function(func: ast.AST, kwname: str, label: str, display: str) -> list[str]:
     """Findings for one function that takes **kwname."""
     nodes = _scope_nodes(func, kwname)
+    annotations = {child for node in ast.walk(func) if isinstance(node, FUNC_TYPES)
+                   for value in _annotations(node) for child in ast.walk(value)}
     removed: dict[ast.AST, list[tuple[str, Position]]] = {}
     for node, scope in nodes:
-        removed.setdefault(scope, []).extend(_removal(node, kwname))
+        removed.setdefault(scope, []).extend([] if node in annotations else _removal(node, kwname))
     findings: list[str] = []
     for call, scope in ((n, s) for n, s in nodes if isinstance(n, ast.Call)):
         unpack_at = _forward_position(call, kwname)

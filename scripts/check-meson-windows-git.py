@@ -226,17 +226,57 @@ def module_numbers(tree: ast.Module) -> dict[str, int | float | None]:
     return numbers
 
 
+def function_calls(func: ast.AST, tree: ast.Module) -> list[ast.Call] | None:
+    """Named calls, or None when a reference can escape the module's call sites."""
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and getattr(node.func, "id", getattr(node.func, "attr", None)) == func.name]
+    targets = {call.func for call in calls}
+    escaped = any(isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load)
+                  and getattr(node, "id", getattr(node, "attr", None)) == func.name
+                  and node not in targets for node in ast.walk(tree))
+    return None if escaped else calls
+
+
+def bind_call_parameters(
+    func: ast.FunctionDef | ast.AsyncFunctionDef, tree: ast.Module, positional: list[ast.arg],
+    bounds: dict[str, int | float | None], constants: dict[str, int | float | None],
+) -> bool:
+    """Merge call arguments into bounds; refuse escaped functions or expanded calls."""
+    calls = function_calls(func, tree)
+    if calls is None:
+        return True
+    method = any(isinstance(node, ast.ClassDef) and func in node.body for node in ast.walk(tree))
+    method = method and not any(getattr(d, "id", getattr(d, "attr", None)) == "staticmethod"
+                                for d in func.decorator_list)
+    for call in calls:
+        if any(isinstance(arg, ast.Starred) for arg in call.args) or any(k.arg is None for k in call.keywords):
+            return True
+        offset = int(method and isinstance(call.func, ast.Attribute))
+        for arg, value in zip(positional[offset:], call.args, strict=False):
+            bind(bounds, arg.arg, timeout_value(value, constants))
+        for keyword in call.keywords:
+            bind(bounds, keyword.arg, timeout_value(keyword.value, constants))
+    return False
+
+
 def readable_names(tree: ast.Module) -> dict[str, int | float | None]:
-    """Module bindings merged with every parameter default; a missing default is None."""
-    names = module_numbers(tree)
+    """Module bindings merged with parameter defaults and every readable call value."""
+    constants = module_numbers(tree)
+    names = constants.copy()
     for func in ast.walk(tree):
         if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
         args = func.args
         positional = [*args.posonlyargs, *args.args]
         defaults = [None] * (len(positional) - len(args.defaults)) + [*args.defaults]
-        for arg, default in zip([*positional, *args.kwonlyargs], [*defaults, *args.kw_defaults], strict=True):
-            bind(names, arg.arg, number(default))
+        parameters = list(zip([*positional, *args.kwonlyargs], [*defaults, *args.kw_defaults], strict=True))
+        bounds = {arg.arg: number(default) for arg, default in parameters if default is not None}
+        unsafe = isinstance(func, ast.Lambda) or bind_call_parameters(func, tree, positional, bounds, constants)
+        for arg, _default in parameters:
+            bind(names, arg.arg, None if unsafe else bounds.get(arg.arg))
+        for arg in (args.vararg, args.kwarg):
+            if arg is not None:
+                bind(names, arg.arg, None)
     return names
 
 
@@ -458,6 +498,19 @@ def timeout_cases() -> list[tuple[str, str, bool]]:
         ("t19 parameter default", base.format(", timeout: 90").replace("scan.py", "parameter.py"), True),
         ("t20 parameter default met", base.format(", timeout: 150").replace("scan.py", "parameter.py"), False),
         ("t21 parameter None", base.format(", timeout: 150").replace("scan.py", "parameter_none.py"), True),
+        ("t22 call bound", base.format(", timeout: 90").replace("scan.py", "call.py"), True),
+        ("t23 call bound met", base.format(", timeout: 150").replace("scan.py", "call.py"), False),
+        ("t24 starred call", base.format(", timeout: 150").replace("scan.py", "starred.py"), True),
+        ("t25 unreadable call", base.format(", timeout: 150").replace("scan.py", "unknown.py"), True),
+        ("t26 callback", base.format(", timeout: 150").replace("scan.py", "callback.py"), True),
+        ("t27 keyword constant", base.format(", timeout: 90").replace("scan.py", "keyword.py"), True),
+        ("t28 expanded keywords", base.format(", timeout: 150").replace("scan.py", "kwargs.py"), True),
+        ("t29 instance method", base.format(", timeout: 90").replace("scan.py", "method.py"), True),
+        ("t30 static method", base.format(", timeout: 90").replace("scan.py", "static.py"), True),
+        ("t31 class method", base.format(", timeout: 90").replace("scan.py", "class.py"), True),
+        ("t32 required parameter", base.format(", timeout: 150").replace("scan.py", "required.py"), False),
+        ("t33 lambda", base.format(", timeout: 150").replace("scan.py", "lambda.py"), True),
+        ("t34 None default with call", base.format(", timeout: 150").replace("scan.py", "none_call.py"), True),
     ]
 
 
@@ -514,6 +567,16 @@ def run_self_test() -> int:
             "rebound.py": "GIT_TIMEOUT = 60\nrun(['git'], timeout=GIT_TIMEOUT)\nGIT_TIMEOUT = 120 + 0\n",
             "parameter.py": "def run_git(timeout=120):\n    run(['git'], timeout=timeout)\n",
             "parameter_none.py": "def run_git(timeout=None):\n    run(['git'], timeout=timeout)\n",
+            **{name: "def scan(limit=60):\n    run(['git'], timeout=limit)\n" + call + "\n"
+               for name, call in (("call.py", "scan(120)"), ("starred.py", "scan(*args)"),
+                                  ("unknown.py", "scan(n)"), ("callback.py", "pool.submit(scan)"),
+                                  ("keyword.py", "MAX = 120\nscan(limit=MAX)"), ("kwargs.py", "scan(**kw)"))},
+            "method.py": "class C:\n    def scan(self, limit=60):\n        run(['git'], timeout=limit)\nobj.scan(120)\n",
+            "static.py": "class C:\n    @staticmethod\n    def scan(limit=60):\n        run(['git'], timeout=limit)\nC.scan(120)\n",
+            "class.py": "class C:\n    @classmethod\n    def scan(cls, limit=60):\n        run(['git'], timeout=limit)\nC.scan(120)\n",
+            "required.py": "def scan(limit):\n    run(['git'], timeout=limit)\nscan(120)\n",
+            "lambda.py": "scan = lambda limit=60: run(['git'], timeout=limit)\n",
+            "none_call.py": "def scan(limit=None):\n    run(['git'], timeout=limit)\nscan(120)\nscan()\n",
         }
         for name, source in fixtures.items():
             (scripts / name).write_text(source, encoding="utf-8")

@@ -618,8 +618,8 @@ keyword at risk. A `kw.pop("timeout", ...)` or `del kw["timeout"]` placed
 before the unpack, including an inline pop in an earlier argument, clears that
 keyword only within the same nearest function or lambda scope. A closure's
 removal cannot clear an outer call, or the reverse. Defaults, decorators and
-parameter and return annotations evaluate in the enclosing scope even when the
-nested function binds `kw`.
+parameter and return annotations are checked in the enclosing scope even when the
+nested function binds `kw`; a removal inside an annotation never hides a collision.
 String keys in `**{"timeout": 1}` and keywords in `**dict(timeout=1)` also name
 keywords; unknown keys and other dictionary unpacks do not. The check does not
 follow control flow or copies of `kw`, and a pop whose key is not a string
@@ -635,8 +635,10 @@ Each timeout must be a positive integer literal strictly above the script's
 deadline; Meson's unset default is 30 s. The AST check takes the maximum of
 `tracked_python.GIT_DEADLINE_S` for importers and every `timeout=` value in the
 script: a numeric literal, a module-level numeric constant, or a parameter's
-numeric default. A `timeout=` value with no numeric literal behind it, such as
-`TIMEOUT * 2`, a parameter defaulting to `None`, or a name that another
+bound, the largest of its numeric default and every value a call in the module
+passes to it. A `timeout=` value with no numeric literal behind it, such as
+`TIMEOUT * 2`, a parameter defaulting to `None`, a function passed as a
+callback or called with `*args` or `**kw`, or a name that another
 module-level statement rebinds to a non-literal, fails the test and names its
 line. A missing or rebound shared deadline fails closed. Set `timeout:` after
 `workdir:` to the deadline plus 30 s, rounded up to a multiple of 30; an
