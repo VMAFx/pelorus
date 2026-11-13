@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 from typing import Any, Callable
+from unittest.mock import patch
 
 SUBPROCESS_TIMEOUT_S = 120
 VALID_DIFF_STATUSES = frozenset({"A", "D", "M", "T"})
@@ -872,6 +873,111 @@ def _test_case_f(repo: pathlib.Path, env: dict[str, str]) -> int:
             file=sys.stderr,
         )
         return 1
+    return 0
+
+
+def _test_fixture_git_delegation(repo: pathlib.Path, env: dict[str, str]) -> int:
+    """Check fixture git argument forwarding and required subcommand."""
+    probe_env = {
+        **env,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "pelorus.selftest",
+        "GIT_CONFIG_VALUE_0": "fixture-env",
+    }
+    try:
+        result = _fixture_git(repo, probe_env, "config", "--get", "pelorus.selftest")
+    except RuntimeError as exc:
+        print(f"self-test FAIL: x1 fixture git raised {exc!r}", file=sys.stderr)
+        return 1
+    if result != "fixture-env":
+        print(f"self-test FAIL: x1 fixture git returned {result!r}", file=sys.stderr)
+        return 1
+    print(
+        "self-test ok: x1 fixture git passes repo, subcommand, args and env -> fixture-env"
+    )
+
+    try:
+        result = _fixture_git(repo, env, "config", "--get", "pelorus.selftest")
+    except RuntimeError as exc:
+        prefix = f"git config --get pelorus.selftest failed in {repo}:"
+        if not str(exc).startswith(prefix) or not isinstance(
+            exc.__cause__, subprocess.CalledProcessError
+        ):
+            print(
+                f"self-test FAIL: x2 error {exc!r}, cause {exc.__cause__!r}",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        print(
+            f"self-test FAIL: x2 returned {result!r}, want RuntimeError",
+            file=sys.stderr,
+        )
+        return 1
+    print("self-test ok: x2 fixture git config failure -> RuntimeError with cause")
+
+    fixture_git: Any = _fixture_git
+    try:
+        result = fixture_git(repo, env)
+    except TypeError:
+        print("self-test ok: x5 fixture git without subcommand -> TypeError")
+        return 0
+    print(f"self-test FAIL: x5 returned {result!r}, want TypeError", file=sys.stderr)
+    return 1
+
+
+def _test_fixture_git_failures(repo: pathlib.Path, env: dict[str, str]) -> int:
+    """Check fixture git missing-repository and timeout errors."""
+    missing = repo.parent / "missing-fixture"
+    if missing.exists():
+        print(f"self-test FAIL: x3 {missing} exists", file=sys.stderr)
+        return 1
+    try:
+        result = _fixture_git(missing, env, "status")
+    except RuntimeError as exc:
+        prefix = f"git status  failed in {missing}:"
+        if not str(exc).startswith(prefix) or not isinstance(
+            exc.__cause__, subprocess.CalledProcessError
+        ):
+            print(
+                f"self-test FAIL: x3 error {exc!r}, cause {exc.__cause__!r}",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        print(
+            f"self-test FAIL: x3 returned {result!r}, want RuntimeError",
+            file=sys.stderr,
+        )
+        return 1
+    print("self-test ok: x3 fixture git missing repository -> RuntimeError with cause")
+
+    with patch.object(
+        subprocess,
+        "run",
+        side_effect=subprocess.TimeoutExpired(["git"], SUBPROCESS_TIMEOUT_S),
+    ):
+        try:
+            result = _fixture_git(repo, env, "status")
+        except RuntimeError as exc:
+            expected = f"git status  timed out in {repo} after {SUBPROCESS_TIMEOUT_S}s"
+            if str(exc) != expected or not isinstance(
+                exc.__cause__, subprocess.TimeoutExpired
+            ):
+                print(
+                    f"self-test FAIL: x4 error {exc!r}, cause {exc.__cause__!r}",
+                    file=sys.stderr,
+                )
+                return 1
+        else:
+            print(
+                f"self-test FAIL: x4 returned {result!r}, want RuntimeError",
+                file=sys.stderr,
+            )
+            return 1
+    print(
+        "self-test ok: x4 fixture git timeout -> RuntimeError with duration and cause"
+    )
     return 0
 
 
@@ -1861,6 +1967,12 @@ def run_self_test(repo_root: pathlib.Path) -> int:
             return 1
 
         if _test_case_f(repo, env) != 0:
+            return 1
+
+        if _test_fixture_git_delegation(repo, env) != 0:
+            return 1
+
+        if _test_fixture_git_failures(repo, env) != 0:
             return 1
 
         if _run_pr_self_tests(repo, env, script_dest, now, repo_root) != 0:
