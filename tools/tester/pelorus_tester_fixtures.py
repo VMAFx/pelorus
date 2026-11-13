@@ -205,7 +205,7 @@ def generate(entry, cache, ffmpeg, run):
     return publish(tmp, entry, cache)
 
 
-def download(entry, cache, opener=urllib.request.urlopen):
+def download(entry, cache, opener=urllib.request.urlopen):  # noqa: S310 - URL checked https-only before opener is called
     """Fetch the source file once; returns (path or None, problems)."""
     spec = entry["download"]
     if not URL_RE.match(spec.get("url", "")):

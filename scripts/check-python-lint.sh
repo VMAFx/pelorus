@@ -168,12 +168,14 @@ run_lint() {
     fi
 }
 
-# Pass when Ruff fails on FILE and its log names rule CODE; NAME labels the result.
+# Pass when Ruff fails on FILE and its JSON report carries rule CODE; NAME labels
+# the result. Lint preview prints rule names, not codes, in the text formats, so
+# the code is matched exactly in the JSON "code" field.
 check_planted_ruff() {
     local name="$1" code="$2" file="$3" tmp="$4"
     local log="$tmp/ruff_${code}.log" rc=0
-    timeout "$LINT_TIMEOUT" "$RUFF" check --no-cache --output-format concise --config "$tmp/ruff.toml" "$file" > "$log" 2>&1 || rc=$?
-    if [ "$rc" -ne 0 ] && grep -q -- "$code" "$log"; then
+    timeout "$LINT_TIMEOUT" "$RUFF" check --no-cache --output-format json --config "$tmp/ruff.toml" "$file" > "$log" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ] && grep -q -F -- "\"code\": \"$code\"" "$log"; then
         echo "PASS $name"
         return 0
     fi
@@ -181,7 +183,7 @@ check_planted_ruff() {
     return 1
 }
 
-# Plant one source each for S110, SIM103, E721 and PGH004 and a clean one;
+# Plant one source each for S110, SIM103, E721, E225 and PGH004 and a clean one;
 # each must get its verdict.
 self_test_ruff() {
     local tmp="$1" failed=0
@@ -209,11 +211,23 @@ def test(a, b):
 EOF
     check_planted_ruff "ruff E721" "E721" "$tmp/case_e721.py" "$tmp" || failed=1
 
+    cat << 'EOF' > "$tmp/case_e225.py"
+DEFAULT_CFLAGS =("-Wall",)
+EOF
+    check_planted_ruff "ruff E225" "E225" "$tmp/case_e225.py" "$tmp" || failed=1
+
     cat << 'EOF' > "$tmp/case_pgh004.py"
 x = 1  # noqa
 EOF
     check_planted_ruff "ruff PGH004" "PGH004" "$tmp/case_pgh004.py" "$tmp" || failed=1
 
+    self_test_ruff_clean "$tmp" || failed=1
+    return "$failed"
+}
+
+# The reviewed rules must also accept a clean source file.
+self_test_ruff_clean() {
+    local tmp="$1"
     cat << 'EOF' > "$tmp/clean.py"
 def test_s110():
     try:
@@ -238,10 +252,8 @@ EOF
         echo "PASS ruff clean"
     else
         echo "FAIL ruff clean" >&2
-        failed=1
+        return 1
     fi
-
-    return "$failed"
 }
 
 # Plant a template-injection workflow and a clean one; zizmor must flag only the first.

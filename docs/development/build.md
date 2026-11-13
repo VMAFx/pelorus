@@ -616,12 +616,28 @@ written for `g`'s own errors does not catch. The fast-suite test
 tracked Python files with the stdlib AST and names the call line once per
 keyword at risk. A `kw.pop("timeout", ...)` or `del kw["timeout"]` placed
 before the unpack, including an inline pop in an earlier argument, clears that
-keyword. The check does not follow control flow or copies of `kw`, and a pop
-whose key is not a string literal clears nothing. A nested function or lambda
-with its own parameter of the same name is checked as its own scope.
+keyword only within the same nearest function or lambda scope. A closure's
+removal cannot clear an outer call, or the reverse. Defaults and decorators
+evaluate in the enclosing scope even when the nested function binds `kw`.
+String keys in `**{"timeout": 1}` and keywords in `**dict(timeout=1)` also name
+keywords; unknown keys and other dictionary unpacks do not. The check does not
+follow control flow or copies of `kw`, and a pop whose key is not a string
+literal clears nothing. A nested function or lambda with its own parameter of
+the same name is checked as its own scope.
 `python-kwargs-collision-self-test` runs the planted cases on every platform.
 The rule fixed `_run_git` in `scripts/tracked_python.py`: it now takes only a
 keyword-only `env` and keeps its 60 s git deadline fixed.
+
+`scripts/check-meson-windows-git.py` checks both Windows guards for Git tree
+scans and timeouts for every Git-scanning Meson test, including self-tests.
+Each timeout must be a positive integer literal strictly above the script's
+deadline; Meson's unset default is 30 s. The AST check takes the maximum of
+`tracked_python.GIT_DEADLINE_S` for importers, literal `timeout=` values, and
+module-level numeric `TIMEOUT`/`DEADLINE` constants used as timeout values.
+A missing numeric shared deadline fails closed. Set `timeout:` after `workdir:`
+to the deadline plus 30 s, rounded up to a multiple of 30; an existing larger
+timeout stays. The check's `--self-test` plants missing, equal, dynamic and
+nonpositive timeouts alongside safe timeouts and scripts that do not call Git.
 
 Every tracked Python script must parse its command line with stdlib `argparse`
 rather than by indexing `argv`. The fast-suite test `python-argv`
@@ -665,9 +681,18 @@ there is refused.
 
 Python sources and the workflow files are linted before push
 ([ADR-0243](../adr/0243-ruff-zizmor-local-gate.md)). `make verify-native` runs
-`scripts/check-python-lint.sh --self-test` and then the scan: Ruff 0.17.3 over
+`scripts/check-python-lint.sh --self-test` and then the scan: Ruff 0.17.4 over
 the tree with the rule set in `ruff.toml` (Codacy's Ruff patterns plus
-`SIM103`, `E721` and `PGH004`), and zizmor 1.32.0 `--offline
+`SIM103`, `E721` and `PGH004`, plus the explicit pycodestyle `E1xx`, `E2xx`,
+`W2xx` and `W3xx` codes). `ruff.toml` enables lint preview and requires full
+preview rule codes so prefixes cannot add unreviewed preview rules. Preview
+also widens `S310` to flag urllib callable defaults; the HTTPS check in
+`tools/tester/pelorus_tester_fixtures.py:download` justifies its suppression.
+The lint self-test plants `E225` missing whitespace around an operator, the
+class missed in issue 580, alongside the other rule cases. Lint preview prints
+rule names instead of codes in Ruff's text output, so the self-test reads
+Ruff's JSON report and matches each planted code in its `code` field. The scan also runs
+zizmor 1.32.0 `--offline
 --strict-collection` over the workflows, actions and Dependabot files with
 `.github/zizmor.yml`, so a file zizmor cannot parse fails the scan instead of
 being skipped. Both tools are pinned by hash in

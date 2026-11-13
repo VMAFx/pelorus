@@ -31,7 +31,7 @@ if _PROCESS_TREE_SPEC is None or _PROCESS_TREE_SPEC.loader is None:
 process_tree = importlib.util.module_from_spec(_PROCESS_TREE_SPEC)
 _PROCESS_TREE_SPEC.loader.exec_module(process_tree)
 
-DEFAULT_CFLAGS =("-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function")
+DEFAULT_CFLAGS = ("-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function")
 # Deadlines for the harness compiler and the harness binary (HISS-02). A
 # harness is a few hundred lines and runs in milliseconds; a stall is a failure.
 BUILD_TIMEOUT_S = 120.0
