@@ -14,8 +14,9 @@ Checks:
    later-source sweep from `git add -A`.
 3. Registration: `allfilters.c` `extern const FFFilter ff_vf_*`, alphabetical;
    Makefile `OBJS-$(CONFIG_*_FILTER) += vf_*.o vulkan.o vulkan_filter.o`;
-   configure `*_filter_deps="vulkan spirv_compiler"`. Interop consumers use a
-   guarded `require_pkg_config libpelorus >= 0.2.0` plus `add_extralibs`; pure
+   configure `*_filter_deps="vulkan spirv_compiler"`. Interop consumers use
+   per-filter `*_filter_extralibs="libpelorus_extralibs"` plus a guarded
+   `require_pkg_config libpelorus >= 0.2.0`; never global `add_extralibs`; pure
    transforms never link libpelorus.
 4. FFmpeg 9 idiom, modeled on `vf_gblur_vulkan.c` / `vf_nlmeans_vulkan.c` and,
    for readback, `vf_scdet_vulkan.c`: `FFVulkanContext` first; lazy init;

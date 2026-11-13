@@ -125,7 +125,21 @@ OPERATIONAL_GUIDANCE = (
     ROOT / ".claude" / "skills" / "ffmpeg-build-patches" / "SKILL.md",
     ROOT / ".claude" / "agents" / "ffmpeg-patch-reviewer.md",
 )
-EXPLICIT_COMMAND_GUIDANCE = OPERATIONAL_GUIDANCE[:1] + OPERATIONAL_GUIDANCE[2:4]
+EXPLICIT_COMMAND_GUIDANCE = (
+    ROOT / "docs" / "development" / "build.md",
+    ROOT / ".claude" / "skills" / "ffmpeg-apply-patches" / "SKILL.md",
+    ROOT / ".claude" / "skills" / "ffmpeg-build-patches" / "SKILL.md",
+)
+LINK_GUIDANCE = (
+    ROOT / ".claude" / "skills" / "add-vulkan-filter" / "SKILL.md",
+    ROOT / ".claude" / "skills" / "ffmpeg-build-patches" / "SKILL.md",
+    ROOT / ".agents" / "agents" / "ffmpeg-patch-reviewer.md",
+    ROOT / ".claude" / "agents" / "ffmpeg-patch-reviewer.md",
+    ROOT / ".codex" / "agents" / "ffmpeg-patch-reviewer.md",
+    ROOT / ".codex" / "agents" / "ffmpeg-patch-reviewer.toml",
+    ROOT / ".gemini" / "agents" / "ffmpeg-patch-reviewer.md",
+    ROOT / ".github" / "agents" / "ffmpeg-patch-reviewer.md",
+)
 LIBPELORUS_FLOOR_INPUTS = tuple(
     ROOT / "ffmpeg-patches" / f".commit-msg-{name}.txt"
     for name in ("deband", "analyze", "denoise", "grain_estimate", "mc")
@@ -209,6 +223,53 @@ GO_RENOVATE_TEMPLATES = {
     "datasourceTemplate": "golang-version",
 }
 RELEASE_TAG = re.compile(r"(?<![A-Za-z0-9_])n\d+\.\d+\.\d+(?![A-Za-z0-9_])")
+ACCEPTED_LIBPELORUS_LINK = re.compile(
+    r"[A-Za-z0-9_*<>{}]+_(?:filter|bsf)_extralibs=libpelorus_extralibs"
+)
+LIBPELORUS_LINK_ERROR = "libpelorus_extralibs outside a per-filter assignment"
+LIBPELORUS_LINK_FIX = (
+    'assign it per filter: <name>_filter_extralibs="libpelorus_extralibs" '
+    "(bitstream filter: <name>_bsf_extralibs)"
+)
+# Spellings of the retired global link that the guidance and generator checks must refuse.
+GLOBAL_LINK_SPELLINGS = (
+    ("single-line", "add_extralibs $libpelorus_extralibs"),
+    ("Markdown wrap", "add_extralibs\n   $libpelorus_extralibs"),
+    ("shell continuation", "add_extralibs \\\n    $libpelorus_extralibs"),
+    ("two spaces", "add_extralibs  $libpelorus_extralibs"),
+    ("tab", "add_extralibs\t$libpelorus_extralibs"),
+    ("double-quoted", 'add_extralibs "$libpelorus_extralibs"'),
+    ("single-quoted", "add_extralibs '$libpelorus_extralibs'"),
+    ("braced", "add_extralibs ${libpelorus_extralibs}"),
+    ("braced default", "add_extralibs ${libpelorus_extralibs:-}"),
+    ("quoted command", '"add_extralibs" "$libpelorus_extralibs"'),
+    ("continuation in token", 'add_extralibs "$libpelorus_extra\\\nlibs"'),
+    ("CRLF continuation in token", 'add_extralibs "$libpelorus_extra\\\r\nlibs"'),
+    ("split code span", "`add_extralibs` `$libpelorus_extralibs`"),
+    ("escaped letter", 'add_extra\\libs "$libpelorus_extralibs"'),
+    ("other argument first", "add_extralibs $other_extralibs $libpelorus_extralibs"),
+    ("Markdown escaped underscore", "add\\_extralibs $libpelorus\\_extralibs"),
+    ("code span in name", "add_extralibs `$libpelorus_`extralibs"),
+    ("global variable", 'extralibs="libpelorus_extralibs"'),
+    ("library-wide assignment", 'avfilter_extralibs="libpelorus_extralibs"'),
+    ("program assignment", 'ffmpeg_extralibs="libpelorus_extralibs"'),
+)
+REFUSED_BY_DESIGN = (
+    (
+        "conditional expansion",
+        "add_extralibs ${libpelorus_extralibs:+$other_extralibs}",
+    ),
+    ("split quoted name", 'add_extralibs "$libpelorus_extra"libs'),
+    ("prose mention", "the $libpelorus_extralibs variable is assigned per filter"),
+)
+ACCEPTED_LINK_FORMS = (
+    'pelorus_x_vulkan_filter_extralibs="libpelorus_extralibs"',
+    '`pelorus_<name>_vulkan_filter_extralibs="libpelorus_extralibs"`',
+    '*_filter_extralibs="libpelorus_extralibs"',
+    'pelorus_fgs_bsf_extralibs="libpelorus_extralibs"',
+    "return (f'{name}_filter_extralibs=\"libpelorus_extralibs\"\\n'",
+    "add_extralibs $other_extralibs",
+)
 FORMAT_PATCH_CONFIG = (
     "format.mboxrd=false",
     "format.pretty=medium",
@@ -382,8 +443,45 @@ def validate_pin_projection_text(
     return errors
 
 
+def libpelorus_link_violations(text: str) -> list[str]:
+    """Allow-list per-component assignments; report every other occurrence.
+
+    Shell drops quotes and backslashes before splitting words; Markdown adds
+    backticks and backslash escapes. Remove backslash-newlines first, then
+    remaining backslashes and quote marks, preserving whitespace for matching.
+    Refuse by design: ${libpelorus_extralibs:+$other_extralibs},
+    "$libpelorus_extra"libs, and prose such as "the $libpelorus_extralibs
+    variable is assigned per filter"; guidance spells the assignment instead.
+    Limit: indirection such as add_extralibs $pelorus_x_vulkan_filter_extralibs
+    is not tracked. A trailing \\n escape in generated assignments is allowed.
+    """
+    normalised = re.sub(r"\\\r?\n", "", text)
+    for mark in ("\\", "'", '"', "`"):
+        normalised = normalised.replace(mark, "")
+    accepted = {
+        match.end() - len("libpelorus_extralibs")
+        for match in ACCEPTED_LIBPELORUS_LINK.finditer(normalised)
+    }
+    return [
+        " ".join(normalised[max(0, match.start() - 40) : match.end()].split())
+        for match in re.finditer("libpelorus_extralibs", normalised)
+        if match.start() not in accepted
+    ]
+
+
+def _libpelorus_link_errors(relative: str, text: str) -> list[str]:
+    """Share the first violation's diagnostic and repair across text validators."""
+    violations = libpelorus_link_violations(text)
+    if not violations:
+        return []
+    return [
+        f"{relative}: {LIBPELORUS_LINK_ERROR} near {violations[0]!r}; "
+        f"{LIBPELORUS_LINK_FIX}"
+    ]
+
+
 def validate_guidance_text(
-    relative: str, source: str, require_command: bool
+    relative: str, source: str, require_command: bool, *, require_link: bool = False
 ) -> list[str]:
     """Reject retired command, shader, and configure models from live guidance."""
     errors: list[str] = []
@@ -396,11 +494,35 @@ def validate_guidance_text(
         "filter's inline GLSL",
         "mirrored inline",
     )
+    collapsed = " ".join(source.split())
     for token in forbidden:
-        if token in source:
+        if token in collapsed:
             errors.append(f"{relative}: contains obsolete guidance {token}")
+    errors.extend(_libpelorus_link_errors(relative, source))
     if require_command and "FFMPEG_REPO=/absolute/path" not in source:
         errors.append(f"{relative}: missing explicit FFMPEG_REPO command")
+    if require_link and '_filter_extralibs="libpelorus_extralibs"' not in source:
+        errors.append(f"{relative}: missing per-filter libpelorus_extralibs guidance")
+    return errors
+
+
+def validate_operational_guidance() -> list[str]:
+    """Check each operational guidance file for retired and missing configure models."""
+    errors: list[str] = []
+    for path in dict.fromkeys((*OPERATIONAL_GUIDANCE, *LINK_GUIDANCE)):
+        relative = path.relative_to(ROOT).as_posix()
+        source, read_errors = read_tracked_text(path)
+        errors.extend(read_errors)
+        if read_errors:
+            continue
+        errors.extend(
+            validate_guidance_text(
+                relative,
+                source,
+                path in EXPLICIT_COMMAND_GUIDANCE,
+                require_link=path in LINK_GUIDANCE,
+            )
+        )
     return errors
 
 
@@ -426,15 +548,7 @@ def validate_current_surfaces(values: dict[str, str]) -> list[str]:
             )
         )
 
-    for path in OPERATIONAL_GUIDANCE:
-        relative = path.relative_to(ROOT).as_posix()
-        source, read_errors = read_tracked_text(path)
-        errors.extend(read_errors)
-        if read_errors:
-            continue
-        errors.extend(
-            validate_guidance_text(relative, source, path in EXPLICIT_COMMAND_GUIDANCE)
-        )
+    errors.extend(validate_operational_guidance())
 
     for path in LIBPELORUS_FLOOR_INPUTS:
         relative = path.relative_to(ROOT).as_posix()
@@ -876,6 +990,27 @@ def _consumer_replay_sdk_and_query_regressions(replay: str) -> list[str]:
     return failures
 
 
+def _libpelorus_link_regressions(
+    source: str, validate: Callable[[str], list[str]], label: str
+) -> list[str]:
+    """Exercise shared refused and accepted forms through either text validator."""
+    failures: list[str] = []
+    for name, link in (*GLOBAL_LINK_SPELLINGS, *REFUSED_BY_DESIGN):
+        if not any(
+            LIBPELORUS_LINK_ERROR in error for error in validate(source + f"\n{link}\n")
+        ):
+            failures.append(f"{label}: libpelorus link {name} was accepted")
+    for accepted in ACCEPTED_LINK_FORMS:
+        if any(
+            LIBPELORUS_LINK_ERROR in error
+            for error in validate(source + f"\n{accepted}\n")
+        ):
+            failures.append(
+                f"{label}: accepted libpelorus text was rejected: {accepted}"
+            )
+    return failures
+
+
 def _consumer_generator_packaging_regressions(source: str) -> list[str]:
     failures: list[str] = []
     missing_filter_closure = source.replace(
@@ -905,12 +1040,11 @@ def _consumer_generator_packaging_regressions(source: str) -> list[str]:
     ):
         failures.append("consumer regression: missing libpelorus probe was accepted")
 
-    global_extralibs = source + "\nadd_extralibs $libpelorus_extralibs\n"
-    if not any(
-        "must not add libpelorus to global executable extralibs" in error
-        for error in validate_generator_text(global_extralibs)
-    ):
-        failures.append("consumer regression: global libpelorus link was accepted")
+    failures.extend(
+        _libpelorus_link_regressions(
+            source, validate_generator_text, "consumer regression"
+        )
+    )
 
     unknown_filter_dep = source.replace(
         'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"',
@@ -1187,15 +1321,106 @@ def surface_validator_regressions() -> list[str]:
     ):
         return ["surface regression: stale README pin was accepted"]
 
-    skill = OPERATIONAL_GUIDANCE[2].read_text(encoding="utf-8")
+    path = ROOT / ".claude" / "skills" / "ffmpeg-apply-patches" / "SKILL.md"
+    skill = path.read_text(encoding="utf-8")
     retired = skill + '\n`*_filter_deps="vulkan spirv_library"`\n'
     if not any(
         "contains obsolete guidance spirv_library" in error
         for error in validate_guidance_text(
-            OPERATIONAL_GUIDANCE[2].relative_to(ROOT).as_posix(), retired, True
+            path.relative_to(ROOT).as_posix(), retired, True
         )
     ):
         return ["surface regression: retired shader dependency was accepted"]
+    wrapped = skill + "\nthe filter's\ninline GLSL\n"
+    if not any(
+        "contains obsolete guidance filter's inline GLSL" in error
+        for error in validate_guidance_text(
+            path.relative_to(ROOT).as_posix(), wrapped, True
+        )
+    ):
+        return ["surface regression: wrapped inline GLSL guidance was accepted"]
+    return link_guidance_validator_regressions()
+
+
+def tracked_reviewer_agent_copies() -> tuple[list[str], list[str]]:
+    """List every tracked ffmpeg-patch-reviewer agent copy, repository-relative."""
+    command = (
+        "git",
+        "-C",
+        str(ROOT),
+        "ls-files",
+        "-z",
+        "--",
+        "*/agents/ffmpeg-patch-reviewer.md",
+        "*/agents/ffmpeg-patch-reviewer.toml",
+    )
+    try:
+        result = subprocess.run(  # nosec B603 - constant git ls-files argv, no shell, explicit timeout  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command plus the repository root, no shell, explicit deadline
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=SUBPROCESS_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return [], [f"surface regression: could not run {shlex.join(command)}: {error}"]
+    copies = sorted(name for name in result.stdout.split("\0") if name)
+    if result.returncode != 0 or not copies:
+        return [], [
+            f"surface regression: no tracked reviewer-agent copy from "
+            f"{shlex.join(command)} (rc {result.returncode})"
+        ]
+    return copies, []
+
+
+def link_guidance_validator_regressions() -> list[str]:
+    """Reject global libpelorus links and require the per-filter guidance."""
+    copies, errors = tracked_reviewer_agent_copies()
+    if errors:
+        return errors
+    for relative in copies:
+        if ROOT / relative not in LINK_GUIDANCE:
+            return [
+                f"surface regression: reviewer-agent copy {relative} "
+                "missing from link guidance"
+            ]
+    for path in LINK_GUIDANCE:
+        errors = _link_guidance_path_regressions(path)
+        if errors:
+            return errors
+    return []
+
+
+def _link_guidance_path_regressions(path: Path) -> list[str]:
+    """Exercise retired, missing, and current per-filter links in one file."""
+    relative = path.relative_to(ROOT).as_posix()
+    skill = path.read_text(encoding="utf-8")
+    errors = _libpelorus_link_regressions(
+        skill,
+        lambda text: validate_guidance_text(relative, text, False, require_link=True),
+        f"surface regression: {relative}",
+    )
+    if errors:
+        return errors
+    missing = skill.replace(
+        '_filter_extralibs="libpelorus_extralibs"',
+        '_filter_extralibs="other_extralibs"',
+    )
+    if missing == skill:
+        return [
+            f"surface regression: per-filter link mutation changed nothing: {relative}"
+        ]
+    if not any(
+        "missing per-filter libpelorus_extralibs guidance" in error
+        for error in validate_guidance_text(relative, missing, False, require_link=True)
+    ):
+        return [
+            f"surface regression: missing per-filter libpelorus link was accepted: {relative}"
+        ]
+    if validate_guidance_text(relative, skill, False, require_link=True):
+        return [
+            f"surface regression: current per-filter libpelorus link was rejected: {relative}"
+        ]
     return []
 
 
@@ -2354,11 +2579,7 @@ def validate_generator_text(generator: str) -> list[str]:
             "ffmpeg-patches/generate.sh: synthetic commits must disable signing "
             "and hooks"
         )
-    if "add_extralibs $libpelorus_extralibs" in generator:
-        errors.append(
-            "ffmpeg-patches/generate.sh: must not add libpelorus to global "
-            "executable extralibs"
-        )
+    errors.extend(_libpelorus_link_errors("ffmpeg-patches/generate.sh", generator))
     if re.search(r"_filter_deps=[^\n]*\blibpelorus\b", generator):
         errors.append(
             "ffmpeg-patches/generate.sh: must not put libpelorus in filter "
