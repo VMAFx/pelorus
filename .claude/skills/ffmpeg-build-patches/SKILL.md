@@ -36,10 +36,14 @@ use `ffmpeg-apply-patches`; regeneration alone is not verification.
    existing shipped sequence. Do not insert it into an earlier generator loop.
 3. Use `install_vk_shader`; register the C object, shader `.spv.o`, extern, and
    `*_filter_deps="vulkan spirv_compiler"`.
-4. For any interop producer or consumer using libpelorus, add
+4. For any interop producer or consumer using libpelorus, call
+   `libpelorus_link("pelorus_<name>_vulkan")` in `generate.sh` to emit
+   `pelorus_<name>_vulkan_filter_extralibs="libpelorus_extralibs"` and
    `enabled pelorus_<name>_vulkan_filter && require_pkg_config libpelorus
-   "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs
-   $libpelorus_extralibs`. Pure transforms do not link it.
+   "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack`. Per-filter extralibs
+   carries the libpelorus link flags into executable links and
+   `libavfilter.pc`; global `add_extralibs` is refused by
+   `scripts/check-build-config.py`. Pure transforms do not link libpelorus.
 5. Extend the generator's deterministic filename map (mapped by position;
    number 0021 is retired and stays unused), `series.txt`, replay
    patch-count assertion, and filter-registration list together. Update or

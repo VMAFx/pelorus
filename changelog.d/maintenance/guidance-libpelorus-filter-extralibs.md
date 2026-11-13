@@ -1,0 +1,1 @@
+- The add-vulkan-filter and ffmpeg-build-patches skills and ffmpeg-patch-reviewer agent taught the global libpelorus link that check-build-config has refused since #57. They now teach the per-filter `*_filter_extralibs` form, and the guidance check refuses the retired form and requires the per-filter one (ADR-0104), covering the agent source and every client projection.
