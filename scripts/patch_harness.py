@@ -10,6 +10,7 @@ module by path (importlib), not by import.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import os
 import pathlib
@@ -207,11 +208,14 @@ def _run_with_deadline(
         if os.name == "nt"
         else {}
     )
+    # errors="replace": undecodable output cannot fail the capture after
+    # communicate() reaped the child, when its tree is no longer safe to signal.
     proc = process_tree.TreePopen(
         argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        errors="replace",
         **kwargs,
     )
     try:
@@ -226,21 +230,43 @@ def _run_with_deadline(
 
 
 def _stop_and_reap(proc: subprocess.Popen) -> None:
-    """Stop the tree and bound both capture and reap, retaining the caller's error."""
-    process_tree.stop_tree(proc)
+    """Stop the tree, then bound capture and reap; name a cleanup fault, raise none.
+
+    The caller reports its deadline or re-raises its original error, so a
+    failed tree stop or capture is named on stderr instead of replacing it.
+    """
+    try:
+        process_tree.stop_tree(proc)
+    except Exception as exc:  # e.g. PermissionError from killpg
+        print(
+            f"patch_harness: stopping the tree of pid {proc.pid} failed: {exc}; "
+            f"killing pid {proc.pid} alone",
+            file=sys.stderr,
+        )
+        with contextlib.suppress(OSError):
+            proc.kill()  # a failed kill is named by the bounded reap below
+    reaped = False
     try:
         proc.communicate(timeout=5)
-    except BaseException:
-        # A repeated capture/decode failure must still reap, then propagate the original.
-        if proc.stdout is not None:
-            proc.stdout.close()
-        if proc.stderr is not None:
-            proc.stderr.close()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            # Driver unresponsive to SIGKILL; caller still reports its original failure.
-            pass
+        reaped = True
+    except subprocess.TimeoutExpired:
+        print(f"patch_harness: pid {proc.pid} kept its pipes open 5 s after the stop", file=sys.stderr)
+    except Exception as exc:
+        print(f"patch_harness: capture after the stop of pid {proc.pid} failed: {exc}", file=sys.stderr)
+    finally:
+        if not reaped:
+            _close_and_reap(proc)
+
+
+def _close_and_reap(proc: subprocess.Popen) -> None:
+    """Close the capture pipes, then reap ``proc`` within 5 s or name that it still runs."""
+    for stream in (proc.stdout, proc.stderr):
+        if stream is not None:
+            stream.close()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        print(f"patch_harness: pid {proc.pid} still runs 5 s after the stop", file=sys.stderr)
 
 
 def is_msvc_driver(cc: Sequence[str]) -> bool:

@@ -12,7 +12,9 @@ spawns a long-lived grandchild holding inherited output pipes.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import os
 import pathlib
 import signal
@@ -227,6 +229,92 @@ def test_interrupted_compiler_child() -> bool:
                 os.environ["PELORUS_TEST_GRANDCHILD_PID_FILE"] = old_env
 
 
+def test_failed_stop_still_reaps() -> bool:
+    """A stop_tree fault is named; the child is still killed and reaped, the interrupt kept."""
+    tree = harness.process_tree
+    real_popen, real_stop = tree.TreePopen, tree.stop_tree
+    original = KeyboardInterrupt("planted capture interrupt")
+    seen: list = []
+
+    class InterruptOnce(real_popen):
+        """Interrupt the first capture, as Ctrl-C during communicate() would."""
+
+        def communicate(self, *args, **kwargs):
+            if not seen:
+                seen.append(self)
+                raise original
+            return super().communicate(*args, **kwargs)
+
+    def refused_stop(_proc: object) -> bool:
+        raise PermissionError("planted tree stop refusal")
+
+    stderr = io.StringIO()
+    vars(tree).update(TreePopen=InterruptOnce, stop_tree=refused_stop)
+    try:
+        with contextlib.redirect_stderr(stderr):
+            harness._run_with_deadline(list(STALL_CC), 30.0)
+    except KeyboardInterrupt as exc:
+        kept = exc is original
+    except Exception as exc:  # the stop fault replaced the interrupt
+        stderr.write(f"raised {exc!r}\n")
+        kept = False
+    else:
+        kept = False
+    finally:
+        vars(tree).update(TreePopen=real_popen, stop_tree=real_stop)
+    proc = seen[0] if seen else None
+    reaped = proc is not None and proc.returncode is not None
+    if proc is not None and not reaped:
+        proc.kill()
+        proc.communicate(timeout=5)
+    if not kept or not reaped or "planted tree stop refusal" not in stderr.getvalue():
+        print(f"FAIL failed stop: interrupt kept {kept}, reaped {reaped}, stderr {stderr.getvalue()!r}")
+        return False
+    print("PASS: a failed tree stop is named, the child reaped, the interrupt kept")
+    return True
+
+
+def _write_undecodable_stub(path: pathlib.Path) -> None:
+    """Write a compiler that prints undecodable bytes, leaves a grandchild off its pipes, fails."""
+    path.write_text(
+        "import os, subprocess, sys\n"
+        "proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],\n"
+        "                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,\n"
+        "                        stderr=subprocess.DEVNULL)\n"
+        "with open(os.environ['PELORUS_TEST_GRANDCHILD_PID_FILE'], 'w') as f:\n"
+        "    f.write(str(proc.pid))\n"
+        "os.write(1, b'out \\x81\\xff')\n"
+        "os.write(2, b'err \\x81\\xff')\n"
+        "sys.exit(1)\n",
+        encoding="utf-8",
+    )
+
+
+def test_undecodable_output() -> bool:
+    """Undecodable compiler output is replaced, never raised after communicate() reaped the compiler."""
+    old_env = os.environ.get("PELORUS_TEST_GRANDCHILD_PID_FILE")
+    with tempfile.TemporaryDirectory(prefix="pelorus-undecodable-") as tmp:
+        stub, grandchild = pathlib.Path(tmp) / "stub_cc.py", pathlib.Path(tmp) / "grandchild.pid"
+        _write_undecodable_stub(stub)
+        os.environ["PELORUS_TEST_GRANDCHILD_PID_FILE"] = str(grandchild)
+        try:
+            status, output = harness.build_and_run(OK_C, [sys.executable, "-I", str(stub)])
+        except UnicodeDecodeError as exc:
+            print(f"FAIL undecodable output: capture raised {exc!r}")
+            return False
+        finally:
+            _cleanup_stub_pids((grandchild,))
+            if old_env is None:
+                os.environ.pop("PELORUS_TEST_GRANDCHILD_PID_FILE", None)
+            else:
+                os.environ["PELORUS_TEST_GRANDCHILD_PID_FILE"] = old_env
+    if status != 2 or "out \ufffd" not in output or "err \ufffd" not in output:
+        print(f"FAIL undecodable output: status {status}, output {output!r}")
+        return False
+    print("PASS: undecodable compiler output is replaced, the build reports its status")
+    return True
+
+
 def _remove_tree_calls(
     errors: Sequence[BaseException | None], is_windows: bool
 ) -> tuple[int, str, list[float]]:
@@ -321,9 +409,13 @@ def main() -> int:
         failures += 1
     if not test_interrupted_compiler_child():
         failures += 1
+    if not test_failed_stop_still_reaps():
+        failures += 1
+    if not test_undecodable_output():
+        failures += 1
     if failures:
         return 1
-    print(f"patch-harness: {len(cases) + 5} cases ok")
+    print(f"patch-harness: {len(cases) + 7} cases ok")
     return 0
 
 

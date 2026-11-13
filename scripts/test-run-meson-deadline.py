@@ -488,54 +488,82 @@ def test_windows_wait_error_preserved(run_mod: ModuleType) -> list[str]:
     return failures
 
 
-def _failed_job_cleanup_case(tree: ModuleType, stage: str, terminated: int) -> list[str]:
-    """Plant an assign/resume failure and record the job cleanup call order."""
+def _cleanup_needles(terminate: str, closed: int) -> list[str]:
+    """The stderr text a planted cleanup fault must leave; empty when cleanup worked."""
+    needles = {
+        "ok": [],
+        "zero": ["TerminateJobObject failed: error 5", "may still run"],
+        "raise": ["planted TerminateJobObject fault", "may still run"],
+    }[terminate]
+    return needles if closed else [*needles, "CloseHandle failed: error 5"]
+
+
+def _failed_job_cleanup_case(
+    tree: ModuleType, stage: str, terminate: str, closed: int
+) -> list[str]:
+    """Plant an assign/resume failure; record the cleanup calls and what stderr names."""
     namespace = vars(tree)
-    saved = {name: namespace[name] for name in
-             ("_kernel32", "_assign_to_job", "_resume_process_threads")}
+    saved = {name: namespace[name] for name in (
+        "_kernel32", "_assign_to_job", "_resume_process_threads", "_last_error", "_windows_error",
+    )}
     calls: list[tuple] = []
     original = RuntimeError(f"planted {stage} failure")
+    label = f"failed job cleanup {stage}/terminate {terminate}/close {closed}"
 
     def fail(*_: object) -> None:
         raise original
 
-    def terminate(job: int, code: int) -> int:
+    def terminate_job(job: int, code: int) -> int:
         calls.append(("terminate", job, code))
-        return terminated
+        if terminate == "raise":
+            raise ValueError("planted TerminateJobObject fault")
+        return int(terminate == "ok")
+
+    def close(job: int) -> int:
+        calls.append(("close", job))
+        return closed
 
     fake = SimpleNamespace(
-        CreateJobObjectW=lambda *_: 77,
-        TerminateJobObject=terminate,
-        CloseHandle=lambda job: calls.append(("close", job)),
+        CreateJobObjectW=lambda *_: 77, TerminateJobObject=terminate_job, CloseHandle=close,
     )
     namespace.update(
         _kernel32=lambda: fake,
+        _last_error=lambda: 5,
+        _windows_error=lambda call, error: OSError(f"{call} failed: error {error}"),
         _assign_to_job=fail if stage == "assign" else lambda *_: None,
         _resume_process_threads=fail if stage == "resume" else lambda *_: 1,
     )
     failures: list[str] = []
+    stderr = io.StringIO()
     try:
-        tree._new_job_with(os.getpid())
+        with contextlib.redirect_stderr(stderr):
+            tree._new_job_with(os.getpid())
     except RuntimeError as exc:
         if exc is not original:
-            _fail(failures, f"failed job cleanup {stage}: original exception masked")
+            _fail(failures, f"{label}: original exception masked")
     else:
-        _fail(failures, f"failed job cleanup {stage}: original exception lost")
+        _fail(failures, f"{label}: original exception lost")
     finally:
         namespace.update(saved)
     if calls != [("terminate", 77, 1), ("close", 77)]:
-        _fail(failures, f"failed job cleanup {stage}/{terminated}: call order {calls!r}")
+        _fail(failures, f"{label}: call order {calls!r}")
+    needles, text = _cleanup_needles(terminate, closed), stderr.getvalue()
+    if any(needle not in text for needle in needles) or (not needles and text):
+        _fail(failures, f"{label}: stderr {text!r}, want {needles!r}")
     return failures
 
 
 def test_failed_job_cleanup(run_mod: ModuleType) -> list[str]:
-    """Assign/resume failures terminate before closing, even on terminate failure."""
+    """Assign/resume failures terminate, then close; a failed call is named, the start error kept."""
     failures: list[str] = []
     for stage in ("assign", "resume"):
-        for terminated in (1, 0):
-            failures.extend(_failed_job_cleanup_case(run_mod.process_tree, stage, terminated))
+        for terminate in ("ok", "zero", "raise"):
+            for closed in (1, 0):
+                failures.extend(
+                    _failed_job_cleanup_case(run_mod.process_tree, stage, terminate, closed)
+                )
     if not failures:
-        print("PASS: failed job cleanup terminates before close and preserves exception")
+        print("PASS: failed job cleanup terminates, closes, names a failed call, keeps the exception")
     return failures
 
 

@@ -176,15 +176,25 @@ def _new_job_with(pid: int) -> int:
 
 
 def _discard_failed_job(kernel32: Any, job: int) -> None:
-    """End any resumed descendants, then close; retain the original start failure."""
-    for call, args in (
-        (kernel32.TerminateJobObject, (job, _JOB_KILL_EXIT_CODE)),
-        (kernel32.CloseHandle, (job,)),
+    """End any resumed descendants, then close the job; name, never raise, a failed call.
+
+    Both calls report failure by returning zero. The caller re-raises the
+    start failure and kills the direct child, so a cleanup fault is named on
+    stderr instead of replacing that failure. The job is the only handle on
+    the descendants, so a failed TerminateJobObject carries the warning that
+    they may still run.
+    """
+    for name, call, args, warning in (
+        ("TerminateJobObject", kernel32.TerminateJobObject, (job, _JOB_KILL_EXIT_CODE),
+         "; processes the failed start resumed may still run"),
+        ("CloseHandle", kernel32.CloseHandle, (job,), ""),
     ):
         try:
-            call(*args)
-        except BaseException as exc:
-            print(f"process_tree: failed job cleanup: {exc}", file=sys.stderr)
+            failure = None if call(*args) else _windows_error(name, _last_error())
+        except Exception as exc:  # a ctypes fault must not mask the start failure
+            failure = exc
+        if failure is not None:
+            print(f"process_tree: job cleanup: {failure}{warning}", file=sys.stderr)
 
 
 def _assign_to_job(kernel32: Any, job: int, pid: int) -> None:
