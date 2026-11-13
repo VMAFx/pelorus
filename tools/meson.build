@@ -103,6 +103,14 @@ test('tool-qloop-missing-val', pelorus_qloop,
 
 bash_prog = find_program('bash', required: false)
 if bash_prog.found()
+  # Case e needs a non-executable file; MSYS2 mounts without ACLs derive execute bits from content.
+  if build_machine.system() != 'windows'
+    test('quality-tool-path',
+         bash_prog,
+         args: [meson.project_source_root() / 'scripts' / 'quality' / 'test-tool-path.sh'],
+         timeout: 60,
+         suite: 'fast')
+  endif
   test('x265-zone-honour',
        bash_prog,
        args: [meson.project_source_root() / 'scripts' / 'quality' / 'x265-zone-honour.sh', pelorus_zones],

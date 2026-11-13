@@ -10,17 +10,11 @@ if ! command -v x265 >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; the
     exit 77
 fi
 
-PELORUS_ZONES="${1:-}"
-if [[ -z "$PELORUS_ZONES" ]]; then
-    if [[ -x "${MESON_BUILD_ROOT:-build}/tools/pelorus_zones" ]]; then
-        PELORUS_ZONES="${MESON_BUILD_ROOT:-build}/tools/pelorus_zones"
-    elif [[ -x "build/tools/pelorus_zones" ]]; then
-        PELORUS_ZONES="build/tools/pelorus_zones"
-    else
-        echo "FAIL: pelorus_zones binary not found" >&2
-        exit 1
-    fi
-fi
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=tool-path.sh
+source "$(dirname "${BASH_SOURCE[0]}")/tool-path.sh"
+
+PELORUS_ZONES="$(pelorus_tool_path pelorus_zones "${1:-}")"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT

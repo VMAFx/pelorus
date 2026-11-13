@@ -1,0 +1,1 @@
+- The shared `scripts/quality/tool-path.sh` helper resolves tool paths for `qloop-x265-reference.sh` and `x265-zone-honour.sh`, preserving explicit arguments, build-directory fallback order and missing-binary errors ([ADR-0215](docs/adr/0215-quality-threshold-loop.md)).
