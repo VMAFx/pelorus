@@ -35,6 +35,40 @@ int hp_fail_count(void)
     return g_fail;
 }
 
+#define HP_BOUNDARY_CHECK(cond)                                                                    \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            hp_check_failed(label, __LINE__, #cond);                                               \
+        }                                                                                          \
+    } while (0)
+
+/* Verify short and exact output capacities, recording the caller's case label on failure. */
+void hp_check_size_boundary(const char *label, HpEncodeFn encode, const void *ctx, size_t need)
+{
+    HP_BOUNDARY_CHECK(need > 0u);
+    if (need == 0u) {
+        return;
+    }
+
+    uint8_t *buf = malloc(need);
+    HP_BOUNDARY_CHECK(buf != NULL);
+    if (buf == NULL) {
+        return;
+    }
+
+    size_t out_len = 0;
+    HP_BOUNDARY_CHECK(encode(ctx, buf, need - 1u, &out_len) == PEL_ERR_RANGE);
+    HP_BOUNDARY_CHECK(out_len == need);
+
+    out_len = 0;
+    HP_BOUNDARY_CHECK(encode(ctx, buf, need, &out_len) == PEL_OK);
+    HP_BOUNDARY_CHECK(out_len == need);
+
+    free(buf);
+}
+
+#undef HP_BOUNDARY_CHECK
+
 /* Read at most cap bytes from fp in bounded chunks; return the byte count read. */
 static size_t read_chunks(FILE *fp, char *buf, size_t cap)
 {

@@ -203,33 +203,26 @@ void hp_test_negative_header_only_blob(void)
     }
 }
 
+typedef struct HpCarrierEncodeCtx {
+    const uint8_t *blob;
+    size_t blob_len;
+} HpCarrierEncodeCtx;
+
+static pel_result encode_boundary_carrier(const void *ctx, uint8_t *out, size_t cap,
+                                          size_t *out_len)
+{
+    const HpCarrierEncodeCtx *carrier = ctx;
+    return pel_blob_carrier_encode(carrier->blob, carrier->blob_len, out, cap, out_len);
+}
+
 /* Verify boundary behavior and size query for carrier encoding. */
 void hp_test_boundary_carrier_encode(const uint8_t *blob, size_t blob_len)
 {
     size_t need = 0;
-    uint8_t *buf;
-    size_t out_len = 0;
 
     CHECK(pel_blob_carrier_encode(blob, blob_len, NULL, 0u, &need) == PEL_ERR_RANGE);
-    CHECK(need > 0u);
-    if (need == 0u) {
-        return;
-    }
-
-    buf = malloc(need);
-    CHECK(buf != NULL);
-    if (buf == NULL) {
-        return;
-    }
-
-    CHECK(pel_blob_carrier_encode(blob, blob_len, buf, need - 1u, &out_len) == PEL_ERR_RANGE);
-    CHECK(out_len == need);
-
-    out_len = 0;
-    CHECK(pel_blob_carrier_encode(blob, blob_len, buf, need, &out_len) == PEL_OK);
-    CHECK(out_len == need);
-
-    free(buf);
+    const HpCarrierEncodeCtx ctx = {blob, blob_len};
+    hp_check_size_boundary("carrier encode", encode_boundary_carrier, &ctx, need);
 }
 
 /* Verify boundary behavior for unwrap destination scratch sizing. */
