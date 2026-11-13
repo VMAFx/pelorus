@@ -619,7 +619,8 @@ before the unpack, including an inline pop in an earlier argument, clears that
 keyword only within the same nearest function or lambda scope. A closure's
 removal cannot clear an outer call, or the reverse. Defaults, decorators and
 parameter and return annotations are checked in the enclosing scope even when the
-nested function binds `kw`; a removal inside an annotation never hides a collision.
+nested function binds `kw`; a removal inside an annotation never hides a collision,
+except inside a lambda body, where it counts in that lambda.
 String keys in `**{"timeout": 1}` and keywords in `**dict(timeout=1)` also name
 keywords; unknown keys and other dictionary unpacks do not. The check does not
 follow control flow or copies of `kw`, and a pop whose key is not a string
@@ -636,7 +637,11 @@ deadline; Meson's unset default is 30 s. The AST check takes the maximum of
 `tracked_python.GIT_DEADLINE_S` for importers and every `timeout=` value in the
 script: a numeric literal, a module-level numeric constant, or a parameter's
 bound, the largest of its numeric default and every value a call in the module
-passes to it. A `timeout=` value with no numeric literal behind it, such as
+passes to it. A name some function, lambda or class body binds locally is unreadable
+(scopes are read with `symtable`); unreassigned parameters keep their bounds, but
+locally bound names are unreadable as call arguments. A plain method's bound is
+unreadable for an attribute call with positional arguments unless the receiver
+is `self` or a call expression. A `timeout=` value with no numeric literal behind it, such as
 `TIMEOUT * 2`, a parameter defaulting to `None`, a function passed as a
 callback or called with `*args` or `**kw`, or a name that another
 module-level statement rebinds to a non-literal, fails the test and names its

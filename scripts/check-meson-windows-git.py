@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import symtable
 import sys
 import tempfile
 
@@ -237,6 +238,18 @@ def function_calls(func: ast.AST, tree: ast.Module) -> list[ast.Call] | None:
     return None if escaped else calls
 
 
+def method_offset(func: ast.AST, call: ast.Call) -> int | None:
+    """Receiver binding for an attribute call; None means ambiguous positional arguments."""
+    decorators = {getattr(d, "id", getattr(d, "attr", None)) for d in func.decorator_list}
+    receiver = call.func.value
+    if "staticmethod" in decorators:
+        return 0
+    if ("classmethod" in decorators or isinstance(receiver, ast.Call)
+            or isinstance(receiver, ast.Name) and receiver.id == "self" or not call.args):
+        return 1
+    return None
+
+
 def bind_call_parameters(
     func: ast.FunctionDef | ast.AsyncFunctionDef, tree: ast.Module, positional: list[ast.arg],
     bounds: dict[str, int | float | None], constants: dict[str, int | float | None],
@@ -246,12 +259,12 @@ def bind_call_parameters(
     if calls is None:
         return True
     method = any(isinstance(node, ast.ClassDef) and func in node.body for node in ast.walk(tree))
-    method = method and not any(getattr(d, "id", getattr(d, "attr", None)) == "staticmethod"
-                                for d in func.decorator_list)
     for call in calls:
         if any(isinstance(arg, ast.Starred) for arg in call.args) or any(k.arg is None for k in call.keywords):
             return True
-        offset = int(method and isinstance(call.func, ast.Attribute))
+        offset = method_offset(func, call) if method and isinstance(call.func, ast.Attribute) else 0
+        if offset is None:
+            return True
         for arg, value in zip(positional[offset:], call.args, strict=False):
             bind(bounds, arg.arg, timeout_value(value, constants))
         for keyword in call.keywords:
@@ -259,10 +272,27 @@ def bind_call_parameters(
     return False
 
 
-def readable_names(tree: ast.Module) -> dict[str, int | float | None]:
+def scope_bindings(source: str, filename: str) -> tuple[set[str], set[str]]:
+    """Collect non-module assigned/imported and local names using Python's own scopes."""
+    pending = symtable.symtable(source, filename, "exec").get_children()
+    assigned, local = set(), set()
+    for _ in range(100_000):
+        if not pending:
+            break
+        table = pending.pop()
+        assigned.update(s.get_name() for s in table.get_symbols() if s.is_assigned() or s.is_imported())
+        local.update(s.get_name() for s in table.get_symbols() if s.is_local())
+        pending.extend(table.get_children())
+    if pending:
+        raise ValueError(f"{filename}: symbol-table traversal limit exceeded")
+    return assigned, local
+
+
+def readable_names(tree: ast.Module, source: str, filename: str) -> dict[str, int | float | None]:
     """Module bindings merged with parameter defaults and every readable call value."""
-    constants = module_numbers(tree)
-    names = constants.copy()
+    names = module_numbers(tree)
+    assigned, local = scope_bindings(source, filename)
+    constants = {name: None if name in assigned | local else value for name, value in names.items()}
     for func in ast.walk(tree):
         if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
@@ -277,7 +307,7 @@ def readable_names(tree: ast.Module) -> dict[str, int | float | None]:
         for arg in (args.vararg, args.kwarg):
             if arg is not None:
                 bind(names, arg.arg, None)
-    return names
+    return names | dict.fromkeys(assigned)
 
 
 def imports_tracked_python(tree: ast.Module) -> bool:
@@ -298,8 +328,9 @@ def timeout_value(node: ast.AST, names: dict[str, int | float | None]) -> int | 
 
 def script_deadline(path: Path, scripts_dir: Path) -> tuple[int | float, list[str]]:
     """Over-approximate Git waits; also list timeout keywords with no readable value."""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    names = readable_names(tree)
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    names = readable_names(tree, source, str(path))
     deadlines: list[int | float] = [0]
     if imports_tracked_python(tree):
         tracked = scripts_dir / "tracked_python.py"
@@ -511,6 +542,11 @@ def timeout_cases() -> list[tuple[str, str, bool]]:
         ("t32 required parameter", base.format(", timeout: 150").replace("scan.py", "required.py"), False),
         ("t33 lambda", base.format(", timeout: 150").replace("scan.py", "lambda.py"), True),
         ("t34 None default with call", base.format(", timeout: 150").replace("scan.py", "none_call.py"), True),
+        ("t35 unbound method", base.format(", timeout: 90").replace("scan.py", "unbound.py"), True),
+        ("t36 self method", base.format(", timeout: 150").replace("scan.py", "self.py"), False),
+        ("t37 local argument", base.format(", timeout: 90").replace("scan.py", "local_arg.py"), True),
+        ("t38 local timeout", base.format(", timeout: 90").replace("scan.py", "local_timeout.py"), True),
+        ("t39 reassigned parameter", base.format(", timeout: 90").replace("scan.py", "local_param.py"), True),
     ]
 
 
@@ -577,6 +613,11 @@ def run_self_test() -> int:
             "required.py": "def scan(limit):\n    run(['git'], timeout=limit)\nscan(120)\n",
             "lambda.py": "scan = lambda limit=60: run(['git'], timeout=limit)\n",
             "none_call.py": "def scan(limit=None):\n    run(['git'], timeout=limit)\nscan(120)\nscan()\n",
+            "unbound.py": "class C:\n    def scan(self, mode=0, limit=60):\n        run(['git'], timeout=limit)\nC.scan(C(), 0, 120)\n",
+            "self.py": "class C:\n    def scan(self, mode=0, limit=60):\n        run(['git'], timeout=limit)\n    def main(self):\n        self.scan(0, 120)\n",
+            "local_arg.py": "LIMIT = 60\ndef scan(limit):\n    run(['git'], timeout=limit)\ndef main():\n    LIMIT = 120\n    scan(LIMIT)\n",
+            "local_timeout.py": "LIMIT = 60\ndef main():\n    LIMIT = 120\n    run(['git'], timeout=LIMIT)\n",
+            "local_param.py": "def scan(limit=60):\n    limit = 300\n    run(['git'], timeout=limit)\nscan()\n",
         }
         for name, source in fixtures.items():
             (scripts / name).write_text(source, encoding="utf-8")

@@ -111,6 +111,10 @@ SELF_TEST_CASES: list[tuple[str, str, list[int]]] = [
      'from __future__ import annotations\n\ndef f(**kw):\n    def h(x: kw.pop("t", None)):\n        pass\n    return g(t=1, **kw)\n', [6]),
     ("lazy_annotation_pop",
      'def f(**kw):\n    def h(x: kw.pop("t", None)):\n        pass\n    return g(t=1, **kw)\n', [4]),
+    ("annotation_lambda_pop",
+     'def f(**kw):\n    def h(x: (lambda: (kw.pop("t", None), g(t=1, **kw)))):\n        pass\n    return h\n', []),
+    ("annotation_lambda_default_pop",
+     'def f(**kw):\n    def h(x: (lambda v=kw.pop("t", None): None)):\n        pass\n    return g(t=1, **kw)\n', [4]),
 ]
 
 
@@ -215,6 +219,8 @@ def _check_function(func: ast.AST, kwname: str, label: str, display: str) -> lis
     nodes = _scope_nodes(func, kwname)
     annotations = {child for node in ast.walk(func) if isinstance(node, FUNC_TYPES)
                    for value in _annotations(node) for child in ast.walk(value)}
+    annotations.difference_update(child for node in ast.walk(func) if isinstance(node, ast.Lambda)
+                                  for child in ast.walk(node.body))
     removed: dict[ast.AST, list[tuple[str, Position]]] = {}
     for node, scope in nodes:
         removed.setdefault(scope, []).extend([] if node in annotations else _removal(node, kwname))
