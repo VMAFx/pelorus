@@ -10,6 +10,7 @@ module by path (importlib), not by import.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import os
 import pathlib
@@ -197,7 +198,7 @@ def _run_with_deadline(
     argv: Sequence[str],
     timeout: float,
 ) -> subprocess.CompletedProcess[str] | None:
-    """Run argv with tree kill on deadline (HISS-02, HISS-08).
+    """Run argv with tree kill on deadline or interrupted capture (HISS-02, HISS-08).
 
     ``TreePopen`` puts the child at the root of a process group (POSIX) or a
     job object (Windows), so ``stop_tree`` reaches every process it started.
@@ -207,31 +208,76 @@ def _run_with_deadline(
         if os.name == "nt"
         else {}
     )
+    # errors="replace": undecodable output cannot fail the capture after
+    # communicate() reaped the child, when its tree is no longer safe to signal.
     proc = process_tree.TreePopen(
         argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        errors="replace",
         **kwargs,
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
         return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - result record only, executes nothing
     except subprocess.TimeoutExpired:
-        process_tree.stop_tree(proc)
-        try:
-            proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            if proc.stdout is not None:
-                proc.stdout.close()
-            if proc.stderr is not None:
-                proc.stderr.close()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                # Driver unresponsive to SIGKILL; abandon wait to report deadline timeout.
-                pass
+        _stop_and_reap(proc)
         return None
+    except BaseException:
+        _stop_and_reap(proc)
+        raise
+
+
+def _stop_and_reap(proc: subprocess.Popen) -> None:
+    """Stop the tree, then bound capture and reap; name a cleanup fault, raise none.
+
+    The caller reports its deadline or re-raises its original error, so a
+    failed tree stop or capture is named on stderr instead of replacing it.
+    """
+    try:
+        process_tree.stop_tree(proc)
+    except Exception as exc:  # e.g. PermissionError from killpg
+        print(
+            f"patch_harness: stopping the tree of pid {proc.pid} failed: {exc}; "
+            f"killing pid {proc.pid} alone",
+            file=sys.stderr,
+        )
+        with contextlib.suppress(OSError):
+            proc.kill()  # a failed kill is named by the bounded reap below
+    reaped = False
+    try:
+        proc.communicate(timeout=5)
+        reaped = True
+    except subprocess.TimeoutExpired:
+        print(f"patch_harness: pid {proc.pid} kept its pipes open 5 s after the stop", file=sys.stderr)
+    except Exception as exc:
+        print(f"patch_harness: capture after the stop of pid {proc.pid} failed: {exc}", file=sys.stderr)
+    finally:
+        if not reaped:
+            _close_and_reap(proc)
+
+
+def _close_and_reap(proc: subprocess.Popen, is_windows: bool | None = None) -> None:
+    """Reap within 5 s; leave Windows pipes to their reader threads.
+
+    A reader-thread read holds the pipe; close would wait for the descendant.
+    """
+    windows = os.name == "nt" if is_windows is None else is_windows
+    for name, stream in (("stdout", proc.stdout), ("stderr", proc.stderr)):
+        if stream is not None:
+            if windows:
+                print(
+                    f"patch_harness: left the {name} pipe of pid {proc.pid} open; "
+                    "its reader thread may still block on it",
+                    file=sys.stderr,
+                )
+            else:
+                stream.close()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        print(f"patch_harness: pid {proc.pid} still runs 5 s after the stop", file=sys.stderr)
 
 
 def is_msvc_driver(cc: Sequence[str]) -> bool:

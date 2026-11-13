@@ -170,9 +170,31 @@ def _new_job_with(pid: int) -> int:
         if _resume_process_threads(kernel32, pid) == 0:
             raise OSError(f"pid {pid} has no suspended thread to resume")
     except BaseException:
-        kernel32.CloseHandle(job)
+        _discard_failed_job(kernel32, job)
         raise
     return job
+
+
+def _discard_failed_job(kernel32: Any, job: int) -> None:
+    """End any resumed descendants, then close the job; name, never raise, a failed call.
+
+    Both calls report failure by returning zero. The caller re-raises the
+    start failure and kills the direct child, so a cleanup fault is named on
+    stderr instead of replacing that failure. The job is the only handle on
+    the descendants, so a failed TerminateJobObject carries the warning that
+    they may still run.
+    """
+    for name, call, args, warning in (
+        ("TerminateJobObject", kernel32.TerminateJobObject, (job, _JOB_KILL_EXIT_CODE),
+         "; processes the failed start resumed may still run"),
+        ("CloseHandle", kernel32.CloseHandle, (job,), ""),
+    ):
+        try:
+            failure = None if call(*args) else _windows_error(name, _last_error())
+        except Exception as exc:  # a ctypes fault must not mask the start failure
+            failure = exc
+        if failure is not None:
+            print(f"process_tree: job cleanup: {failure}{warning}", file=sys.stderr)
 
 
 def _assign_to_job(kernel32: Any, job: int, pid: int) -> None:
@@ -319,10 +341,11 @@ def _windows_pid_gone(pid: int) -> bool:
         raise _windows_error(f"OpenProcess for pid {pid}", error)
     try:
         state = kernel32.WaitForSingleObject(handle, 0)
+        error = _last_error() if state not in (_WAIT_OBJECT_0, _WAIT_TIMEOUT) else 0
     finally:
         kernel32.CloseHandle(handle)
     if state not in (_WAIT_OBJECT_0, _WAIT_TIMEOUT):
-        raise _windows_error(f"WaitForSingleObject for pid {pid}", _last_error())
+        raise _windows_error(f"WaitForSingleObject for pid {pid}", error)
     return state == _WAIT_OBJECT_0
 
 
@@ -350,6 +373,8 @@ def pid_gone(pid: int) -> bool:
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
+    except PermissionError:
+        return False
     return False
 
 

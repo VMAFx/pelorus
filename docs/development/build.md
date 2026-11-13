@@ -549,7 +549,8 @@ on POSIX, and the job outlives its first process on Windows. A tree step that ca
 tree (a child that leads no process group, a child that no job holds, a failed
 `TerminateJobObject`) is named on stderr with a warning that test processes may still run,
 instead of falling back silently. A child that cannot join its job is killed before it runs, and
-the start raises.
+the start raises. A failed `TerminateJobObject` or `CloseHandle` on that discarded job is named on stderr and does not
+replace the start error.
 The fast-suite test `run-meson-deadline` (`scripts/test-run-meson-deadline.py`) runs on every
 platform, Windows included. It checks that a child's exit status passes through, that a child
 outliving a short deadline is stopped together with a test process it started, that the tree is
@@ -559,7 +560,11 @@ as end of file on a pipe only the stand-in holds, so it needs no `os.waitid` (on
 Python 3.13), and it requires the stand-in's own exit status 0 after the stop. On Windows it also checks that a test process
 that broke away from a nested job is stopped, and that a child that cannot join its job is
 killed. The `patch-harness` fast test requires the same stop of a stalled compiler's child on
-every platform.
+every platform. It also requires that an interrupted capture stops and reaps the compiler before
+the interrupt propagates, that a failed tree stop is named while the compiler is still killed and
+reaped, and that undecodable compiler output is read with replacement characters instead of
+failing the capture after the compiler was reaped, and that on Windows cleanup leaves a capture
+pipe open and names it instead of closing it under a blocked reader thread.
 
 `make test` also runs `scripts/check-tester-kit-install.py --run-kit <build>`. It runs
 `meson introspect --tests` on the build directory and hands the result to
