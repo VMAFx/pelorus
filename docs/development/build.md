@@ -617,8 +617,9 @@ tracked Python files with the stdlib AST and names the call line once per
 keyword at risk. A `kw.pop("timeout", ...)` or `del kw["timeout"]` placed
 before the unpack, including an inline pop in an earlier argument, clears that
 keyword only within the same nearest function or lambda scope. A closure's
-removal cannot clear an outer call, or the reverse. Defaults and decorators
-evaluate in the enclosing scope even when the nested function binds `kw`.
+removal cannot clear an outer call, or the reverse. Defaults, decorators and
+parameter and return annotations evaluate in the enclosing scope even when the
+nested function binds `kw`.
 String keys in `**{"timeout": 1}` and keywords in `**dict(timeout=1)` also name
 keywords; unknown keys and other dictionary unpacks do not. The check does not
 follow control flow or copies of `kw`, and a pop whose key is not a string
@@ -632,12 +633,16 @@ keyword-only `env` and keeps its 60 s git deadline fixed.
 scans and timeouts for every Git-scanning Meson test, including self-tests.
 Each timeout must be a positive integer literal strictly above the script's
 deadline; Meson's unset default is 30 s. The AST check takes the maximum of
-`tracked_python.GIT_DEADLINE_S` for importers, literal `timeout=` values, and
-module-level numeric `TIMEOUT`/`DEADLINE` constants used as timeout values.
-A missing numeric shared deadline fails closed. Set `timeout:` after `workdir:`
-to the deadline plus 30 s, rounded up to a multiple of 30; an existing larger
-timeout stays. The check's `--self-test` plants missing, equal, dynamic and
-nonpositive timeouts alongside safe timeouts and scripts that do not call Git.
+`tracked_python.GIT_DEADLINE_S` for importers and every `timeout=` value in the
+script: a numeric literal, a module-level numeric constant, or a parameter's
+numeric default. A `timeout=` value with no numeric literal behind it, such as
+`TIMEOUT * 2`, a parameter defaulting to `None`, or a name that another
+module-level statement rebinds to a non-literal, fails the test and names its
+line. A missing or rebound shared deadline fails closed. Set `timeout:` after
+`workdir:` to the deadline plus 30 s, rounded up to a multiple of 30; an
+existing larger timeout stays. The check's `--self-test` plants missing, equal,
+dynamic and nonpositive timeouts and unreadable script deadlines alongside safe
+timeouts and scripts that do not call Git.
 
 Every tracked Python script must parse its command line with stdlib `argparse`
 rather than by indexing `argv`. The fast-suite test `python-argv`

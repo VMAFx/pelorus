@@ -197,19 +197,47 @@ def script_uses_git(path: Path) -> bool:
     return False
 
 
-def module_numbers(tree: ast.Module) -> dict[str, int | float]:
-    """Module-level numeric assignments, excluding booleans and expressions."""
-    numbers: dict[str, int | float] = {}
+def number(node: ast.AST | None) -> int | float | None:
+    """A numeric literal, excluding booleans; None for anything else."""
+    value = node.value if isinstance(node, ast.Constant) else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def bind(numbers: dict[str, int | float | None], name: str, value: int | float | None) -> None:
+    """Keep the largest numeric binding; any unreadable binding makes the name unreadable."""
+    old = numbers.get(name, value)
+    numbers[name] = None if value is None or old is None else max(old, value)
+
+
+def module_numbers(tree: ast.Module) -> dict[str, int | float | None]:
+    """Module-level bindings; None marks a name some binding gives no numeric literal."""
+    numbers: dict[str, int | float | None] = {}
     for node in tree.body:
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-            continue
-        if not isinstance(node.value, ast.Constant) or type(node.value.value) not in (int, float):
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            bind(numbers, node.target.id, None)
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
             continue
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for target in targets:
             if isinstance(target, ast.Name):
-                numbers[target.id] = max(numbers.get(target.id, 0), node.value.value)
+                bind(numbers, target.id, number(node.value))
     return numbers
+
+
+def readable_names(tree: ast.Module) -> dict[str, int | float | None]:
+    """Module bindings merged with every parameter default; a missing default is None."""
+    names = module_numbers(tree)
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        args = func.args
+        positional = [*args.posonlyargs, *args.args]
+        defaults = [None] * (len(positional) - len(args.defaults)) + [*args.defaults]
+        for arg, default in zip([*positional, *args.kwonlyargs], [*defaults, *args.kw_defaults], strict=True):
+            bind(names, arg.arg, number(default))
+    return names
 
 
 def imports_tracked_python(tree: ast.Module) -> bool:
@@ -221,33 +249,38 @@ def imports_tracked_python(tree: ast.Module) -> bool:
     )
 
 
-def timeout_value(node: ast.AST, numbers: dict[str, int | float]) -> int | float:
-    """A literal timeout or a module constant whose name declares a deadline."""
-    if isinstance(node, ast.Constant) and type(node.value) in (int, float):
-        return node.value
-    if isinstance(node, ast.Name) and any(word in node.id.upper() for word in ("TIMEOUT", "DEADLINE")):
-        return numbers.get(node.id, 0)
-    return 0
+def timeout_value(node: ast.AST, names: dict[str, int | float | None]) -> int | float | None:
+    """A numeric literal or a name whose every binding is one; None when unreadable."""
+    if isinstance(node, ast.Name):
+        return names.get(node.id)
+    return number(node)
 
 
-def script_deadline(path: Path, scripts_dir: Path) -> int | float:
-    """Over-approximate Git waits from tracked_python and all timeout keywords."""
+def script_deadline(path: Path, scripts_dir: Path) -> tuple[int | float, list[str]]:
+    """Over-approximate Git waits; also list timeout keywords with no readable value."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    numbers = module_numbers(tree)
+    names = readable_names(tree)
     deadlines: list[int | float] = [0]
     if imports_tracked_python(tree):
         tracked = scripts_dir / "tracked_python.py"
         shared = ast.parse(tracked.read_text(encoding="utf-8"), filename=str(tracked))
         deadline = module_numbers(shared).get("GIT_DEADLINE_S")
         if deadline is None:
-            raise ValueError(f"{tracked}: missing numeric module-level GIT_DEADLINE_S")
+            raise ValueError(f"{tracked}: GIT_DEADLINE_S is missing or rebound to a non-literal value")
         deadlines.append(deadline)
-    deadlines.extend(
-        timeout_value(keyword.value, numbers)
+    timeouts = [
+        keyword.value
         for node in ast.walk(tree) if isinstance(node, ast.Call)
         for keyword in node.keywords if keyword.arg == "timeout"
-    )
-    return max(deadlines)
+    ]
+    unresolved: list[str] = []
+    for value in timeouts:
+        seconds = timeout_value(value, names)
+        if seconds is None:
+            unresolved.append(f"line {value.lineno} ({ast.unparse(value)})")
+        else:
+            deadlines.append(seconds)
+    return max(deadlines), unresolved
 
 
 def integer_timeout(tokens: list[Token]) -> int | None:
@@ -285,7 +318,14 @@ def test_findings(
                 f"which calls git; gate it with {WINDOWS_GATE} "
                 "(git is not on PATH on Windows CI)"
             )
-        timeout, deadline = meson_timeout(call), script_deadline(scripts_dir / ref, scripts_dir)
+        timeout = meson_timeout(call)
+        deadline, unresolved = script_deadline(scripts_dir / ref, scripts_dir)
+        findings.extend(
+            f"meson.build:{call[0].line}: test '{name}' runs scripts/{ref} whose timeout at "
+            f"{where} has no numeric literal value; use a literal, a module constant or a "
+            "numeric parameter default"
+            for where in unresolved
+        )
         if timeout is None or timeout <= deadline or timeout <= 0:
             findings.append(
                 f"meson.build:{call[0].line}: test '{name}' times out after {timeout} s "
@@ -413,17 +453,30 @@ def timeout_cases() -> list[tuple[str, str, bool]]:
         ("t14 annotated constant", base.format(", timeout: 90").replace("scan.py", "annotated.py"), True),
         ("t15 unused constant", base.format("").replace("scan.py", "unused.py"), False),
         ("t16 reassigned constant", base.format(", timeout: 90").replace("scan.py", "reassigned.py"), True),
+        ("t17 timeout expression", base.format(", timeout: 150").replace("scan.py", "expression.py"), True),
+        ("t18 rebound constant", base.format(", timeout: 90").replace("scan.py", "rebound.py"), True),
+        ("t19 parameter default", base.format(", timeout: 90").replace("scan.py", "parameter.py"), True),
+        ("t20 parameter default met", base.format(", timeout: 150").replace("scan.py", "parameter.py"), False),
+        ("t21 parameter None", base.format(", timeout: 150").replace("scan.py", "parameter_none.py"), True),
     ]
 
 
+UNREADABLE_SHARED_DEADLINES = (
+    "OTHER = 60\n",
+    "GIT_DEADLINE_S = '60'\n",
+    "GIT_DEADLINE_S = 60\nGIT_DEADLINE_S = 120 + 0\n",
+    "GIT_DEADLINE_S = 60\nGIT_DEADLINE_S += 60\n",
+)
+
+
 def shared_deadline_self_test(scripts: Path, meson: Path) -> bool:
-    """A missing or nonnumeric shared deadline must produce a named failure."""
+    """A missing, nonnumeric or rebound shared deadline must produce a named failure."""
     shared = scripts / "tracked_python.py"
     meson.write_text(
         f"{WINDOWS_GATE}\ntest('shared', python, args: ['scripts' / 'scan.py'], timeout: 90)\nendif\n",
         encoding="utf-8",
     )
-    for source in ("OTHER = 60\n", "GIT_DEADLINE_S = '60'\n"):
+    for source in UNREADABLE_SHARED_DEADLINES:
         shared.write_text(source, encoding="utf-8")
         try:
             check(meson, scripts)
@@ -432,7 +485,7 @@ def shared_deadline_self_test(scripts: Path, meson: Path) -> bool:
                 print(f"FAIL: shared deadline not named: {exc}", file=sys.stderr)
                 return False
         else:
-            print("FAIL: missing numeric GIT_DEADLINE_S accepted", file=sys.stderr)
+            print(f"FAIL: unreadable GIT_DEADLINE_S accepted: {source!r}", file=sys.stderr)
             return False
     shared.write_text("GIT_DEADLINE_S: float = 60.0\n", encoding="utf-8")
     return not check(meson, scripts)[0]
@@ -457,6 +510,10 @@ def run_self_test() -> int:
             "annotated.py": "git_deadline: float = 120.5\nrun(['git'], timeout=git_deadline)\n",
             "unused.py": "UNUSED_TIMEOUT = 120\nrun(['git'])\n",
             "reassigned.py": "GIT_TIMEOUT = 120\nrun(['git'], timeout=GIT_TIMEOUT)\nGIT_TIMEOUT = 10\n",
+            "expression.py": "GIT_TIMEOUT = 60\nrun(['git'], timeout=GIT_TIMEOUT * 2)\n",
+            "rebound.py": "GIT_TIMEOUT = 60\nrun(['git'], timeout=GIT_TIMEOUT)\nGIT_TIMEOUT = 120 + 0\n",
+            "parameter.py": "def run_git(timeout=120):\n    run(['git'], timeout=timeout)\n",
+            "parameter_none.py": "def run_git(timeout=None):\n    run(['git'], timeout=timeout)\n",
         }
         for name, source in fixtures.items():
             (scripts / name).write_text(source, encoding="utf-8")
@@ -475,7 +532,7 @@ def run_self_test() -> int:
                 return 1
         if not shared_deadline_self_test(scripts, meson):
             return 1
-    print(f"check-meson-windows-git: self-test ({len(cases) + 3} cases) ok")
+    print(f"check-meson-windows-git: self-test ({len(cases) + len(UNREADABLE_SHARED_DEADLINES) + 1} cases) ok")
     return 0
 
 

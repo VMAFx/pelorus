@@ -101,6 +101,12 @@ SELF_TEST_CASES: list[tuple[str, str, list[int]]] = [
      "def f(**kw):\n    return lambda kw=g(t=1, **kw): None\n", [2]),
     ("nested_keyword_default",
      "def f(**kw):\n    def h(*, kw=g(t=1, **kw)):\n        pass\n", [2]),
+    ("nested_param_annotation",
+     "def f(**kw):\n    def h(x: g(t=1, **kw)):\n        pass\n", [2]),
+    ("nested_return_annotation",
+     "def f(**kw):\n    def h() -> g(t=1, **kw):\n        pass\n", [2]),
+    ("nested_star_annotation",
+     "def f(**kw):\n    def h(*a: g(t=1, **kw), **kw: g(u=1, **kw)):\n        pass\n", [2, 2]),
 ]
 
 
@@ -118,8 +124,12 @@ def _function_body(func: ast.AST) -> list[ast.AST]:
 
 
 def _definition_values(func: ast.AST) -> list[ast.AST]:
-    """Defaults and decorators evaluated by a function's enclosing scope."""
-    values = [*func.args.defaults, *func.args.kw_defaults, *getattr(func, "decorator_list", [])]
+    """Defaults, decorators and annotations evaluated by a function's enclosing scope."""
+    args = func.args
+    params = [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]
+    values = [*args.defaults, *args.kw_defaults, *getattr(func, "decorator_list", [])]
+    values += [param.annotation for param in params if param is not None]
+    values.append(getattr(func, "returns", None))
     return [node for node in values if node is not None]
 
 
