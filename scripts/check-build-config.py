@@ -243,6 +243,7 @@ GLOBAL_LINK_SPELLINGS = (
     ("braced default", "add_extralibs ${libpelorus_extralibs:-}"),
     ("quoted command", '"add_extralibs" "$libpelorus_extralibs"'),
     ("continuation in token", 'add_extralibs "$libpelorus_extra\\\nlibs"'),
+    ("CRLF continuation in token", 'add_extralibs "$libpelorus_extra\\\r\nlibs"'),
     ("split code span", "`add_extralibs` `$libpelorus_extralibs`"),
     ("escaped letter", 'add_extra\\libs "$libpelorus_extralibs"'),
     ("other argument first", "add_extralibs $other_extralibs $libpelorus_extralibs"),
