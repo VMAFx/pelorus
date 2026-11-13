@@ -258,11 +258,22 @@ def _stop_and_reap(proc: subprocess.Popen) -> None:
             _close_and_reap(proc)
 
 
-def _close_and_reap(proc: subprocess.Popen) -> None:
-    """Close the capture pipes, then reap ``proc`` within 5 s or name that it still runs."""
-    for stream in (proc.stdout, proc.stderr):
+def _close_and_reap(proc: subprocess.Popen, is_windows: bool | None = None) -> None:
+    """Reap within 5 s; leave Windows pipes to their reader threads.
+
+    A reader-thread read holds the pipe; close would wait for the descendant.
+    """
+    windows = os.name == "nt" if is_windows is None else is_windows
+    for name, stream in (("stdout", proc.stdout), ("stderr", proc.stderr)):
         if stream is not None:
-            stream.close()
+            if windows:
+                print(
+                    f"patch_harness: left the {name} pipe of pid {proc.pid} open; "
+                    "its reader thread may still block on it",
+                    file=sys.stderr,
+                )
+            else:
+                stream.close()
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:

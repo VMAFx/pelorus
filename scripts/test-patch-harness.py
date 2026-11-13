@@ -382,6 +382,46 @@ def test_build_and_run_cleanup() -> bool:
     return True
 
 
+def test_close_and_reap_windows() -> bool:
+    """Leave Windows pipes to reader threads; close other pipes and always bound reap."""
+    class Pipe:
+        def close(self):
+            closed.append(self)
+
+    class Proc:
+        pid = 123
+
+        def __init__(self, missing):
+            self.stdout = None if missing == "stdout" else Pipe()
+            self.stderr = None if missing == "stderr" else Pipe()
+
+        def wait(self, timeout):
+            waits.append(timeout)
+            return 0
+
+    for windows, missing in ((True, None), (False, None), (True, "stdout"),
+                             (False, "stdout"), (True, "stderr"), (False, "stderr")):
+        closed, waits = [], []
+        proc = Proc(missing)
+        pipes = [(name, stream) for name, stream in (("stdout", proc.stdout), ("stderr", proc.stderr))
+                 if stream is not None]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            harness._close_and_reap(proc, is_windows=windows)
+        expected = "".join(f"patch_harness: left the {name} pipe of pid {proc.pid} open; "
+                           "its reader thread may still block on it\n" for name, _ in pipes)
+        want_closed = [stream for _, stream in pipes]
+        if windows:
+            want_closed = []
+        else:
+            expected = ""
+        if closed != want_closed or waits != [5] or stderr.getvalue() != expected:
+            print(f"FAIL close_and_reap windows={windows}, missing={missing}: "
+                  f"closed {len(closed)}, waits {waits}, stderr {stderr.getvalue()!r}")
+            return False
+    return True
+
+
 def main() -> int:
     """Run patch harness tests across compiler cases; returns 0 on success, 1 on failure."""
     parser = harness.make_parser(DESCRIPTION)
@@ -413,9 +453,11 @@ def main() -> int:
         failures += 1
     if not test_undecodable_output():
         failures += 1
+    if not test_close_and_reap_windows():
+        failures += 1
     if failures:
         return 1
-    print(f"patch-harness: {len(cases) + 7} cases ok")
+    print(f"patch-harness: {len(cases) + 8} cases ok")
     return 0
 
 

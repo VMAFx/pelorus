@@ -563,7 +563,8 @@ killed. The `patch-harness` fast test requires the same stop of a stalled compil
 every platform. It also requires that an interrupted capture stops and reaps the compiler before
 the interrupt propagates, that a failed tree stop is named while the compiler is still killed and
 reaped, and that undecodable compiler output is read with replacement characters instead of
-failing the capture after the compiler was reaped.
+failing the capture after the compiler was reaped, and that on Windows cleanup leaves a capture
+pipe open and names it instead of closing it under a blocked reader thread.
 
 `make test` also runs `scripts/check-tester-kit-install.py --run-kit <build>`. It runs
 `meson introspect --tests` on the build directory and hands the result to
