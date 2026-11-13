@@ -96,6 +96,10 @@ static inline void hp_scenario1_release(HpScenario1 *sc)
 /* Common fixture reading */
 int hp_read_fixture(const char *path, char *buf, size_t cap, size_t *out_len);
 
+/* Common encode size-boundary checks */
+typedef pel_result (*HpEncodeFn)(const void *ctx, uint8_t *out, size_t cap, size_t *out_len);
+void hp_check_size_boundary(const char *label, HpEncodeFn encode, const void *ctx, size_t need);
+
 /* Encode record and provenance tests */
 void hp_build_provenance_json(char **out_json, size_t *out_len);
 void hp_create_record_section(const char *json, size_t json_len,
