@@ -136,6 +136,7 @@ LINK_GUIDANCE = (
     ROOT / ".agents" / "agents" / "ffmpeg-patch-reviewer.md",
     ROOT / ".claude" / "agents" / "ffmpeg-patch-reviewer.md",
     ROOT / ".codex" / "agents" / "ffmpeg-patch-reviewer.md",
+    ROOT / ".codex" / "agents" / "ffmpeg-patch-reviewer.toml",
     ROOT / ".gemini" / "agents" / "ffmpeg-patch-reviewer.md",
     ROOT / ".github" / "agents" / "ffmpeg-patch-reviewer.md",
 )
@@ -1351,6 +1352,7 @@ def tracked_reviewer_agent_copies() -> tuple[list[str], list[str]]:
         "-z",
         "--",
         "*/agents/ffmpeg-patch-reviewer.md",
+        "*/agents/ffmpeg-patch-reviewer.toml",
     )
     try:
         result = subprocess.run(  # nosec B603 - constant git ls-files argv, no shell, explicit timeout  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command plus the repository root, no shell, explicit deadline
