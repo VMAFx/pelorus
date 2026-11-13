@@ -40,6 +40,10 @@
 #                contain for its skip (exit 77) to pass, e.g.
 #                "no recipe device"; unset, a skip fails the
 #                replay (optional, ADR-0189, ADR-0240)
+#   MC_GAIN_SKIP  fixed text the mc subgroup gain smoke's SKIP line must
+#                contain for its skip (exit 77) to pass, e.g.
+#                "no guarded device"; unset, a skip fails the
+#                replay (optional, ADR-0189, ADR-0256)
 #   KEYFRAME_SMOKE_SKIP  fixed text the Vulkan forced-keyframe smoke's SKIP
 #                line must contain for its skip (exit 77) to pass, e.g.
 #                "no Vulkan device with HEVC video"; unset, a skip fails the
@@ -584,6 +588,40 @@ if ! "$HERE/named-skip.sh" "doc zero-copy recipes smoke" "$doc_recipes_status" \
     echo "ERROR: this run removes its logs, so rerun test/doc-recipes-smoke.py" \
         "with FFMPEG_BIN and OUTPUT_ROOT to keep them; on a host that cannot run" \
         "the smoke, set DOC_RECIPES_SKIP to the reason it prints" >&2
+    exit 1
+fi
+
+# GPU smoke: mc subgroup gain on recorded devices (ADR-0256).
+# Only a named reason permits exit 77 (ADR-0189).
+echo "== mc subgroup gain =="
+mc_gain_status=0
+FFMPEG_BIN="$FFMPEG_EXE" "$HERE/mc-gain-smoke.py" 2>&1 | tee "$LOG_DIR/mc-gain.log" ||
+    mc_gain_status=$? # pipefail: the smoke's status, tee exits 0
+if ! "$HERE/named-skip.sh" "mc subgroup gain smoke" "$mc_gain_status" \
+    "$LOG_DIR/mc-gain.log" "${MC_GAIN_SKIP:-}"; then
+    echo "ERROR: this run removes its logs, so rerun test/mc-gain-smoke.py" \
+        "with FFMPEG_BIN; on a host with no guarded device set MC_GAIN_SKIP" \
+        "to the reason it prints" >&2
+    exit 1
+fi
+
+# CI runners have no Vulkan driver. An absent driver file emulates that, so
+# GPU host replays cover the path too; only the named skip passes (ADR-0256).
+echo "== mc subgroup gain without a Vulkan driver =="
+mc_gain_no_driver_status=0
+VK_DRIVER_FILES="$LOG_DIR/absent-vulkan-driver.json" \
+    VK_ICD_FILENAMES="$LOG_DIR/absent-vulkan-driver.json" \
+    FFMPEG_BIN="$FFMPEG_EXE" "$HERE/mc-gain-smoke.py" 2>&1 |
+    tee "$LOG_DIR/mc-gain-no-driver.log" ||
+    mc_gain_no_driver_status=$? # pipefail: the smoke's status, tee exits 0
+if [[ "$mc_gain_no_driver_status" != 77 ]] ||
+    ! "$HERE/named-skip.sh" "mc subgroup gain smoke without a Vulkan driver" \
+        "$mc_gain_no_driver_status" "$LOG_DIR/mc-gain-no-driver.log" \
+        "no guarded device: no Vulkan device"; then
+    echo "ERROR: driverless Vulkan emulation failed; rerun" \
+        "VK_DRIVER_FILES='$LOG_DIR/absent-vulkan-driver.json'" \
+        "VK_ICD_FILENAMES='$LOG_DIR/absent-vulkan-driver.json'" \
+        "FFMPEG_BIN='$FFMPEG_EXE' '$HERE/mc-gain-smoke.py'" >&2
     exit 1
 fi
 

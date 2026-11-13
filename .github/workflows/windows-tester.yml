@@ -112,6 +112,7 @@ jobs:
           NVENC_SMOKE_SKIP: Cannot load nvcuda.dll
           NVENC_HOP_SMOKE_SKIP: Cannot load nvcuda.dll
           DOC_RECIPES_SKIP: "no recipe device: cannot generate input clips"
+          MC_GAIN_SKIP: "no guarded device"
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
           GRAIN_SCORE_AV1_SMOKE_SKIP: no libdav1d decoder

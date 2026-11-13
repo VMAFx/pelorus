@@ -10,6 +10,11 @@
     "issue": "ADR-0240: the zero-copy recipes of docs/usage/ffmpeg.md run on workstations with a patched ffmpeg and GPUs; CI and make verify-native set no FFMPEG_BIN, and pelorus:doc-recipes-check-doc and pelorus:doc-recipes-self-test guard the doc there. Any other skip reason, such as every variant skipped with FFMPEG_BIN set, fails"
   },
   {
+    "test": "pelorus:mc-gain",
+    "reason": "SKIP: FFMPEG_BIN unset or not found",
+    "issue": "ADR-0256: the mc subgroup SAD wall-time guard runs on workstations with a patched ffmpeg and a recorded GPU; CI and make verify-native set no FFMPEG_BIN, and pelorus:mc-gain-self-test covers the decision logic there. Any other skip reason, such as no guarded device with FFMPEG_BIN set, fails"
+  },
+  {
     "test": "pelorus:enc-telemetry-adapters-locale",
     "reason": "SKIP: comma-decimal LC_NUMERIC locale unavailable",
     "issue": "#111: locale-independence check needs an installed comma-decimal locale; all other adapter checks run in pelorus:enc-telemetry-adapters. Revisit: remove this entry when every supported local test environment guarantees de_DE.UTF-8, de_DE.utf8, or fr_FR.UTF-8"
