@@ -1,0 +1,1 @@
+- The carrier-encode and telemetry-pack cases of the libpelorus host-pipeline integration test share one output-capacity boundary check (`hp_check_size_boundary()`), and a failure names the case that broke; the duplicate group the dedupe scan reported in these files is gone and both cases keep their expectations.

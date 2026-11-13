@@ -207,13 +207,23 @@ static int parse_telemetry_fixture(const char *csv_path, PelorusEncTelemetryInpu
     return (frame_count == HP_EXPECTED_X265_FRAME_COUNT) ? 0 : -1;
 }
 
+typedef struct HpTelemetryPackCtx {
+    const PelorusSideData *meta;
+    const PelorusEncTelemetryInput *frame;
+} HpTelemetryPackCtx;
+
+static pel_result pack_boundary_telemetry(const void *ctx, uint8_t *out, size_t cap,
+                                          size_t *out_len)
+{
+    const HpTelemetryPackCtx *telemetry = ctx;
+    return pel_enc_telemetry_pack(telemetry->meta, telemetry->frame, out, cap, out_len);
+}
+
 /* Verify boundary behavior and size query for telemetry packing. */
 static void test_boundary_telemetry_pack(const PelorusEncTelemetryInput *frame)
 {
     PelorusSideData meta;
     size_t need = 0;
-    uint8_t *buf;
-    size_t out_len = 0;
 
     memset(&meta, 0, sizeof(meta));
     meta.frame_pts = 0u;
@@ -222,25 +232,8 @@ static void test_boundary_telemetry_pack(const PelorusEncTelemetryInput *frame)
     meta.producer_id = PLRS_PRODUCER_ID;
 
     CHECK(pel_enc_telemetry_blob_size(frame, &need) == PEL_OK);
-    CHECK(need > 0u);
-    if (need == 0u) {
-        return;
-    }
-
-    buf = malloc(need);
-    CHECK(buf != NULL);
-    if (buf == NULL) {
-        return;
-    }
-
-    CHECK(pel_enc_telemetry_pack(&meta, frame, buf, need - 1u, &out_len) == PEL_ERR_RANGE);
-    CHECK(out_len == need);
-
-    out_len = 0;
-    CHECK(pel_enc_telemetry_pack(&meta, frame, buf, need, &out_len) == PEL_OK);
-    CHECK(out_len == need);
-
-    free(buf);
+    const HpTelemetryPackCtx ctx = {&meta, frame};
+    hp_check_size_boundary("telemetry pack", pack_boundary_telemetry, &ctx, need);
 }
 
 typedef struct ExpectedTlmRow {
