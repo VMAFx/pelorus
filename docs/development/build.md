@@ -637,11 +637,14 @@ deadline; Meson's unset default is 30 s. The AST check takes the maximum of
 `tracked_python.GIT_DEADLINE_S` for importers and every `timeout=` value in the
 script: a numeric literal, a module-level numeric constant, or a parameter's
 bound, the largest of its numeric default and every value a call in the module
-passes to it. A name some function, lambda or class body binds locally is unreadable
-(scopes are read with `symtable`); unreassigned parameters keep their bounds, but
-locally bound names are unreadable as call arguments. A plain method's bound is
-unreadable for an attribute call with positional arguments unless the receiver
-is `self` or a call expression. A `timeout=` value with no numeric literal behind it, such as
+passes to it. A name some function, lambda or class body assigns or imports is
+unreadable (scopes are read with Python's `symtable`), as is a reassigned parameter;
+an unreassigned parameter keeps its bound. A module constant passed as a call
+argument is unreadable when any function, lambda or class body binds the same name,
+including a parameter name. For an attribute call with positional arguments, a plain
+method's bound is unreadable unless the receiver is `self`, `super()` or an instance
+made by calling a class the module defines. A `timeout=` value with no numeric
+literal behind it, such as
 `TIMEOUT * 2`, a parameter defaulting to `None`, a function passed as a
 callback or called with `*args` or `**kw`, or a name that another
 module-level statement rebinds to a non-literal, fails the test and names its
