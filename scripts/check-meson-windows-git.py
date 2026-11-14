@@ -231,6 +231,8 @@ def namespace_unreadable(tree: ast.Module) -> bool:
         match node:
             case ast.ImportFrom(names=[ast.alias(name="*")]):
                 return True
+            case ast.Name(id="globals" | "vars" | "locals") if getattr(parents.get(node), "func", None) is not node:
+                return True
             case ast.Call(func=ast.Name(id="globals" | "vars" | "locals"), args=[], keywords=[]):
                 parent = parents.get(node)
                 match parent:
@@ -362,7 +364,8 @@ def timeout_value(node: ast.AST, names: dict[str, int | float | None]) -> int | 
 
 
 def forwarded(value: ast.AST, node: ast.AST, parents: dict, tree: ast.Module, kind: str) -> bool:
-    """Accept only the nearest function's own variadic parameter with visible calls."""
+    """Accept single-use variadics with visible calls; positional forwarding needs a namesake."""
+    method = getattr(node.func, "attr", None)
     for _ in range(len(parents)):
         node = parents.get(node)
         if node is None:
@@ -371,6 +374,8 @@ def forwarded(value: ast.AST, node: ast.AST, parents: dict, tree: ast.Module, ki
             parameter = getattr(node.args, kind)
             return (not isinstance(node, ast.Lambda) and isinstance(value, ast.Name)
                     and parameter is not None and value.id == parameter.arg
+                    and sum(isinstance(n, ast.Name) and n.id == value.id for n in ast.walk(node)) == 1
+                    and (kind != "vararg" or node.name == method)
                     and function_calls(node, tree) is not None)
     return False
 
@@ -670,10 +675,12 @@ EXPANDED_DEADLINE_CASES = (
       for index, (label, source, refused) in enumerate((
           ("star import", "from cfg import *", True), ("namespace store", "globals()['LIMIT'] = 120", True),
           ("namespace update", "globals().update(LIMIT=120)", True), ("namespace alias", "g = globals()\ng['LIMIT'] = 120", True),
-          ("vars store", "vars()['LIMIT'] = 120", True), ("nested namespace", "def f():\n    globals()['LIMIT'] = 120", True),
+          ("vars store", "vars()['LIMIT'] = 120", True), ("vars of object", "vars(obj)['LIMIT'] = 120", False), ("nested namespace", "def f():\n    globals()['LIMIT'] = 120", True),
           ("namespace get", "helper = globals().get('x')", False), ("namespace membership", "ok = 'x' in globals()", False),
-          ("namespace load", "y = globals()['x']", False),
+          ("namespace load", "y = globals()['x']", False), ("name alias", "g = globals\ng()['LIMIT'] = 120", True),
       ), start=75)],
+    ("t86 mutated forwarded kwargs", "def f(**kw):\n    kw['timeout'] = 120\n    run(['git'], **kw)\nf(timeout=60)\n", 150, True),
+    ("t87 forwarded args other name", "def scan(*args):\n    Popen(['git']).wait(*args)\nscan(120)\n", 150, True),
 )
 
 
