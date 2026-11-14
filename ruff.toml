@@ -12,7 +12,18 @@ target-version = "py312"
 extend-exclude = ["subprojects", "build*"]
 
 [lint]
+# #580: whitespace nits escaped the gate. Preview enables reviewed E1/E2/W2/W3 rules.
+# Exact codes prevent unreviewed preview rules entering through prefixes.
+# Preview also widens S310 to cover urllib callable defaults.
+preview = true
+explicit-preview-rules = true
 select = [
+    # pycodestyle indentation, spacing and trailing whitespace (Ruff 0.17.4).
+    "E101", "E111", "E112", "E113", "E114", "E115", "E116", "E117",
+    "E201", "E202", "E203", "E204", "E211", "E221", "E222", "E223",
+    "E224", "E225", "E226", "E227", "E228", "E231", "E241", "E242",
+    "E251", "E252", "E261", "E262", "E265", "E266", "E271", "E272",
+    "E273", "E274", "E275", "W291", "W292", "W293", "W391",
     # Codacy Ruff patterns (codacy_list_repository_tool_patterns, 2026-11-04).
     "B002", "B003", "B006", "B008", "B011", "B012", "B016", "B017", "B019",
     "B023", "B025", "B026", "B027", "B029", "B030", "B031", "B032", "B035",
