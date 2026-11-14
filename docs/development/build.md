@@ -621,12 +621,47 @@ written for `g`'s own errors does not catch. The fast-suite test
 tracked Python files with the stdlib AST and names the call line once per
 keyword at risk. A `kw.pop("timeout", ...)` or `del kw["timeout"]` placed
 before the unpack, including an inline pop in an earlier argument, clears that
-keyword. The check does not follow control flow or copies of `kw`, and a pop
-whose key is not a string literal clears nothing. A nested function or lambda
-with its own parameter of the same name is checked as its own scope.
+keyword only within the same nearest function or lambda scope. A closure's
+removal cannot clear an outer call, or the reverse. Defaults, decorators and
+parameter and return annotations are checked in the enclosing scope even when the
+nested function binds `kw`; a removal inside an annotation never hides a collision,
+except inside a lambda body, where it counts in that lambda.
+String keys in `**{"timeout": 1}` and keywords in `**dict(timeout=1)` also name
+keywords; unknown keys and other dictionary unpacks do not. The check does not
+follow control flow or copies of `kw`, and a pop whose key is not a string
+literal clears nothing. A nested function or lambda with its own parameter of
+the same name is checked as its own scope.
 `python-kwargs-collision-self-test` runs the planted cases on every platform.
 The rule fixed `_run_git` in `scripts/tracked_python.py`: it now takes only a
 keyword-only `env` and keeps its 60 s git deadline fixed.
+
+`scripts/check-meson-windows-git.py` checks both Windows guards for Git tree
+scans and timeouts for every Git-scanning Meson test, including self-tests.
+Each timeout must be a positive integer literal strictly above the script's
+deadline; Meson's unset default is 30 s. The AST check takes the maximum of
+`tracked_python.GIT_DEADLINE_S` for importers and every `timeout=` value in the
+script: a numeric literal, a module-level numeric constant, or a parameter's
+bound, the largest of its numeric default and every value a call in the module
+passes to it. A name some function, lambda or class body assigns or imports is
+unreadable (scopes are read with Python's `symtable`), as is a reassigned parameter;
+an unreassigned parameter keeps its bound. A module constant passed as a call
+argument is unreadable when any function, lambda or class body binds the same name,
+including a parameter name. For an attribute call with positional arguments, a plain
+method's bound is unreadable unless the receiver is `self`, `super()` or an instance
+made by calling a class the module defines. A `timeout=` value with no numeric
+literal behind it, such as
+`TIMEOUT * 2`, a parameter defaulting to `None`, a function passed as a
+callback or called with `*args` or `**kw`, or a name that another
+module-level statement rebinds to a non-literal, fails the test and names its
+line. Module constants count only when every module-level binding is a direct
+top-level assignment of a numeric literal; `**` unpacks are read for string-keyed dict literals, `dict(...)` and
+forwarded `**kwargs` or `*args` only when the function uses that parameter nowhere else, with `*args` only from a `wait`/`communicate` method of the same name, and otherwise fail closed; positional `wait`/`communicate`
+timeouts also count. A star import or a write through `globals()`, `vars()` or `locals()`, or any use of those names other than a direct call, makes every module constant unreadable (reads via `.get`, subscript and `in` are allowed).
+A missing or rebound shared deadline fails closed. Set `timeout:` after
+`workdir:` to the deadline plus 30 s, rounded up to a multiple of 30; an
+existing larger timeout stays. The check's `--self-test` plants missing, equal,
+dynamic and nonpositive timeouts and unreadable script deadlines alongside safe
+timeouts and scripts that do not call Git.
 
 Every tracked Python script must parse its command line with stdlib `argparse`
 rather than by indexing `argv`. The fast-suite test `python-argv`
@@ -670,9 +705,18 @@ there is refused.
 
 Python sources and the workflow files are linted before push
 ([ADR-0243](../adr/0243-ruff-zizmor-local-gate.md)). `make verify-native` runs
-`scripts/check-python-lint.sh --self-test` and then the scan: Ruff 0.17.3 over
+`scripts/check-python-lint.sh --self-test` and then the scan: Ruff 0.17.4 over
 the tree with the rule set in `ruff.toml` (Codacy's Ruff patterns plus
-`SIM103`, `E721` and `PGH004`), and zizmor 1.32.0 `--offline
+`SIM103`, `E721` and `PGH004`, plus the explicit pycodestyle `E1xx`, `E2xx`,
+`W2xx` and `W3xx` codes). `ruff.toml` enables lint preview and requires full
+preview rule codes so prefixes cannot add unreviewed preview rules. Preview
+also widens `S310` to flag urllib callable defaults; the HTTPS check in
+`tools/tester/pelorus_tester_fixtures.py:download` justifies its suppression.
+The lint self-test plants `E225` missing whitespace around an operator, the
+class missed in issue 580, alongside the other rule cases. Lint preview prints
+rule names instead of codes in Ruff's text output, so the self-test reads
+Ruff's JSON report and matches each planted code in its `code` field. The scan also runs
+zizmor 1.32.0 `--offline
 --strict-collection` over the workflows, actions and Dependabot files with
 `.github/zizmor.yml`, so a file zizmor cannot parse fails the scan instead of
 being skipped. Both tools are pinned by hash in
@@ -992,7 +1036,7 @@ are; the merge preserves them.
 
 The manifest adopts `git-hooks`
 ([ADR-0153](../adr/0153-praetor-full-adoption.md)). `lefthook.yml` holds the
-jobs the pinned engine renders plus four Pelorus jobs, and
+jobs the pinned engine renders plus six Pelorus jobs, and
 `.config/lefthook/` and `.config/agent/` hold the checkpoint scripts, the
 checkpoint policy, and the agent interceptor that come with them. Install the
 hooks once per clone, in your own terminal:
@@ -1003,19 +1047,30 @@ make hooks-install   # runs `lefthook install`
 
 | Hook | Jobs |
 | --- | --- |
-| pre-commit | `reuse-lint` (`reuse lint`; skipped where reuse is not installed, fails on a reuse other than 6.x), `context-check` (`compile-context --verify`), `hiss-audit` (`audit --offline`), `pelorus-audit` (`make audit AUDIT_FLAGS=--offline`) |
+| pre-commit | `reuse-lint` (`reuse lint`; skipped where reuse is not installed, fails on a reuse other than 6.x), `context-check` (`compile-context --verify`), `hiss-audit` (`audit --offline`), `pelorus-audit` (`make audit AUDIT_FLAGS=--offline`), `python-lint` (`make python-lint` when a Python file, a workflow or the lint configuration is staged) |
 | commit-msg | `message-policy` (`forge check-message`: Conventional Commits subject, `Migration:` footer on a breaking change), `dco-signoff` (`Signed-off-by` trailer) |
 | post-commit | `state-sync`, `dedupe-cadence` (governance bookkeeping in the git-ignored `.workingdir/`) |
-| pre-push | `flavor-audit`, `audit` (reads the forge), `gate` (`gate run --admit-unsupported`), `verify-all` (`make verify-all`) |
+| pre-push | `pushed-head` (the pushed commit is the checked-out `HEAD`), `flavor-audit`, `audit` (reads the forge), `gate` (`gate run --admit-unsupported`), `verify-all` (`make verify-all`) |
 
-`pelorus-audit`, `message-policy`, `dco-signoff` and `verify-all` are the
-Pelorus additions. The pre-push
+`pelorus-audit`, `python-lint`, `message-policy`, `dco-signoff`, `pushed-head`
+and `verify-all` are the Pelorus additions. The pre-push
 `gate` job needs a clean working tree, and admits a Meson repository without
 signing a receipt. The pre-push `audit` and `verify-all` read the forge, so
 they fail while live `master` protection differs from the committed ruleset
 ([Branch ruleset](#branch-ruleset)). Installed hooks need `praetorctl` (or
 `standardsctl`), `lefthook` 2.1.14 or newer, `make`, Python 3.10 or newer, and,
 for a push, the native and documentation toolchains of `make verify-all`.
+
+The later pre-push jobs verify the checked-out tree, so `pushed-head` runs
+first and refuses a pushed branch or tag whose commit is not the checked-out
+`HEAD`. To push such a branch, check it out and push again. Deletions pass, and
+an annotated tag is compared through the commit it points at. The local field may
+hold a revision expression with spaces, so the three trailing fields are split
+from the right. The pre-push jobs
+run `piped`, so the first failure stops the jobs after it.
+[`scripts/check-prepush-head.py`](../../scripts/check-prepush-head.py) holds the
+check and its self-test (issue #615), which the fast suite runs as
+`prepush-head-self-test` and `prepush-head-selftest-isolation`.
 
 #### Commit policy
 
