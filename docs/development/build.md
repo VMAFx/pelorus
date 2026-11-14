@@ -653,7 +653,10 @@ literal behind it, such as
 `TIMEOUT * 2`, a parameter defaulting to `None`, a function passed as a
 callback or called with `*args` or `**kw`, or a name that another
 module-level statement rebinds to a non-literal, fails the test and names its
-line. A missing or rebound shared deadline fails closed. Set `timeout:` after
+line. Module constants count only when every module-level binding is a direct
+top-level assignment of a numeric literal; `**` unpacks are read for string-keyed dict literals, `dict(...)` and
+forwarded `**kwargs`, and otherwise fail closed; positional `wait`/`communicate`
+timeouts also count. A missing or rebound shared deadline fails closed. Set `timeout:` after
 `workdir:` to the deadline plus 30 s, rounded up to a multiple of 30; an
 existing larger timeout stays. The check's `--self-test` plants missing, equal,
 dynamic and nonpositive timeouts and unreadable script deadlines alongside safe

@@ -212,18 +212,28 @@ def bind(numbers: dict[str, int | float | None], name: str, value: int | float |
     numbers[name] = None if value is None or old is None else max(old, value)
 
 
+def binding_name(node: ast.AST) -> str | None:
+    """Names bound or deleted, including bindings stored as strings in the AST."""
+    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return node.id
+    if isinstance(node, ast.alias):
+        return node.asname or node.name.split(".")[0]
+    field = {ast.ExceptHandler: "name", ast.MatchAs: "name", ast.MatchStar: "name",
+             ast.MatchMapping: "rest", ast.FunctionDef: "name", ast.AsyncFunctionDef: "name",
+             ast.ClassDef: "name"}.get(type(node), "")
+    return getattr(node, field, None)
+
+
 def module_numbers(tree: ast.Module) -> dict[str, int | float | None]:
-    """Module-level bindings; None marks a name some binding gives no numeric literal."""
+    """Only direct numeric assignments survive every binding, including nested ones."""
+    literals = {target: number(node.value) for node in tree.body
+                if isinstance(node, (ast.Assign, ast.AnnAssign))
+                for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+                if isinstance(target, ast.Name)}
     numbers: dict[str, int | float | None] = {}
-    for node in tree.body:
-        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
-            bind(numbers, node.target.id, None)
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
-            continue
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        for target in targets:
-            if isinstance(target, ast.Name):
-                bind(numbers, target.id, number(node.value))
+    for node in ast.walk(tree):
+        if (name := binding_name(node)) is not None:
+            bind(numbers, name, literals.get(node))
     return numbers
 
 
@@ -330,6 +340,57 @@ def timeout_value(node: ast.AST, names: dict[str, int | float | None]) -> int | 
     return number(node)
 
 
+def forwarded(value: ast.AST, node: ast.AST, parents: dict, tree: ast.Module, kind: str) -> bool:
+    """Accept only the nearest function's own variadic parameter with visible calls."""
+    for _ in range(len(parents)):
+        node = parents.get(node)
+        if node is None:
+            return False
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            parameter = getattr(node.args, kind)
+            return (not isinstance(node, ast.Lambda) and isinstance(value, ast.Name)
+                    and parameter is not None and value.id == parameter.arg
+                    and function_calls(node, tree) is not None)
+    return False
+
+
+def unpacked_timeouts(keyword: ast.keyword) -> list[ast.AST]:
+    """Read literal string-keyed dictionaries; dict() keywords are walked separately."""
+    value = keyword.value
+    if isinstance(value, ast.Dict) and all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in value.keys):
+        return [v for k, v in zip(value.keys, value.values, strict=True) if k.value == "timeout"]
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "dict":
+        return []
+    return [keyword]
+
+
+def positional_timeouts(call: ast.Call, parents: dict, tree: ast.Module) -> Iterator[ast.AST]:
+    """Read positional wait/communicate timeouts; fail closed on expanded arguments."""
+    method = getattr(call.func, "attr", None)
+    if method not in {"wait", "communicate"}:
+        return
+    for arg in call.args:
+        if isinstance(arg, ast.Starred) and not forwarded(arg.value, call, parents, tree, "vararg"):
+            yield arg
+    index = int(method == "communicate")
+    if len(call.args) > index and not isinstance(call.args[index], ast.Starred):
+        yield call.args[index]
+
+
+def call_timeouts(tree: ast.Module) -> Iterator[ast.AST]:
+    """Timeout keywords, allow-listed unpacks and positional process waits."""
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        method = getattr(call.func, "attr", None)
+        for keyword in call.keywords:
+            if keyword.arg == "timeout":
+                yield keyword.value
+            elif keyword.arg is None and method not in {"format", "format_map"}:
+                if not forwarded(keyword.value, call, parents, tree, "kwarg"):
+                    yield from unpacked_timeouts(keyword)
+        yield from positional_timeouts(call, parents, tree)
+
+
 def script_deadline(path: Path, scripts_dir: Path) -> tuple[int | float, list[str]]:
     """Over-approximate Git waits; also list timeout keywords with no readable value."""
     source = path.read_text(encoding="utf-8")
@@ -343,13 +404,8 @@ def script_deadline(path: Path, scripts_dir: Path) -> tuple[int | float, list[st
         if deadline is None:
             raise ValueError(f"{tracked}: GIT_DEADLINE_S is missing or rebound to a non-literal value")
         deadlines.append(deadline)
-    timeouts = [
-        keyword.value
-        for node in ast.walk(tree) if isinstance(node, ast.Call)
-        for keyword in node.keywords if keyword.arg == "timeout"
-    ]
     unresolved: list[str] = []
-    for value in timeouts:
+    for value in call_timeouts(tree):
         seconds = timeout_value(value, names)
         if seconds is None:
             unresolved.append(f"line {value.lineno} ({ast.unparse(value)})")
@@ -555,7 +611,41 @@ def timeout_cases() -> list[tuple[str, str, bool]]:
         ("t41 instance receiver", base.format(", timeout: 150").replace("scan.py", "inst_recv.py"), False),
         ("t42 super receiver", base.format(", timeout: 150").replace("scan.py", "super_recv.py"), False),
         ("t43 class method bound", base.format(", timeout: 150").replace("scan.py", "class.py"), False),
-    ]
+    ] + [(label, base.format(f", timeout: {timeout}").replace("scan.py", label.split()[0] + ".py"), refused)
+         for label, _source, timeout, refused in EXPANDED_DEADLINE_CASES]
+
+
+EXPANDED_DEADLINE_CASES = (
+    *[(f"t{index} {label}", "LIMIT = 60\n" + source + "\nrun(['git'], timeout=LIMIT)\n", 90, True)
+      for index, (label, source) in enumerate((
+          ("conditional binding", "if c:\n    LIMIT = 120"), ("try binding", "try:\n    LIMIT = 120\nexcept E:\n    pass"),
+          ("for binding", "for LIMIT in (120,):\n    pass"), ("with binding", "with ctx() as LIMIT:\n    pass"),
+          ("tuple binding", "LIMIT, OTHER = 120, 0"), ("walrus binding", "print(LIMIT := 120)"),
+          ("import binding", "from cfg import BIG as LIMIT"), ("except binding", "try:\n    pass\nexcept E as LIMIT:\n    pass"),
+          ("match binding", "match x:\n    case LIMIT:\n        pass"), ("starred binding", "*LIMIT, = [120]"),
+      ), start=44)],
+    ("t54 unpacked name", "kw = {}\nkw['timeout'] = 120\nrun(['git'], **kw)\n", 90, True),
+    ("t55 unpacked literal", "run(['git'], **{'timeout': 120})\n", 90, True),
+    ("t56 unpacked key", "run(['git'], **{key: 120})\n", 90, True),
+    ("t57 positional wait", "p = Popen(['git'])\np.wait(120)\n", 90, True),
+    ("t58 positional communicate", "p = Popen(['git'])\np.communicate(None, 120)\n", 90, True),
+    ("t59 unpacked literal met", "run(['git'], **{'timeout': 120})\n", 150, False),
+    ("t60 forwarded kwargs", "def f(**kw):\n    run(['git'], **kw)\nf(timeout=120)\n", 150, False),
+    ("t61 formatting", "d = {}\ns = '{x}'.format(**d)\nrun(['git'], timeout=60)\n", 150, False),
+    ("t62 positional wait met", "p = Popen(['git'])\np.wait(120)\n", 150, False),
+    ("t63 starred wait", "p = Popen(['git'])\np.wait(*args)\n", 150, True),
+    ("t64 starred communicate", "p = Popen(['git'])\np.communicate(*args)\n", 150, True),
+    ("t65 forwarded args", "class C:\n    def wait(self, *args):\n        Popen(['git']).wait(*args)\nC().wait(120)\n", 150, False),
+    ("t66 nested unpack", "run(['git'], **{'timeout': 60, **kw})\n", 150, True),
+    ("t67 dict call", "run(['git'], **dict(timeout=120))\n", 90, True),
+    ("t68 dict nested unpack", "run(['git'], **dict(**kw))\n", 150, True),
+    *[(f"t{index} {label}", "LIMIT = 60\n" + source + "\nrun(['git'], timeout=LIMIT)\n", 90, True)
+      for index, (label, source) in enumerate((
+          ("deleted binding", "del LIMIT"), ("list binding", "[LIMIT, OTHER] = [120, 0]"),
+          ("dotted import", "import LIMIT.cfg"), ("aliased import", "import cfg as LIMIT"),
+          ("match star", "match x:\n    case [*LIMIT]:\n        pass"), ("match rest", "match x:\n    case {'a': _, **LIMIT}:\n        pass"),
+      ), start=69)],
+)
 
 
 UNREADABLE_SHARED_DEADLINES = (
@@ -563,6 +653,7 @@ UNREADABLE_SHARED_DEADLINES = (
     "GIT_DEADLINE_S = '60'\n",
     "GIT_DEADLINE_S = 60\nGIT_DEADLINE_S = 120 + 0\n",
     "GIT_DEADLINE_S = 60\nGIT_DEADLINE_S += 60\n",
+    "GIT_DEADLINE_S = 60\nif c:\n    GIT_DEADLINE_S = 120\n",
 )
 
 
@@ -629,7 +720,7 @@ def run_self_test() -> int:
             "local_timeout.py": "LIMIT = 60\ndef main():\n    LIMIT = 120\n    run(['git'], timeout=LIMIT)\n",
             "local_param.py": "def scan(limit=60):\n    limit = 300\n    run(['git'], timeout=limit)\nscan()\n",
         }
-        for name, source in fixtures.items():
+        for name, source in (fixtures | {label.split()[0] + ".py": source for label, source, _timeout, _refused in EXPANDED_DEADLINE_CASES}).items():
             (scripts / name).write_text(source, encoding="utf-8")
         meson = root / "meson.build"
         for label, source, refused in cases:
