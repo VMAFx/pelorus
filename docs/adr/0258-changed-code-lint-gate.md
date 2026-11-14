@@ -12,11 +12,11 @@ Codacy reported cppcheck `unreadVariable` on PR #619. No local gate caught it. P
 
 At commit `881ec9b` on 2026-11-14, cppcheck 2.22.0 reported 39 findings over the 55 translation units in `.config/clang-tidy/lane-files.txt` in 3.8 seconds. Ruff 0.17.4 found format drift in 95 files, about 14,000 diff lines. Scanning all 224 tracked C sources and headers also produced standalone-header noise and FFmpeg macro errors. A whole-tree zero-findings rule would require substantial unrelated changes.
 
-[ADR-0190](0190-gitleaks-every-ref.md) defers cppcheck until its existing findings have a baseline. [ADR-0243](0243-ruff-zizmor-local-gate.md) adds Ruff linting but omits formatting. This decision amends both.
+[ADR-0190](0190-gitleaks-every-ref.md) defers cppcheck until its existing findings have a baseline. [ADR-0243](0243-ruff-zizmor-local-gate.md) adds Ruff linting but omits formatting. [ADR-0250](0250-devcontainer-toolchain-smoke.md) pins `verify-native` to `verify-offline python-lint`. This decision amends all three.
 
 ## Decision
 
-Add `scripts/check-changed-lint.py` to `make verify-native` through `changed-lint`, and to the CI `docs` job on pull requests. Compare the committed head with its merge base against `LINT_BASE`, defaulting to `AUDIT_BASE` (`origin/master`). Extract committed trees with Git archive and the tar data filter; ignore uncommitted files.
+Add `scripts/check-changed-lint.py` to `make verify-native` through `changed-lint`, and to the CI `docs` job on pull requests. Compare the committed head with its merge base against `LINT_BASE`, defaulting to `AUDIT_BASE` (`origin/master`). Extract committed trees with Git archive and the tar data filter; ignore uncommitted files. `changed-lint` needs the Ruff that `python-lint` installs from PyPI and the `origin/master` merge base, so it stays out of `verify-offline` (ADR-0250): `scripts/check-build-config.py` now requires `verify-native` to be exactly `verify-offline python-lint changed-lint`, refuses either network step in `verify-offline`, and plants a case for each.
 
 When C, headers or the lane list change, run cppcheck style analysis in both trees over each tree's declared units. Subtract finding multisets keyed by file, rule and whitespace-collapsed source line. Line moves preserve the baseline; extra occurrences fail. This dynamic baseline answers ADR-0190's precondition without a committed findings file. There is no suppression path or inline-suppression option.
 
@@ -45,6 +45,7 @@ Exit 0 means clean, 1 means findings, and 2 means a tool, usage or Git error. Mi
 
 - [ADR-0190](0190-gitleaks-every-ref.md): cppcheck baseline precondition.
 - [ADR-0243](0243-ruff-zizmor-local-gate.md): Ruff and zizmor local gate.
+- [ADR-0250](0250-devcontainer-toolchain-smoke.md): offline native gate in the dev image; `verify-native` composition guard.
 - [ADR-0168](0168-praetor-engine-492a00f.md): declared translation-unit coverage.
 - PR #619: `unreadVariable` missed before push.
 - Source: req (paraphrased, 2026-11-14, controller order pelorus-gate-cppcheck-ruff-format-20261114): add a local cppcheck step (unreadVariable class at least) and ruff format --check to the pre-push gate, with a planted case for each.
