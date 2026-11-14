@@ -566,7 +566,7 @@ def _run_stdin_writer_plants() -> bool:
 
 
 def _run_stdin_capture_plants(tmp: pathlib.Path) -> bool:
-    """Exercise pipe-capacity input, an early exit, and a blocked input timeout."""
+    """Exercise pipe capacity, early exit, blocked timeout, and input held by a child."""
     if not _run_stdin_writer_plants():
         return False
     data = b"x" * MAX_INPUT_BYTES
@@ -579,6 +579,16 @@ def _run_stdin_capture_plants(tmp: pathlib.Path) -> bool:
             str(len(data)).encode(),
         ),
         ("stdin early exit", "pass", 5.0, "ok", b""),
+        (
+            # Windows needs an explicit stdin handle and a cwd outside the self-test directory.
+            "stdin held by a child process",
+            "import os, subprocess, sys; subprocess.Popen("
+            "[sys.executable, '-c', 'import time; time.sleep(15)'], stdin=sys.stdin, "
+            "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=os.path.dirname(sys.executable))",
+            5.0,
+            "stdin-error",
+            b"",
+        ),
         (
             "stdin blocked writer timeout",
             "import time; time.sleep(60)",
