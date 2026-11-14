@@ -206,6 +206,7 @@ static void test_number_grammar_double(int *fails)
     CHECK(double_bits_equal(val, 1.0), fails);
     token[128] = '0';
     /* token[129] stays NUL from the initializer. */
+    argv[2] = token;
     CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == -1, fails);
 }
 
