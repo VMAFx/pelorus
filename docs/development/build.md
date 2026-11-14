@@ -992,7 +992,7 @@ are; the merge preserves them.
 
 The manifest adopts `git-hooks`
 ([ADR-0153](../adr/0153-praetor-full-adoption.md)). `lefthook.yml` holds the
-jobs the pinned engine renders plus four Pelorus jobs, and
+jobs the pinned engine renders plus six Pelorus jobs, and
 `.config/lefthook/` and `.config/agent/` hold the checkpoint scripts, the
 checkpoint policy, and the agent interceptor that come with them. Install the
 hooks once per clone, in your own terminal:
@@ -1003,19 +1003,28 @@ make hooks-install   # runs `lefthook install`
 
 | Hook | Jobs |
 | --- | --- |
-| pre-commit | `reuse-lint` (`reuse lint`; skipped where reuse is not installed, fails on a reuse other than 6.x), `context-check` (`compile-context --verify`), `hiss-audit` (`audit --offline`), `pelorus-audit` (`make audit AUDIT_FLAGS=--offline`) |
+| pre-commit | `reuse-lint` (`reuse lint`; skipped where reuse is not installed, fails on a reuse other than 6.x), `context-check` (`compile-context --verify`), `hiss-audit` (`audit --offline`), `pelorus-audit` (`make audit AUDIT_FLAGS=--offline`), `python-lint` (`make python-lint` when a Python file, a workflow or the lint configuration is staged) |
 | commit-msg | `message-policy` (`forge check-message`: Conventional Commits subject, `Migration:` footer on a breaking change), `dco-signoff` (`Signed-off-by` trailer) |
 | post-commit | `state-sync`, `dedupe-cadence` (governance bookkeeping in the git-ignored `.workingdir/`) |
-| pre-push | `flavor-audit`, `audit` (reads the forge), `gate` (`gate run --admit-unsupported`), `verify-all` (`make verify-all`) |
+| pre-push | `pushed-head` (the pushed commit is the checked-out `HEAD`), `flavor-audit`, `audit` (reads the forge), `gate` (`gate run --admit-unsupported`), `verify-all` (`make verify-all`) |
 
-`pelorus-audit`, `message-policy`, `dco-signoff` and `verify-all` are the
-Pelorus additions. The pre-push
+`pelorus-audit`, `python-lint`, `message-policy`, `dco-signoff`, `pushed-head`
+and `verify-all` are the Pelorus additions. The pre-push
 `gate` job needs a clean working tree, and admits a Meson repository without
 signing a receipt. The pre-push `audit` and `verify-all` read the forge, so
 they fail while live `master` protection differs from the committed ruleset
 ([Branch ruleset](#branch-ruleset)). Installed hooks need `praetorctl` (or
 `standardsctl`), `lefthook` 2.1.14 or newer, `make`, Python 3.10 or newer, and,
 for a push, the native and documentation toolchains of `make verify-all`.
+
+The later pre-push jobs verify the checked-out tree, so `pushed-head` runs
+first and refuses a pushed branch or tag whose commit is not the checked-out
+`HEAD`. To push such a branch, check it out and push again. Deletions pass, and
+an annotated tag is compared through the commit it points at. The pre-push jobs
+run `piped`, so the first failure stops the jobs after it.
+[`scripts/check-prepush-head.py`](../../scripts/check-prepush-head.py) holds the
+check and its self-test (issue #615), which the fast suite runs as
+`prepush-head-self-test` and `prepush-head-selftest-isolation`.
 
 #### Commit policy
 

@@ -518,6 +518,22 @@ if build_machine.system() != 'windows'
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')
+  test('prepush-head-self-test',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-prepush-head.py',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       timeout: 120,
+       suite: 'fast')
+  test('prepush-head-selftest-isolation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',
+              python_prog.full_path(), '-I',
+              meson.project_source_root() / 'scripts' / 'check-prepush-head.py',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
   # ADR-0219: the ADR allocator discovers numbers across all local worktrees and
   # branch tips without network. The test drives throwaway Git repositories and
   # worktrees; MSYS2 path translation and POSIX bash fixtures stay Linux-first
