@@ -35,6 +35,7 @@
     {"sha256": "a8a06fea2de6b149caa7fc3412f075b233337ab56ef6bdaa8f8d294af5095be2", "tool_version": "0.4.12", "note": "the minimum header size is the ABI header (48 bytes) again, and the digest covers interop.h"},
     {"sha256": "03932e4e0b6e004673bdd6c13f186fb0ee1edebac0c02d4119d66fd3c5a47f8d", "tool_version": "0.4.12", "note": "tool-hash adds --write and --note to append released digests to tool-hashes.json (#502)"},
     {"sha256": "ff3e39b8bf267a3f1d881d9fa1d2818e261e30d06570fa1664d51412359093d9", "tool_version": "0.4.12", "note": "test stubs owner-only chmod modes; fast-suite installer replaces an earlier runner"},
-    {"sha256": "fcf9c1dc29fa4a5e222e8a5dbdef5f14ae74766141d87117be46d7d118750b60", "tool_version": "0.4.12", "note": "fix: full digest scan, entry type guard, whitespace preservation"}
+    {"sha256": "fcf9c1dc29fa4a5e222e8a5dbdef5f14ae74766141d87117be46d7d118750b60", "tool_version": "0.4.12", "note": "fix: full digest scan, entry type guard, whitespace preservation"},
+    {"sha256": "5d0d251739b9db2790c3dc36c5a4cd0179992c501a1cb4be752fbd5bc94cf3f6", "tool_version": "0.4.12", "note": "lint only: a Ruff S310 marker on the download default opener and one trailing blank line removed (#580)"}
   ]
 }

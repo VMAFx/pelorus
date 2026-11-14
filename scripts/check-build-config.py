@@ -20,7 +20,7 @@ CONFIG = ROOT / "build-config.env"
 # HISS-02: deadline for each subprocess call in the self-test fixtures; stays
 # within the 30 s Meson default of the build-config-sync test.
 SUBPROCESS_TIMEOUT_S = 30
-FFMPEG_KEYS =("FFMPEG_REMOTE", "FFMPEG_TAG", "FFMPEG_COMMIT")
+FFMPEG_KEYS = ("FFMPEG_REMOTE", "FFMPEG_TAG", "FFMPEG_COMMIT")
 # ADR-0185: the shared FFmpeg fix series Pelorus applies before its own stack,
 # pinned by repository, release tag, tagged commit and tarball sha256. Renovate
 # does not track it: a bump moves all four together from a verified release.

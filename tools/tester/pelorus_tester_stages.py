@@ -2901,4 +2901,3 @@ def self_test(disabled=frozenset()):
     self_test_vendor_nodes(expect)
     self_test_vendor_execution(expect, disabled)
     return failures
-

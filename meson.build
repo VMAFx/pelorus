@@ -240,6 +240,7 @@ test('suppression-markers-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-suppression-markers.py',
             '--self-test-only'],
      workdir: meson.project_source_root(),
+     timeout: 90,
      suite: 'fast')
 # Planted cases must skip by name when git is missing; this runs them without git on Linux too.
 test('suppression-markers-self-test-nogit',
@@ -247,6 +248,7 @@ test('suppression-markers-self-test-nogit',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-suppression-markers.py',
             '--self-test-only'],
      workdir: meson.project_source_root(),
+     timeout: 90,
      suite: 'fast',
      env: {'PATH': meson.current_build_dir() / 'nogit-path'})
 # The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put
@@ -258,6 +260,7 @@ if build_machine.system() != 'windows'
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-suppression-markers.py',
               '--self-test'],
        workdir: meson.project_source_root(),
+       timeout: 90,
        suite: 'fast')
 endif
 # Unmarked subprocess sites otherwise surface only in Codacy on the pull request;
@@ -268,6 +271,7 @@ test('subprocess-markers-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-subprocess-markers.py',
             '--self-test-only'],
      workdir: meson.project_source_root(),
+     timeout: 90,
      suite: 'fast')
 # Planted cases must skip by name when git is missing; this runs them without git on Linux too.
 test('subprocess-markers-self-test-nogit',
@@ -275,6 +279,7 @@ test('subprocess-markers-self-test-nogit',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-subprocess-markers.py',
             '--self-test-only'],
      workdir: meson.project_source_root(),
+     timeout: 90,
      suite: 'fast',
      env: {'PATH': meson.current_build_dir() / 'nogit-path'})
 if build_machine.system() != 'windows'
@@ -283,6 +288,7 @@ if build_machine.system() != 'windows'
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-subprocess-markers.py',
               '--check'],
        workdir: meson.project_source_root(),
+       timeout: 90,
        suite: 'fast')
 endif
 test('telemetry-field-parity-self-test',
@@ -396,6 +402,7 @@ test('gen-h274-grain-calibration-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'gen-h274-grain-calibration.py',
             '--self-test'],
      workdir: meson.project_source_root(),
+     timeout: 60,
      suite: 'fast')
 
 # ADR-0111: bd_rate.py must enforce a monotonic guard on RD curves (strictly
@@ -466,7 +473,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py'],
        workdir: meson.project_source_root(),
-       timeout: 600,
+       timeout: 630,
        suite: 'fast')
   test('tag-release-selftest-isolation',
        python_prog,
@@ -474,7 +481,7 @@ if build_machine.system() != 'windows'
               'bash', meson.project_source_root() / 'scripts' / 'release' / 'tag-release.sh',
               '--self-test'],
        workdir: meson.project_source_root(),
-       timeout: 600,
+       timeout: 630,
        suite: 'fast')
   test('check-publish-ref-selftest-isolation',
        python_prog,
@@ -482,7 +489,7 @@ if build_machine.system() != 'windows'
               'bash', meson.project_source_root() / 'scripts' / 'release' / 'check-publish-ref.sh',
               '--self-test'],
        workdir: meson.project_source_root(),
-       timeout: 600,
+       timeout: 630,
        suite: 'fast')
   test('interop-constants-guard-selftest-isolation',
        python_prog,
@@ -491,7 +498,7 @@ if build_machine.system() != 'windows'
               meson.project_source_root() / 'scripts' / 'check-interop-constants.py',
               '--self-test'],
        workdir: meson.project_source_root(),
-       timeout: 600,
+       timeout: 630,
        suite: 'fast')
   test('check-cochange-selftest-isolation',
        python_prog,
@@ -500,14 +507,14 @@ if build_machine.system() != 'windows'
               meson.project_source_root() / 'scripts' / 'check-cochange.py',
               '--self-test'],
        workdir: meson.project_source_root(),
-       timeout: 600,
+       timeout: 630,
        suite: 'fast')
   test('dco-self-test',
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-dco.py',
               '--self-test'],
        workdir: meson.project_source_root(),
-       timeout: 60,
+       timeout: 90,
        suite: 'fast')
   test('dco-selftest-isolation',
        python_prog,
@@ -516,7 +523,7 @@ if build_machine.system() != 'windows'
               meson.project_source_root() / 'scripts' / 'check-dco.py',
               '--self-test'],
        workdir: meson.project_source_root(),
-       timeout: 600,
+       timeout: 630,
        suite: 'fast')
   # ADR-0219: the ADR allocator discovers numbers across all local worktrees and
   # branch tips without network. The test drives throwaway Git repositories and
@@ -526,7 +533,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'test-adr-next-free.py'],
        workdir: meson.project_source_root(),
-       timeout: 60,
+       timeout: 90,
        suite: 'fast')
   # ADR-0246: credential pattern scrub and testlog scanner self-test.
   test('meson-testlog-credentials',
@@ -629,6 +636,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-empty-except.py'],
        workdir: meson.project_source_root(),
+       timeout: 60,
        suite: 'fast')
 endif
 
@@ -637,6 +645,7 @@ test('python-empty-except-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-empty-except.py',
             '--self-test'],
      workdir: meson.project_source_root(),
+     timeout: 60,
      suite: 'fast')
 
 # No Python file may import one module with both import and from-import
@@ -648,6 +657,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-dual-import.py'],
        workdir: meson.project_source_root(),
+       timeout: 90,
        suite: 'fast')
 endif
 
@@ -656,6 +666,7 @@ test('python-dual-import-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-dual-import.py',
             '--self-test'],
      workdir: meson.project_source_root(),
+     timeout: 90,
      suite: 'fast')
 
 # No call may name keyword K and also forward its function's **kw unless K is
@@ -668,6 +679,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-kwargs-collision.py'],
        workdir: meson.project_source_root(),
+       timeout: 90,
        suite: 'fast')
 endif
 
@@ -676,6 +688,7 @@ test('python-kwargs-collision-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-kwargs-collision.py',
             '--self-test'],
      workdir: meson.project_source_root(),
+     timeout: 90,
      suite: 'fast')
 
 # Snapshot cleanup must not chmod a symlink target (PR 538 review). Creating
@@ -712,7 +725,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-curl-retry.py'],
        workdir: meson.project_source_root(),
-       timeout: 60,
+       timeout: 90,
        suite: 'fast')
 endif
 
@@ -721,7 +734,7 @@ test('curl-retry-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-curl-retry.py',
             '--self-test'],
      workdir: meson.project_source_root(),
-     timeout: 60,
+     timeout: 90,
      suite: 'fast')
 
 # Every ffmpeg run whose showinfo log is parsed needs -nostats, or the progress
@@ -732,7 +745,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-showinfo-nostats.py'],
        workdir: meson.project_source_root(),
-       timeout: 60,
+       timeout: 90,
        suite: 'fast')
 endif
 
@@ -741,7 +754,7 @@ test('showinfo-nostats-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-showinfo-nostats.py',
             '--self-test'],
      workdir: meson.project_source_root(),
-     timeout: 60,
+     timeout: 90,
      suite: 'fast')
 
 # Planted soak defects, including a progress-line split (vulkan-lavapipe-filters.sh).
@@ -764,6 +777,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-decode-errors.py'],
        workdir: meson.project_source_root(),
+       timeout: 60,
        suite: 'fast')
 endif
 
@@ -772,6 +786,7 @@ test('python-decode-errors-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-decode-errors.py',
             '--self-test'],
      workdir: meson.project_source_root(),
+     timeout: 60,
      suite: 'fast')
 
 # Every tracked Python script must parse CLI arguments with stdlib argparse;
@@ -784,6 +799,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-argv.py'],
        workdir: meson.project_source_root(),
+       timeout: 60,
        suite: 'fast')
 endif
 
@@ -792,6 +808,7 @@ test('python-argv-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-argv.py',
             '--self-test'],
      workdir: meson.project_source_root(),
+     timeout: 60,
      suite: 'fast')
 
 # Every tracked file outside docs/ and an explicit allow-list must avoid hardcoded
@@ -802,6 +819,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-repo-name-literals.py'],
        workdir: meson.project_source_root(),
+       timeout: 90,
        suite: 'fast')
 endif
 
@@ -810,6 +828,7 @@ test('repo-name-literals-self-test',
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-repo-name-literals.py',
             '--self-test'],
      workdir: meson.project_source_root(),
+     timeout: 90,
      suite: 'fast')
 
 # Per-frame external-ME-hint setup of patch 0008 (BUG-031): a frame without
@@ -906,11 +925,13 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', interop_guard_script],
        workdir: meson.project_source_root(),
+       timeout: 60,
        suite: 'fast')
   test('interop-constants-guard-self-test',
        python_prog,
        args: ['-I', interop_guard_script, '--self-test'],
        workdir: meson.project_source_root(),
+       timeout: 60,
        suite: 'fast')
 endif
 
@@ -1041,7 +1062,7 @@ if build_machine.system() != 'windows'
               'bash', meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'series-coexistence.sh',
               '--self-test'],
        workdir: meson.project_source_root(),
-       timeout: 600,
+       timeout: 630,
        suite: 'fast')
 endif
 
@@ -1252,7 +1273,7 @@ test('semgrep-harness-use-self-test',
      python_prog,
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-semgrep-harness.py', '--self-test'],
      workdir: meson.project_source_root(),
-     timeout: 60,
+     timeout: 90,
      suite: 'fast')
 # The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put
 # on PATH (CI runs 41645525072 and 42050155443). The self-test runs there;
@@ -1262,7 +1283,7 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-semgrep-harness.py'],
        workdir: meson.project_source_root(),
-       timeout: 60,
+       timeout: 90,
        suite: 'fast')
 endif
 
@@ -1301,6 +1322,6 @@ if build_machine.system() != 'windows'
        args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',
               'bash', meson.project_source_root() / 'scripts' / 'test-generate-regen-line.sh'],
        workdir: meson.project_source_root(),
-       timeout: 120,
+       timeout: 630,
        suite: 'fast')
 endif

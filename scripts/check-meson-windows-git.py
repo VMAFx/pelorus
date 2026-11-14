@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
-"""Require Windows guards for Meson tests that scan the Git tree.
+"""Require Windows guards and Meson timeouts above Git-scanning script deadlines.
 
 Only reads Meson and Python source; never runs Git or imports checked scripts.
 """
@@ -197,41 +197,211 @@ def script_uses_git(path: Path) -> bool:
     return False
 
 
-def check(meson_build: Path, scripts_dir: Path) -> tuple[list[str], int]:
-    """Return refusals and the number of guarded Git-scanning test calls."""
+def number(node: ast.AST | None) -> int | float | None:
+    """A numeric literal, excluding booleans; None for anything else."""
+    value = node.value if isinstance(node, ast.Constant) else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def bind(numbers: dict[str, int | float | None], name: str, value: int | float | None) -> None:
+    """Keep the largest numeric binding; any unreadable binding makes the name unreadable."""
+    old = numbers.get(name, value)
+    numbers[name] = None if value is None or old is None else max(old, value)
+
+
+def module_numbers(tree: ast.Module) -> dict[str, int | float | None]:
+    """Module-level bindings; None marks a name some binding gives no numeric literal."""
+    numbers: dict[str, int | float | None] = {}
+    for node in tree.body:
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            bind(numbers, node.target.id, None)
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                bind(numbers, target.id, number(node.value))
+    return numbers
+
+
+def function_calls(func: ast.AST, tree: ast.Module) -> list[ast.Call] | None:
+    """Named calls, or None when a reference can escape the module's call sites."""
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and getattr(node.func, "id", getattr(node.func, "attr", None)) == func.name]
+    targets = {call.func for call in calls}
+    escaped = any(isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load)
+                  and getattr(node, "id", getattr(node, "attr", None)) == func.name
+                  and node not in targets for node in ast.walk(tree))
+    return None if escaped else calls
+
+
+def bind_call_parameters(
+    func: ast.FunctionDef | ast.AsyncFunctionDef, tree: ast.Module, positional: list[ast.arg],
+    bounds: dict[str, int | float | None], constants: dict[str, int | float | None],
+) -> bool:
+    """Merge call arguments into bounds; refuse escaped functions or expanded calls."""
+    calls = function_calls(func, tree)
+    if calls is None:
+        return True
+    method = any(isinstance(node, ast.ClassDef) and func in node.body for node in ast.walk(tree))
+    method = method and not any(getattr(d, "id", getattr(d, "attr", None)) == "staticmethod"
+                                for d in func.decorator_list)
+    for call in calls:
+        if any(isinstance(arg, ast.Starred) for arg in call.args) or any(k.arg is None for k in call.keywords):
+            return True
+        offset = int(method and isinstance(call.func, ast.Attribute))
+        for arg, value in zip(positional[offset:], call.args, strict=False):
+            bind(bounds, arg.arg, timeout_value(value, constants))
+        for keyword in call.keywords:
+            bind(bounds, keyword.arg, timeout_value(keyword.value, constants))
+    return False
+
+
+def readable_names(tree: ast.Module) -> dict[str, int | float | None]:
+    """Module bindings merged with parameter defaults and every readable call value."""
+    constants = module_numbers(tree)
+    names = constants.copy()
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        args = func.args
+        positional = [*args.posonlyargs, *args.args]
+        defaults = [None] * (len(positional) - len(args.defaults)) + [*args.defaults]
+        parameters = list(zip([*positional, *args.kwonlyargs], [*defaults, *args.kw_defaults], strict=True))
+        bounds = {arg.arg: number(default) for arg, default in parameters if default is not None}
+        unsafe = isinstance(func, ast.Lambda) or bind_call_parameters(func, tree, positional, bounds, constants)
+        for arg, _default in parameters:
+            bind(names, arg.arg, None if unsafe else bounds.get(arg.arg))
+        for arg in (args.vararg, args.kwarg):
+            if arg is not None:
+                bind(names, arg.arg, None)
+    return names
+
+
+def imports_tracked_python(tree: ast.Module) -> bool:
+    """Recognize plain and from imports, including aliases."""
+    return any(
+        (isinstance(node, ast.Import) and any(a.name == "tracked_python" for a in node.names))
+        or (isinstance(node, ast.ImportFrom) and node.module == "tracked_python")
+        for node in ast.walk(tree)
+    )
+
+
+def timeout_value(node: ast.AST, names: dict[str, int | float | None]) -> int | float | None:
+    """A numeric literal or a name whose every binding is one; None when unreadable."""
+    if isinstance(node, ast.Name):
+        return names.get(node.id)
+    return number(node)
+
+
+def script_deadline(path: Path, scripts_dir: Path) -> tuple[int | float, list[str]]:
+    """Over-approximate Git waits; also list timeout keywords with no readable value."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    names = readable_names(tree)
+    deadlines: list[int | float] = [0]
+    if imports_tracked_python(tree):
+        tracked = scripts_dir / "tracked_python.py"
+        shared = ast.parse(tracked.read_text(encoding="utf-8"), filename=str(tracked))
+        deadline = module_numbers(shared).get("GIT_DEADLINE_S")
+        if deadline is None:
+            raise ValueError(f"{tracked}: GIT_DEADLINE_S is missing or rebound to a non-literal value")
+        deadlines.append(deadline)
+    timeouts = [
+        keyword.value
+        for node in ast.walk(tree) if isinstance(node, ast.Call)
+        for keyword in node.keywords if keyword.arg == "timeout"
+    ]
+    unresolved: list[str] = []
+    for value in timeouts:
+        seconds = timeout_value(value, names)
+        if seconds is None:
+            unresolved.append(f"line {value.lineno} ({ast.unparse(value)})")
+        else:
+            deadlines.append(seconds)
+    return max(deadlines), unresolved
+
+
+def integer_timeout(tokens: list[Token]) -> int | None:
+    """Join timeout tokens up to the next comma and require a decimal integer."""
+    end = next((i for i, token in enumerate(tokens) if token.value == ","), len(tokens))
+    value = "".join(t.value for t in tokens[:end])
+    return int(value) if re.fullmatch(r"[0-9]+", value) else None
+
+
+def meson_timeout(call: list[Token]) -> int | None:
+    """Read a top-level integer timeout, joining digit tokens; unset means 30 s."""
+    depth = 0
+    for index in range(2, len(call) - 1):
+        token = call[index]
+        if token.kind == "operator":
+            depth += (token.value in ("(", "[", "{")) - (token.value in (")", "]", "}"))
+        if depth or token.kind != "word" or token.value != "timeout":
+            continue
+        if call[index + 1].value != ":":
+            continue
+        return integer_timeout(call[index + 2:-1])
+    return 30
+
+
+def test_findings(
+    call: list[Token], gated: bool, self_test: bool, git_scripts: list[str], scripts_dir: Path,
+) -> list[str]:
+    """Check each possible Git script against its Windows gate and deadline."""
     findings: list[str] = []
-    count = 0
-    source = meson_build.read_text(encoding="utf-8")
-    for call, gated, variables in meson_tests(source):
-        options = {token.value.strip("'\"") for token in call if token.kind == "string"}
-        if options & {"--self-test", "--self-test-only"}:
-            continue
-        name = call[2].value.strip("'\"")
-        git_scripts = [
-            ref
-            for ref in script_refs(call, variables)
-            if script_uses_git(scripts_dir / ref)
-        ]
-        if gated:
-            count += bool(git_scripts)
-            continue
-        for ref in git_scripts:
+    name = call[2].value.strip("'\"")
+    for ref in git_scripts:
+        if not gated and not self_test:
             findings.append(
                 f"meson.build:{call[0].line}: test '{name}' runs scripts/{ref} "
                 f"which calls git; gate it with {WINDOWS_GATE} "
                 "(git is not on PATH on Windows CI)"
             )
-    return findings, count
+        timeout = meson_timeout(call)
+        deadline, unresolved = script_deadline(scripts_dir / ref, scripts_dir)
+        findings.extend(
+            f"meson.build:{call[0].line}: test '{name}' runs scripts/{ref} whose timeout at "
+            f"{where} has no numeric literal value; use a literal, a module constant or a "
+            "numeric parameter default"
+            for where in unresolved
+        )
+        if timeout is None or timeout <= deadline or timeout <= 0:
+            findings.append(
+                f"meson.build:{call[0].line}: test '{name}' times out after {timeout} s "
+                f"(Meson default 30 s when unset) but scripts/{ref} waits up to {deadline:g} s "
+                f"for git; set timeout: above {deadline:g}"
+            )
+    return findings
+
+
+def check(meson_build: Path, scripts_dir: Path) -> tuple[list[str], int, int]:
+    """Return refusals, guarded scan count and timed scan/self-test count."""
+    findings: list[str] = []
+    count = timed = 0
+    source = meson_build.read_text(encoding="utf-8")
+    for call, gated, variables in meson_tests(source):
+        options = {token.value.strip("'\"") for token in call if token.kind == "string"}
+        self_test = bool(options & {"--self-test", "--self-test-only"})
+        git_scripts = [
+            ref
+            for ref in script_refs(call, variables)
+            if script_uses_git(scripts_dir / ref)
+        ]
+        count += int(gated and not self_test and bool(git_scripts))
+        timed += bool(git_scripts)
+        findings.extend(test_findings(call, gated, self_test, git_scripts, scripts_dir))
+    return findings, count, timed
 
 
 def self_test_cases() -> list[tuple[str, str, bool]]:
     """Windows guards, unsafe branches, literal and variable-backed scripts."""
-    return literal_cases() + variable_cases()
+    return literal_cases() + variable_cases() + timeout_cases()
 
 
 def literal_cases() -> list[tuple[str, str, bool]]:
     """Windows guards and unsafe branches around literal script paths."""
-    git_test = "test('scan', python, args: ['scripts' / 'scan.py'])\n"
+    git_test = "test('scan', python, args: ['scripts' / 'scan.py'], timeout: 90)\n"
     return [
         ("p1 ungated", git_test, True),
         ("p2 gated", f"{WINDOWS_GATE}\n{git_test}endif\n", False),
@@ -264,7 +434,7 @@ def variable_cases() -> list[tuple[str, str, bool]]:
     """Scripts bound to Meson variables, in source order and across branches."""
     variable_test = (
         "scan_script = meson.project_source_root() / 'scripts' / 'scan.py'\n"
-        "test('scan', python, args: ['-I', scan_script])\n"
+        "test('scan', python, args: ['-I', scan_script], timeout: 90)\n"
     )
     return [
         ("p12 variable ungated", variable_test, True),
@@ -290,17 +460,88 @@ def variable_cases() -> list[tuple[str, str, bool]]:
             "p17 branch assignments",
             "if enabled\nscan_script = 'scripts' / 'scan.py'\nelse\n"
             "scan_script = 'scripts' / 'plain.py'\nendif\n"
-            "test('scan', python, args: ['-I', scan_script])\n",
+            "test('scan', python, args: ['-I', scan_script], timeout: 90)\n",
             True,
         ),
         (
             "p18 branch reassigned",
             "if enabled\nscan_script = 'scripts' / 'scan.py'\nendif\n"
             "scan_script = 'scripts' / 'plain.py'\n"
-            "test('scan', python, args: ['-I', scan_script])\n",
+            "test('scan', python, args: ['-I', scan_script], timeout: 90)\n",
             False,
         ),
     ]
+
+
+def timeout_cases() -> list[tuple[str, str, bool]]:
+    """Git deadlines must expire before Meson, including guarded self-tests."""
+    base = f"{WINDOWS_GATE}\ntest('deadline', python, args: ['scripts' / 'scan.py']{{}})\nendif\n"
+    return [
+        ("t1 missing timeout", base.format(""), True),
+        ("t2 equal deadline", base.format(", timeout: 60"), True),
+        ("t3 above deadline", base.format(", timeout: 90"), False),
+        ("t4 literal deadline", base.format("").replace("scan.py", "literal.py"), True),
+        ("t5 constant deadline", base.format(", timeout: 90").replace("scan.py", "constant.py"), True),
+        ("t6 non-git", base.format("").replace("scan.py", "plain.py"), False),
+        ("t7 self-test", base.format("").replace("'scan.py'", "'scan.py', '--self-test'"), True),
+        ("t8 dynamic", base.format(", timeout: limit"), True),
+        ("t9 unlimited", base.format(", timeout: 0"), True),
+        ("t10 negative", base.format(", timeout: -1"), True),
+        ("t11 float", base.format(", timeout: 90.0"), True),
+        ("t12 expression", base.format(", timeout: 60 + 30"), True),
+        ("t13 literal float", base.format(", timeout: 30").replace("scan.py", "float.py"), True),
+        ("t14 annotated constant", base.format(", timeout: 90").replace("scan.py", "annotated.py"), True),
+        ("t15 unused constant", base.format("").replace("scan.py", "unused.py"), False),
+        ("t16 reassigned constant", base.format(", timeout: 90").replace("scan.py", "reassigned.py"), True),
+        ("t17 timeout expression", base.format(", timeout: 150").replace("scan.py", "expression.py"), True),
+        ("t18 rebound constant", base.format(", timeout: 90").replace("scan.py", "rebound.py"), True),
+        ("t19 parameter default", base.format(", timeout: 90").replace("scan.py", "parameter.py"), True),
+        ("t20 parameter default met", base.format(", timeout: 150").replace("scan.py", "parameter.py"), False),
+        ("t21 parameter None", base.format(", timeout: 150").replace("scan.py", "parameter_none.py"), True),
+        ("t22 call bound", base.format(", timeout: 90").replace("scan.py", "call.py"), True),
+        ("t23 call bound met", base.format(", timeout: 150").replace("scan.py", "call.py"), False),
+        ("t24 starred call", base.format(", timeout: 150").replace("scan.py", "starred.py"), True),
+        ("t25 unreadable call", base.format(", timeout: 150").replace("scan.py", "unknown.py"), True),
+        ("t26 callback", base.format(", timeout: 150").replace("scan.py", "callback.py"), True),
+        ("t27 keyword constant", base.format(", timeout: 90").replace("scan.py", "keyword.py"), True),
+        ("t28 expanded keywords", base.format(", timeout: 150").replace("scan.py", "kwargs.py"), True),
+        ("t29 instance method", base.format(", timeout: 90").replace("scan.py", "method.py"), True),
+        ("t30 static method", base.format(", timeout: 90").replace("scan.py", "static.py"), True),
+        ("t31 class method", base.format(", timeout: 90").replace("scan.py", "class.py"), True),
+        ("t32 required parameter", base.format(", timeout: 150").replace("scan.py", "required.py"), False),
+        ("t33 lambda", base.format(", timeout: 150").replace("scan.py", "lambda.py"), True),
+        ("t34 None default with call", base.format(", timeout: 150").replace("scan.py", "none_call.py"), True),
+    ]
+
+
+UNREADABLE_SHARED_DEADLINES = (
+    "OTHER = 60\n",
+    "GIT_DEADLINE_S = '60'\n",
+    "GIT_DEADLINE_S = 60\nGIT_DEADLINE_S = 120 + 0\n",
+    "GIT_DEADLINE_S = 60\nGIT_DEADLINE_S += 60\n",
+)
+
+
+def shared_deadline_self_test(scripts: Path, meson: Path) -> bool:
+    """A missing, nonnumeric or rebound shared deadline must produce a named failure."""
+    shared = scripts / "tracked_python.py"
+    meson.write_text(
+        f"{WINDOWS_GATE}\ntest('shared', python, args: ['scripts' / 'scan.py'], timeout: 90)\nendif\n",
+        encoding="utf-8",
+    )
+    for source in UNREADABLE_SHARED_DEADLINES:
+        shared.write_text(source, encoding="utf-8")
+        try:
+            check(meson, scripts)
+        except ValueError as exc:
+            if "tracked_python.py" not in str(exc) or "GIT_DEADLINE_S" not in str(exc):
+                print(f"FAIL: shared deadline not named: {exc}", file=sys.stderr)
+                return False
+        else:
+            print(f"FAIL: unreadable GIT_DEADLINE_S accepted: {source!r}", file=sys.stderr)
+            return False
+    shared.write_text("GIT_DEADLINE_S: float = 60.0\n", encoding="utf-8")
+    return not check(meson, scripts)[0]
 
 
 def run_self_test() -> int:
@@ -315,20 +556,46 @@ def run_self_test() -> int:
             "plain.py": '# tracked_files\nTEXT = "tracked_python"\n',
             "command.py": 'COMMAND = ["git", "ls-files"]\n',
             "which.py": 'import shutil\nshutil.which("git")\n',
+            "tracked_python.py": "GIT_DEADLINE_S = 60\n",
+            "literal.py": "run(['git'], timeout=30)\n",
+            "constant.py": "GIT_TIMEOUT_S = 120\nrun(['git'], timeout=GIT_TIMEOUT_S)\n",
+            "float.py": "run(['git'], timeout=30.5)\n",
+            "annotated.py": "git_deadline: float = 120.5\nrun(['git'], timeout=git_deadline)\n",
+            "unused.py": "UNUSED_TIMEOUT = 120\nrun(['git'])\n",
+            "reassigned.py": "GIT_TIMEOUT = 120\nrun(['git'], timeout=GIT_TIMEOUT)\nGIT_TIMEOUT = 10\n",
+            "expression.py": "GIT_TIMEOUT = 60\nrun(['git'], timeout=GIT_TIMEOUT * 2)\n",
+            "rebound.py": "GIT_TIMEOUT = 60\nrun(['git'], timeout=GIT_TIMEOUT)\nGIT_TIMEOUT = 120 + 0\n",
+            "parameter.py": "def run_git(timeout=120):\n    run(['git'], timeout=timeout)\n",
+            "parameter_none.py": "def run_git(timeout=None):\n    run(['git'], timeout=timeout)\n",
+            **{name: "def scan(limit=60):\n    run(['git'], timeout=limit)\n" + call + "\n"
+               for name, call in (("call.py", "scan(120)"), ("starred.py", "scan(*args)"),
+                                  ("unknown.py", "scan(n)"), ("callback.py", "pool.submit(scan)"),
+                                  ("keyword.py", "MAX = 120\nscan(limit=MAX)"), ("kwargs.py", "scan(**kw)"))},
+            "method.py": "class C:\n    def scan(self, limit=60):\n        run(['git'], timeout=limit)\nobj.scan(120)\n",
+            "static.py": "class C:\n    @staticmethod\n    def scan(limit=60):\n        run(['git'], timeout=limit)\nC.scan(120)\n",
+            "class.py": "class C:\n    @classmethod\n    def scan(cls, limit=60):\n        run(['git'], timeout=limit)\nC.scan(120)\n",
+            "required.py": "def scan(limit):\n    run(['git'], timeout=limit)\nscan(120)\n",
+            "lambda.py": "scan = lambda limit=60: run(['git'], timeout=limit)\n",
+            "none_call.py": "def scan(limit=None):\n    run(['git'], timeout=limit)\nscan(120)\nscan()\n",
         }
         for name, source in fixtures.items():
             (scripts / name).write_text(source, encoding="utf-8")
         meson = root / "meson.build"
         for label, source, refused in cases:
             meson.write_text(source, encoding="utf-8")
-            findings, count = check(meson, scripts)
-            expected_count = int(
-                label in {"p2 gated", "p6 nested", "p13 variable gated"}
-            )
-            if bool(findings) != refused or count != expected_count:
-                print(f"FAIL: {label}: {findings}, gated={count}", file=sys.stderr)
+            findings, count, timed = check(meson, scripts)
+            expected_count = int(label in {"p2 gated", "p6 nested", "p13 variable gated"})
+            expected_count += int(label.startswith("t") and label not in {"t6 non-git", "t7 self-test"})
+            expected_timed = int(label not in {
+                "p4 no git", "p14 variable no git", "p16 later git assignment",
+                "p18 branch reassigned", "t6 non-git",
+            })
+            if bool(findings) != refused or count != expected_count or timed != expected_timed:
+                print(f"FAIL: {label}: {findings}, gated={count}, timed={timed}", file=sys.stderr)
                 return 1
-    print(f"check-meson-windows-git: self-test ({len(cases)} cases) ok")
+        if not shared_deadline_self_test(scripts, meson):
+            return 1
+    print(f"check-meson-windows-git: self-test ({len(cases) + len(UNREADABLE_SHARED_DEADLINES) + 1} cases) ok")
     return 0
 
 
@@ -342,14 +609,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.self_test:
             return run_self_test()
-        findings, count = check(args.meson_build, args.scripts_dir)
+        findings, count, timed = check(args.meson_build, args.scripts_dir)
     except (OSError, UnicodeDecodeError, SyntaxError, ValueError) as exc:
         print(f"check-meson-windows-git: {exc}", file=sys.stderr)
         return 2
     if findings:
         print("\n".join(findings), file=sys.stderr)
         return 1
-    print(f"check-meson-windows-git: {count} git-scanning tests gated")
+    print(f"check-meson-windows-git: {count} git-scanning tests gated; {timed} timed tests checked")
     return 0
 
 
