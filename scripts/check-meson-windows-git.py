@@ -224,6 +224,27 @@ def binding_name(node: ast.AST) -> str | None:
     return getattr(node, field, None)
 
 
+def namespace_unreadable(tree: ast.Module) -> bool:
+    """Refuse star imports and namespace access outside allow-listed reads."""
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    for node in ast.walk(tree):
+        match node:
+            case ast.ImportFrom(names=[ast.alias(name="*")]):
+                return True
+            case ast.Call(func=ast.Name(id="globals" | "vars" | "locals"), args=[], keywords=[]):
+                parent = parents.get(node)
+                match parent:
+                    case ast.Attribute(attr="get") if getattr(parents.get(parent), "func", None) is parent:
+                        continue
+                    case ast.Subscript(value=value, ctx=ast.Load()) if value is node:
+                        continue
+                    case ast.Compare(ops=ops, comparators=values):
+                        if set(zip(map(type, ops), values)) & {(ast.In, node), (ast.NotIn, node)}:
+                            continue
+                return True
+    return False
+
+
 def module_numbers(tree: ast.Module) -> dict[str, int | float | None]:
     """Only direct numeric assignments survive every binding, including nested ones."""
     literals = {target: number(node.value) for node in tree.body
@@ -234,7 +255,7 @@ def module_numbers(tree: ast.Module) -> dict[str, int | float | None]:
     for node in ast.walk(tree):
         if (name := binding_name(node)) is not None:
             bind(numbers, name, literals.get(node))
-    return numbers
+    return dict.fromkeys(numbers) if namespace_unreadable(tree) else numbers
 
 
 def function_calls(func: ast.AST, tree: ast.Module) -> list[ast.Call] | None:
@@ -645,6 +666,14 @@ EXPANDED_DEADLINE_CASES = (
           ("dotted import", "import LIMIT.cfg"), ("aliased import", "import cfg as LIMIT"),
           ("match star", "match x:\n    case [*LIMIT]:\n        pass"), ("match rest", "match x:\n    case {'a': _, **LIMIT}:\n        pass"),
       ), start=69)],
+    *[(f"t{index} {label}", "LIMIT = 60\n" + source + "\nrun(['git'], timeout=LIMIT)\n", 90, refused)
+      for index, (label, source, refused) in enumerate((
+          ("star import", "from cfg import *", True), ("namespace store", "globals()['LIMIT'] = 120", True),
+          ("namespace update", "globals().update(LIMIT=120)", True), ("namespace alias", "g = globals()\ng['LIMIT'] = 120", True),
+          ("vars store", "vars()['LIMIT'] = 120", True), ("nested namespace", "def f():\n    globals()['LIMIT'] = 120", True),
+          ("namespace get", "helper = globals().get('x')", False), ("namespace membership", "ok = 'x' in globals()", False),
+          ("namespace load", "y = globals()['x']", False),
+      ), start=75)],
 )
 
 
@@ -654,6 +683,7 @@ UNREADABLE_SHARED_DEADLINES = (
     "GIT_DEADLINE_S = 60\nGIT_DEADLINE_S = 120 + 0\n",
     "GIT_DEADLINE_S = 60\nGIT_DEADLINE_S += 60\n",
     "GIT_DEADLINE_S = 60\nif c:\n    GIT_DEADLINE_S = 120\n",
+    "GIT_DEADLINE_S = 60\nfrom cfg import *\n",
 )
 
 

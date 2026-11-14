@@ -656,7 +656,8 @@ module-level statement rebinds to a non-literal, fails the test and names its
 line. Module constants count only when every module-level binding is a direct
 top-level assignment of a numeric literal; `**` unpacks are read for string-keyed dict literals, `dict(...)` and
 forwarded `**kwargs`, and otherwise fail closed; positional `wait`/`communicate`
-timeouts also count. A missing or rebound shared deadline fails closed. Set `timeout:` after
+timeouts also count. A star import or a write through `globals()`, `vars()` or `locals()` makes every module constant unreadable (reads via `.get`, subscript and `in` are allowed).
+A missing or rebound shared deadline fails closed. Set `timeout:` after
 `workdir:` to the deadline plus 30 s, rounded up to a multiple of 30; an
 existing larger timeout stays. The check's `--self-test` plants missing, equal,
 dynamic and nonpositive timeouts and unreadable script deadlines alongside safe
