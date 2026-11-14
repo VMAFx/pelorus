@@ -1020,7 +1020,9 @@ for a push, the native and documentation toolchains of `make verify-all`.
 The later pre-push jobs verify the checked-out tree, so `pushed-head` runs
 first and refuses a pushed branch or tag whose commit is not the checked-out
 `HEAD`. To push such a branch, check it out and push again. Deletions pass, and
-an annotated tag is compared through the commit it points at. The pre-push jobs
+an annotated tag is compared through the commit it points at. The local field may
+hold a revision expression with spaces, so the three trailing fields are split
+from the right. The pre-push jobs
 run `piped`, so the first failure stops the jobs after it.
 [`scripts/check-prepush-head.py`](../../scripts/check-prepush-head.py) holds the
 check and its self-test (issue #615), which the fast suite runs as

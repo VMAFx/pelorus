@@ -41,8 +41,8 @@ def parse_update(line: str, number: int) -> tuple[str, str] | None:
     text = line.removesuffix("\n")
     if not text:
         return None
-    fields = text.split(" ")
-    if len(fields) != 4:
+    fields = text.rsplit(" ", 3)
+    if len(fields) != 4 or not fields[0]:
         raise Refused(f"pre-push: malformed input on line {number}: expected 4 fields")
     local_ref, local_sha, _, remote_sha = fields
     if SHA.fullmatch(local_sha) is None or SHA.fullmatch(remote_sha) is None:
@@ -227,6 +227,10 @@ def case_input(root: Path, env: dict[str, str], head: str) -> None:
     valid = f"refs/heads/master {head} refs/heads/master {zero}\n"
     cases = (
         ("", 0, ""), ("\n", 0, ""), (valid, 0, ""),
+        (f"HEAD@{{0 seconds ago}} {head} refs/heads/time {zero}\n", 0, ""),
+        (f" {head} r {zero}\n", 1, "line 1"),
+        (f"{head} r {zero}\n", 1, "line 1"),
+        (f"r {head} r {zero} \n", 1, "line 1"),
         ("malformed\n", 1, "line 1"),
         (f"r {'g' * 40} r {zero}\n", 1, "line 1"),
         (f"r {head} r bad\n", 1, "line 1"),
@@ -261,6 +265,8 @@ def case_ref_names_and_peel(root: Path, remote: Path, env: dict[str, str],
         (io.StringIO(f"{ref} {head} {ref} {zero}\n"), 0, ""),
         (io.StringIO(f"(delete) {zero} {ref} {head}\n"), 0, ""),
         (io.StringIO(f"{ref} {old} {ref} {zero}\n"), 1, "check out a\u00a0b and push again"),
+        (io.StringIO(f"HEAD@{{0 seconds ago}} {old} r {zero}\n"),
+         1, "check out HEAD@{0 seconds ago} and push again"),
         (pre_push_stream(io.BytesIO(b"refs/heads/a\xffb " +
                                    f"{head} r {zero}\n".encode("ascii"))), 0, ""),
         (pre_push_stream(io.BytesIO(b"refs/heads/a\xffb " +
@@ -278,6 +284,9 @@ def case_ref_names_and_peel(root: Path, remote: Path, env: dict[str, str],
     error = send(root, remote, env, f"HEAD:{ref}")
     require(error is None, f"NBSP ref push refused: {error}")
     require(remote_ref(remote, env, ref) == head, "remote NBSP ref differs")
+    error = send(root, remote, env, "HEAD@{0 seconds ago}:refs/heads/time")
+    require(error is None, f"revision expression push refused: {error}")
+    require(remote_ref(remote, env, "refs/heads/time") == head, "remote time ref differs")
     require(not set("{}") & set("".join(peel_args(head))), "MSYS2 peel argument contains braces")
 
 
