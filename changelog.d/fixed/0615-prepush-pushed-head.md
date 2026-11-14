@@ -1,0 +1,1 @@
+- The pre-push hook now refuses to push a branch or tag whose commit is not the checked-out `HEAD`, instead of verifying the checked-out tree in its place ([#615](https://github.com/VMAFx/pelorus/issues/615)).
