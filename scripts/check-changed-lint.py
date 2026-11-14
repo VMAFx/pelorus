@@ -50,7 +50,12 @@ def run_tool(
 ) -> subprocess.CompletedProcess[str]:
     """Capture a bounded tool invocation; callers interpret its status."""
     return subprocess.run(  # nosec B603 - resolved tool, list argv, no shell, explicit deadline  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - resolved argv, no shell, explicit deadline
-        argv, cwd=root, capture_output=True, text=True, timeout=timeout, check=False
+        argv,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - argv[0] is the cppcheck or Ruff the operator names (--cppcheck, RUFF, PYTHON_LINT_ENV), resolved by shutil.which to an absolute executable; the rest are fixed flags and committed paths; list argv, no shell, explicit deadline
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
     )
 
 
@@ -316,10 +321,12 @@ def fixture_cases(initial):
     yield "b planted unreadVariable", {"src/a.c": unused}, 1, "unreadVariable"
     yield "c planted Python", {"pkg/new.py": "Y =(1,2)\n"}, 1, "pkg/new.py"
     yield "d adjacent Python", {"pkg/old.py": old.replace("Z = 1", "Z = 2")}, 0, ""
+    modified = {"pkg/old.py": old.replace("Z = 1", "Z =(1,2)")}
+    yield "e modified Python range", modified, 1, "pkg/old.py:2-2"
     extra = "\nint other(void)\n{\n    return 2;\n}\n"
-    yield "e unchanged finding", {"src/b.c": unused + extra}, 0, ""
-    yield "f moved finding", {"src/b.c": "\n\n" + unused}, 0, ""
-    yield "g unknown base", {"pkg/new.py": "Y = 2\n"}, 2, "base unknown not found"
+    yield "f unchanged finding", {"src/b.c": unused + extra}, 0, ""
+    yield "g moved finding", {"src/b.c": "\n\n" + unused}, 0, ""
+    yield "h unknown base", {"pkg/new.py": "Y = 2\n"}, 2, "base unknown not found"
 
 
 def self_test(root: Path, tools, jobs: int) -> int:

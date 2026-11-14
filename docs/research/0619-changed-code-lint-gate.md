@@ -21,8 +21,8 @@ Neither tool can gate the whole tree today. On master, `ruff format --check` wou
 | cppcheck `--enable=style --std=c11 --language=c` over the 55 units in `.config/clang-tidy/lane-files.txt` | 39 findings: 11 `variableScope`, 10 `redundantAssignment`, 3 each `unusedStructMember`, `nullPointer`, `constParameterPointer`, 2 each `unreadVariable`, `uninitvar`, 1 each `syntaxError`, `incorrectStringBooleanError`, `constVariable`, `constParameter`, `arrayIndexOutOfBounds` |
 | Same, over every tracked `.c` and `.h` file | 224 findings, 164 of them `unusedStructMember` from public headers, 8 `unknownMacro` from FFmpeg-tree files |
 | Wall time, 55 lane units, `-j4` | 3.8 s |
-| `scripts/check-changed-lint.py --self-test` (seven fixture cases, real tools) | all pass, 0.47 s |
-| Same, with the cppcheck step returning no findings, the format step returning clean, or the key using line numbers | fails on the planted `unreadVariable`, the planted unformatted file, and the moved finding respectively |
+| `scripts/check-changed-lint.py --self-test` (eight fixture cases, real tools) | all pass, 0.26 s |
+| Same, with the cppcheck step returning no findings, the format step returning clean, the key using line numbers, or the range step yielding no ranges | fails on the planted `unreadVariable`, the planted unformatted file, the moved finding, and the unformatted line in a modified file respectively |
 | `--base HEAD~1` on the branch, one C change (two cppcheck passes, host load about 40) | exit 0: 4 files, 37 ranges, 0 unformatted; cppcheck base 39, head 39, new 0; 19.2 s |
 | `--base HEAD~3` (the three commits before this change) | exit 1: 11 unformatted ranges plus one unformatted new file, in 3 files that landed in pull requests 616 and 618; cppcheck new 0 |
 
