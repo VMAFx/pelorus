@@ -39,6 +39,27 @@ $ pelorus_qp_report test.csv --requested-qp 1e309
 ! usage: pelorus_qp_report <x265.csv> [--requested-qp N]
 [exit 1]
 
+# usage: --requested-qp hex value rejected
+% copy x265-4.3-qp32.csv test.csv
+$ pelorus_qp_report test.csv --requested-qp 0x20
+! pelorus_qp_report: invalid value for '--requested-qp': '0x20'
+! usage: pelorus_qp_report <x265.csv> [--requested-qp N]
+[exit 1]
+
+# usage: --requested-qp plus sign rejected
+% copy x265-4.3-qp32.csv test.csv
+$ pelorus_qp_report test.csv --requested-qp +32
+! pelorus_qp_report: invalid value for '--requested-qp': '+32'
+! usage: pelorus_qp_report <x265.csv> [--requested-qp N]
+[exit 1]
+
+# usage: --requested-qp empty exponent rejected
+% copy x265-4.3-qp32.csv test.csv
+$ pelorus_qp_report test.csv --requested-qp 1e
+! pelorus_qp_report: invalid value for '--requested-qp': '1e'
+! usage: pelorus_qp_report <x265.csv> [--requested-qp N]
+[exit 1]
+
 # usage: unexpected positional argument
 % copy x265-4.3-qp32.csv test.csv
 $ pelorus_qp_report test.csv extra.csv
@@ -197,6 +218,20 @@ $ pelorus_qp_report test.csv --requested-qp -0
 >   psnr_y/u/v (dB)   : 0.000 / 0.000 / 0.000
 >   qp_valid          : 0  (0 => frame-granular, no per-cell map)
 >   requested QP      : 0.00 (flat, every frame)
+>   honored_fraction  : 1.0000  (sign-agreement requested vs honored per-frame delta-QP)
+[exit 0]
+
+# boundary: requested QP exponent form 1e1 accepted
+% copy x265-4.3-qp32.csv test.csv
+$ pelorus_qp_report test.csv --requested-qp 1e1
+> PEL_SEC_QPREPORT (read back from a 144-byte Pelorus blob)
+>   source            : x265 --csv (HEVC SW, PEL_QPSRC_NONE=0)
+>   frames parsed     : 10
+>   avg_qp (bit-wtd)  : 32.0000
+>   total_bits        : 59928
+>   psnr_y/u/v (dB)   : 0.000 / 0.000 / 0.000
+>   qp_valid          : 0  (0 => frame-granular, no per-cell map)
+>   requested QP      : 10.00 (flat, every frame)
 >   honored_fraction  : 1.0000  (sign-agreement requested vs honored per-frame delta-QP)
 [exit 0]
 

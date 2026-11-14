@@ -101,6 +101,22 @@ test('tool-qloop-missing-val', pelorus_qloop,
             '--start', '20.0', '--resolution', '0.5', '--max-iter', '10', '--direction'],
      should_fail: true, suite: 'fast')
 
+test('tool-qp-report-leading-space', pelorus_qp_report,
+     args: [_telemetry_fixtures / 'x265-4.3-qp32.csv', '--requested-qp', ' 32'],
+     should_fail: true, suite: 'fast')
+test('tool-qp-report-leading-tab', pelorus_qp_report,
+     args: [_telemetry_fixtures / 'x265-4.3-qp32.csv', '--requested-qp', '\t32'],
+     should_fail: true, suite: 'fast')
+
+test('tool-qloop-decimal-ok', pelorus_qloop,
+     args: ['--target', '90.0', '--tolerance', '1.0', '--min', '10.0', '--max', '45.0',
+            '--start', '20.0', '--resolution', '0.5', '--max-iter', '10', '--direction', '1'],
+     suite: 'fast')
+test('tool-qloop-leading-space', pelorus_qloop,
+     args: ['--target', ' 90.0', '--tolerance', '1.0', '--min', '10.0', '--max', '45.0',
+            '--start', '20.0', '--resolution', '0.5', '--max-iter', '10', '--direction', '1'],
+     should_fail: true, suite: 'fast')
+
 bash_prog = find_program('bash', required: false)
 if bash_prog.found()
   # Case e needs a non-executable file; MSYS2 mounts without ACLs derive execute bits from content.
