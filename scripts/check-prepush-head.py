@@ -13,7 +13,7 @@ import re
 import shlex
 import sys
 import tempfile
-from typing import Callable, TextIO
+from typing import BinaryIO, Callable, TextIO
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -38,9 +38,10 @@ def git(root: Path, args: list[str], env: dict[str, str] | None) -> str:
 
 def parse_update(line: str, number: int) -> tuple[str, str] | None:
     """Validate both object IDs, including those in deletion updates."""
-    fields = line.split()
-    if not fields:
+    text = line.removesuffix("\n")
+    if not text:
         return None
+    fields = text.split(" ")
     if len(fields) != 4:
         raise Refused(f"pre-push: malformed input on line {number}: expected 4 fields")
     local_ref, local_sha, _, remote_sha = fields
@@ -49,11 +50,16 @@ def parse_update(line: str, number: int) -> tuple[str, str] | None:
     return None if local_sha == "0" * len(local_sha) else (local_ref, local_sha)
 
 
+def peel_args(sha: str) -> list[str]:
+    """Use ^0 without braces to avoid MSYS2 brace expansion (ADR-0149)."""
+    return ["rev-parse", "--verify", "--quiet", f"{sha}^0"]
+
+
 def check_commit(root: Path, ref: str, sha: str, head: str,
                  env: dict[str, str] | None) -> None:
     """Peel annotated tags before comparing the pushed commit with HEAD."""
     try:
-        commit = git(root, ["rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"], env)
+        commit = git(root, peel_args(sha), env)
     except RuntimeError as exc:
         raise Refused(f"pre-push: refusing {ref}: cannot peel {sha[:12]} to a commit: {exc}") from exc
     if commit != head:
@@ -63,6 +69,11 @@ def check_commit(root: Path, ref: str, sha: str, head: str,
             f"the checked-out HEAD ({head[:12]}), not the pushed commit.\n"
             f"pre-push: check out {short} and push again."
         )
+
+
+def pre_push_stream(raw: BinaryIO) -> TextIO:
+    """Preserve arbitrary Git ref bytes and LF delimiters across locales."""
+    return io.TextIOWrapper(raw, encoding="utf-8", errors="surrogateescape", newline="\n")
 
 
 def check_updates(stream: TextIO, root: Path, env: dict[str, str] | None) -> None:
@@ -240,6 +251,36 @@ def case_input(root: Path, env: dict[str, str], head: str) -> None:
             "unborn HEAD did not report a Git failure")
 
 
+def case_ref_names_and_peel(root: Path, remote: Path, env: dict[str, str],
+                            old: str, head: str) -> None:
+    """Preserve valid ref names and reject non-commits with portable peeling."""
+    zero = "0" * 40
+    ref = "refs/heads/a\u00a0b"
+    tree = git(root, ["log", "-1", "--format=%T", "HEAD"], env)
+    cases = (
+        (io.StringIO(f"{ref} {head} {ref} {zero}\n"), 0, ""),
+        (io.StringIO(f"(delete) {zero} {ref} {head}\n"), 0, ""),
+        (io.StringIO(f"{ref} {old} {ref} {zero}\n"), 1, "check out a\u00a0b and push again"),
+        (pre_push_stream(io.BytesIO(b"refs/heads/a\xffb " +
+                                   f"{head} r {zero}\n".encode("ascii"))), 0, ""),
+        (pre_push_stream(io.BytesIO(b"refs/heads/a\xffb " +
+                                   f"{old} r {zero}\n".encode("ascii"))),
+         1, "check out a\udcffb and push again"),
+        (io.StringIO(f"r {tree} r {zero}\n"), 1, "cannot peel"),
+    )
+    for number, (stream, expected, message) in enumerate(cases):
+        with stream:
+            err = io.StringIO()
+            rc = check_pushed_head(stream, root, env, err)
+        require(rc == expected and message in err.getvalue(),
+                f"ref case {number}: exit {rc}, stderr {err.getvalue()!r}")
+        require(expected != 0 or not err.getvalue(), f"ref case {number}: unexpected output")
+    error = send(root, remote, env, f"HEAD:{ref}")
+    require(error is None, f"NBSP ref push refused: {error}")
+    require(remote_ref(remote, env, ref) == head, "remote NBSP ref differs")
+    require(not set("{}") & set("".join(peel_args(head))), "MSYS2 peel argument contains braces")
+
+
 def run_self_test() -> int:
     """Exercise real pushes and planted refusals, one result per case."""
     try:
@@ -253,6 +294,7 @@ def run_self_test() -> int:
                 ("p4 annotated tags", lambda: case_tags(root, remote, env, old)),
                 ("p5 two refs", lambda: case_multi(root, remote, env)),
                 ("p6 input validation", lambda: case_input(root, env, head)),
+                ("p7 ref names and peel", lambda: case_ref_names_and_peel(root, remote, env, old, head)),
             )
             failures = 0
             for name, case in cases:
@@ -278,7 +320,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.self_test:
         return run_self_test()
-    return check_pushed_head(sys.stdin, Path.cwd())
+    return check_pushed_head(pre_push_stream(sys.stdin.buffer), Path.cwd())
 
 
 if __name__ == "__main__":
