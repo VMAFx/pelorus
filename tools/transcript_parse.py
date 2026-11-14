@@ -119,6 +119,16 @@ def _parse_repeat_directive(parts: list[str], fn: str, lno: int) -> Directive:
 
 def _parse_directive(parts: list[str], fn: str, lno: int) -> Directive:
     """Parse directive line parts into a typed Directive."""
+    if parts[0] == "stdin":
+        if len(parts) != 2:
+            raise TranscriptParseError(
+                fn, lno, "malformed stdin directive: expected one fixture"
+            )
+        try:
+            validate_path_token(parts[1], "fixture name")
+        except ValueError as exc:
+            raise TranscriptParseError(fn, lno, str(exc)) from exc
+        return Directive("stdin", parts[1], "")
     if len(parts) < 3:
         raise TranscriptParseError(
             fn, lno, f"malformed directive '% {' '.join(parts)}'"
@@ -183,14 +193,22 @@ def _feed_output_line(line: str, lno: int, fn: str, cur: _CaseState) -> None:
         raise TranscriptParseError(fn, lno, f"unknown output line syntax: {line!r}")
 
 
+def _append_directive(line: str, lno: int, fn: str, cur: _CaseState) -> None:
+    """Append a preparation directive, rejecting a second stdin at its own line."""
+    if cur.command is not None:
+        raise TranscriptParseError(fn, lno, "directive after command")
+    directive = _parse_directive(line[2:].split(" "), fn, lno)
+    if directive.kind == "stdin" and any(d.kind == "stdin" for d in cur.directives):
+        raise TranscriptParseError(fn, lno, "duplicate stdin directive")
+    cur.directives.append(directive)
+
+
 def _feed_case_line(
     line: str, lno: int, tool_name: str, fn: str, cur: _CaseState
 ) -> None:
     """Process directive, command, output, or exit line for current case."""
     if line.startswith("% "):
-        if cur.command is not None:
-            raise TranscriptParseError(fn, lno, "directive after command")
-        cur.directives.append(_parse_directive(line[2:].split(" "), fn, lno))
+        _append_directive(line, lno, fn, cur)
     elif line.startswith("$ "):
         if cur.command is not None:
             raise TranscriptParseError(fn, lno, "duplicate command in case")

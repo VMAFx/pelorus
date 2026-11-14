@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import difflib
+import io
 import os
 import pathlib
 import subprocess  # nosec B404 - driver executes tool demonstrator under test
@@ -37,6 +39,7 @@ from transcript_plants import (
     expansion_plants,
     parse_plants,
     runtime_plants,
+    stdin_plants,
 )
 
 MAX_STREAM_BYTES = 1024 * 1024
@@ -77,6 +80,26 @@ class _StreamReader(threading.Thread):
                 self.proc.kill()
 
 
+class _StdinWriter(threading.Thread):
+    """Feed bounded input while output readers and the process timeout run."""
+
+    def __init__(self, pipe: IO[bytes], data: bytes) -> None:
+        super().__init__(daemon=True)
+        self.pipe = pipe
+        self.data = data
+        self.error = ""
+
+    def run(self) -> None:
+        """Close stdin after writing; an early child exit may close its read end."""
+        try:
+            with self.pipe:
+                self.pipe.write(self.data)
+        except BrokenPipeError:
+            return  # A tool may exit before consuming all input.
+        except OSError as exc:
+            self.error = str(exc)
+
+
 def minimal_env() -> dict[str, str]:
     """Return a minimal environment containing only platform-required keys."""
     allowed = {"PATH", "SYSTEMROOT", "TEMP", "TMP", "LANG"}
@@ -98,8 +121,8 @@ def _split_fixture_lines(data: bytes) -> list[bytes]:
 
 def _execute_directive(
     d: Directive, fixtures_dir: pathlib.Path, tmp_dir: pathlib.Path
-) -> None:
-    """Execute a copy, head, or repeat directive in temporary directory."""
+) -> bytes | None:
+    """Read bounded stdin bytes or prepare a file in the temporary directory."""
     validate_path_token(d.fixture, "fixture name", fixtures_dir=fixtures_dir)
     src_path = (fixtures_dir / d.fixture).resolve()
     dst_path = tmp_dir / d.dest
@@ -107,6 +130,8 @@ def _execute_directive(
         data = f.read(MAX_INPUT_BYTES + 1)
     if len(data) > MAX_INPUT_BYTES:
         raise ValueError(f"fixture {d.fixture} exceeds {MAX_INPUT_BYTES} bytes")
+    if d.kind == "stdin":
+        return data
     lines = _split_fixture_lines(data)
     if len(lines) > MAX_DIRECTIVE_LINES:
         raise ValueError(f"fixture {d.fixture} exceeds maximum line limit")
@@ -130,6 +155,7 @@ def _execute_directive(
                 f"repeat of {d.fixture} expands to {size} bytes, over {MAX_INPUT_BYTES}"
             )
         dst_path.write_bytes(hdr + row * d.count)
+    return None
 
 
 def _run_directives(
@@ -138,16 +164,19 @@ def _run_directives(
     tmp_dir: pathlib.Path,
     case: TestCase,
     quiet: bool,
-) -> bool:
+) -> tuple[bool, bytes | None]:
     """Execute case directives sequentially and report any failure."""
+    stdin_data = None
     for d in directives:
         try:
-            _execute_directive(d, fixtures_dir, tmp_dir)
+            data = _execute_directive(d, fixtures_dir, tmp_dir)
+            if data is not None:
+                stdin_data = data
         except (FileNotFoundError, IndexError, ValueError, OSError) as exc:
             if not quiet:
                 sys.stderr.write(f"FAIL: {case.name} (line {case.lineno}): {exc}\n")
-            return False
-    return True
+            return False, None
+    return True, stdin_data
 
 
 def _format_stream_lines(prefix: str, lines: list[str]) -> list[str]:
@@ -235,8 +264,32 @@ def _resolve_capture_verdict(
     return CaptureResult(t_out.data, t_err.data, returncode, "ok", "")
 
 
+def _drain_readers(readers: tuple[_StreamReader, ...], deadline: float) -> None:
+    """Join output readers within one shared deadline; leave held pipes open."""
+    for reader in readers:
+        reader.join(timeout=max(0.0, deadline - time.monotonic()))
+        reader.held = reader.is_alive()
+        # Closing a held pipe blocks on the reader until the descendant exits.
+        if not reader.held and reader.pipe is not None:
+            reader.pipe.close()
+
+
+def _finish_writer(writer: _StdinWriter | None, deadline: float) -> str:
+    """Join input writer within the shared deadline and report write failures."""
+    if writer is None:
+        return ""
+    writer.join(timeout=max(0.0, deadline - time.monotonic()))
+    if writer.is_alive():
+        return "stdin still open after the tool exited"
+    return writer.error
+
+
 def capture(
-    argv: list[str], exe: str, cwd: pathlib.Path, timeout: float
+    argv: list[str],
+    exe: str,
+    cwd: pathlib.Path,
+    timeout: float,
+    stdin_data: bytes | None = None,
 ) -> CaptureResult:
     """Execute command with bounded runtime and stream capture."""
     env = minimal_env()
@@ -246,7 +299,7 @@ def capture(
             executable=exe,
             cwd=cwd,
             env=env,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if stdin_data is None else subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -260,6 +313,10 @@ def capture(
     t_err = _StreamReader(proc.stderr, proc)
     t_out.start()
     t_err.start()
+    writer = None
+    if stdin_data is not None and proc.stdin is not None:
+        writer = _StdinWriter(proc.stdin, stdin_data)
+        writer.start()
 
     timed_out = False
     try:
@@ -270,14 +327,12 @@ def capture(
         proc.wait()
 
     deadline = time.monotonic() + PIPE_DRAIN_SECS
-    for reader in (t_out, t_err):
-        reader.join(timeout=max(0.0, deadline - time.monotonic()))
-        reader.held = reader.is_alive()
-        # A child process that inherited the pipe keeps the reader blocked, and
-        # closing a pipe under a blocked read waits until that child exits, so a
-        # held pipe stays open; the daemon thread ends when the child closes it.
-        if not reader.held and reader.pipe is not None:
-            reader.pipe.close()
+    _drain_readers((t_out, t_err), deadline)
+    error = _finish_writer(writer, deadline)
+    if error:
+        return CaptureResult(
+            t_out.data, t_err.data, proc.returncode, "stdin-error", error
+        )
 
     return _resolve_capture_verdict(timed_out, t_out, t_err, proc.returncode, timeout)
 
@@ -308,9 +363,14 @@ def _run_single_case(
     quiet: bool = False,
 ) -> bool:
     """Execute a single test case within a temporary directory."""
-    if not _run_directives(case.directives, fixtures_dir, tmp_dir, case, quiet):
+    ok, stdin_data = _run_directives(
+        case.directives, fixtures_dir, tmp_dir, case, quiet
+    )
+    if not ok:
         return False
-    res = capture([tool_name, *case.command], exe_path, tmp_dir, RUN_TIMEOUT_SECS)
+    res = capture(
+        [tool_name, *case.command], exe_path, tmp_dir, RUN_TIMEOUT_SECS, stdin_data
+    )
     if res.verdict != "ok":
         if not quiet:
             if res.verdict == "spawn-error":
@@ -433,6 +493,59 @@ def _run_expansion_plants(exe: str, tool: str, tmp: pathlib.Path) -> bool:
     return True
 
 
+def _run_stdin_plants(exe: str, tool: str, tmp: pathlib.Path) -> bool:
+    """Check stdin directive failures by both exit code and diagnostic reason."""
+    fix = tmp / "stdin-fixtures"
+    fix.mkdir()
+    (fix / "oversized.txt").write_bytes(b"x" * (MAX_INPUT_BYTES + 1))
+    for label, text, expected_rc, reason in stdin_plants(tool, MAX_INPUT_BYTES):
+        errors = io.StringIO()
+        try:
+            cases = parse_transcript(text, "<planted>", tool)
+        except TranscriptParseError as exc:
+            rc, diagnostic = 2, str(exc)
+        else:
+            with contextlib.redirect_stderr(errors):
+                rc = 1 if run_cases(cases, exe, tool, fix) else 0
+            diagnostic = errors.getvalue()
+        if rc != expected_rc or reason not in diagnostic:
+            sys.stderr.write(
+                f"self-test failed for plant {label}: expected rc {expected_rc}, {reason!r}; got rc {rc}, {diagnostic!r}\n"
+            )
+            return False
+        print(f"ok: plant {label} -> {rc}: {reason}")
+    return True
+
+
+def _run_stdin_capture_plants(tmp: pathlib.Path) -> bool:
+    """Exercise pipe-capacity input, an early exit, and a blocked input timeout."""
+    data = b"x" * MAX_INPUT_BYTES
+    plants = (
+        (
+            "stdin drains beyond pipe capacity",
+            "import sys; print(len(sys.stdin.buffer.read()))",
+            5.0,
+            "ok",
+            f"{len(data)}\n".encode(),
+        ),
+        ("stdin early exit", "pass", 5.0, "ok", b""),
+        (
+            "stdin blocked writer timeout",
+            "import time; time.sleep(60)",
+            0.25,
+            "timeout",
+            b"",
+        ),
+    )
+    for label, code, timeout, want, output in plants:
+        res = capture([sys.executable, "-c", code], sys.executable, tmp, timeout, data)
+        if res.verdict != want or res.stdout != output or res.stderr:
+            sys.stderr.write(f"self-test failed for plant {label}: {res!r}\n")
+            return False
+        print(f"ok: plant {label} -> {want}")
+    return True
+
+
 def run_self_test(exe_path: str, tool_name: str, fixtures_dir: pathlib.Path) -> int:
     """Run self-test verifying planted failure handling and allow-list reader."""
     runtime = runtime_plants(tool_name)
@@ -454,6 +567,10 @@ def run_self_test(exe_path: str, tool_name: str, fixtures_dir: pathlib.Path) -> 
                 return 1
 
         if not _run_expansion_plants(exe_path, tool_name, tmp):
+            return 1
+        if not _run_stdin_plants(exe_path, tool_name, tmp):
+            return 1
+        if not _run_stdin_capture_plants(tmp):
             return 1
 
         pass_t = tmp / "pass.t"

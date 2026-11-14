@@ -5,6 +5,7 @@
  */
 
 #include "pelorus_tool_common.h"
+#include "test_float_bits.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -181,16 +182,16 @@ static void test_number_grammar_double(int *fails)
     const PelorusOpt opts[] = {{"--number", PELORUS_OPT_DOUBLE, &val, 0, NULL, NULL}};
     char *const good[] = {"32", "-0",   "1e1",  "69.0", "0.5",  ".5",
                           "5.", "1E+2", "1e-2", "007",  "1e308"};
-    const double expected[] = {32.0, 0.0, 10.0, 69.0, 0.5, 0.5, 5.0, 100.0, 0.01, 7.0, 1e308};
+    const double expected[] = {32.0, -0.0, 10.0, 69.0, 0.5, 0.5, 5.0, 100.0, 0.01, 7.0, 1e308};
     char *const bad[] = {"0x20", "0X20", "0x1p5", " 32",  "\t32",     "+32", "1e",
                          "1e+",  ".",    "-",     "-.e1", "infinity", "1 ",  "1e309"};
-    char token[130];
+    char token[130] = {0};
     char *argv[] = {"tool", "--number", token};
 
     for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
         argv[2] = good[i];
         CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == 0, fails);
-        CHECK(val == expected[i], fails);
+        CHECK(double_bits_equal(val, expected[i]), fails);
     }
     for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
         argv[2] = bad[i];
@@ -202,9 +203,9 @@ static void test_number_grammar_double(int *fails)
     token[128] = '\0';
     argv[2] = token;
     CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == 0, fails);
-    CHECK(val == 1.0, fails);
+    CHECK(double_bits_equal(val, 1.0), fails);
     token[128] = '0';
-    token[129] = '\0';
+    /* token[129] stays NUL from the initializer. */
     CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == -1, fails);
 }
 
@@ -214,14 +215,14 @@ static void test_number_grammar_float(int *fails)
     float val = 0.0f;
     const PelorusOpt opts[] = {{"--number", PELORUS_OPT_FLOAT, &val, 0, NULL, NULL}};
     char *const good[] = {"23.5", "-0", ".5", "3.4e38"};
-    const float expected[] = {23.5f, 0.0f, 0.5f, 3.4e38f};
+    const float expected[] = {23.5f, -0.0f, 0.5f, 3.4e38f};
     char *const bad[] = {"0x20", " 23.5", "+23.5", "nan", "3.5e38"};
     char *argv[] = {"tool", "--number", NULL};
 
     for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
         argv[2] = good[i];
         CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == 0, fails);
-        CHECK(val == expected[i], fails);
+        CHECK(float_bits_equal(val, expected[i]), fails);
     }
     for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
         argv[2] = bad[i];

@@ -43,6 +43,7 @@ pelorus_qloop = executable(
 pelorus_tool_test = executable(
   'pelorus_tool_test',
   files('pelorus_tool_test.c'),
+  include_directories: include_directories('../libpelorus/test'),
   link_with: pelorus_tool_common,
   dependencies: tool_deps,
   install: false,
@@ -51,6 +52,37 @@ test('tool-argv', pelorus_tool_test, suite: 'fast')
 
 _transcript_driver = files('transcript.py')
 _telemetry_fixtures = meson.project_source_root() / 'libpelorus' / 'test' / 'fixtures' / 'telemetry'
+_stdin_fixtures = meson.project_source_root() / 'tools' / 'transcripts' / 'fixtures'
+
+test(
+  'tool-zones-transcript',
+  python_prog,
+  args: [
+    '-I',
+    _transcript_driver,
+    '--exe', pelorus_zones,
+    '--tool', 'pelorus_zones',
+    '--fixtures', _stdin_fixtures,
+    files('transcripts/pelorus_zones.t'),
+  ],
+  timeout: 60,
+  suite: 'fast',
+)
+
+test(
+  'tool-qloop-transcript',
+  python_prog,
+  args: [
+    '-I',
+    _transcript_driver,
+    '--exe', pelorus_qloop,
+    '--tool', 'pelorus_qloop',
+    '--fixtures', _stdin_fixtures,
+    files('transcripts/pelorus_qloop.t'),
+  ],
+  timeout: 60,
+  suite: 'fast',
+)
 
 test(
   'tool-qp-report-transcript',

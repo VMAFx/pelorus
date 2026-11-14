@@ -47,3 +47,7 @@ We will test each CLI demonstrator with a golden transcript: a text file of comm
 - Issue #581.
 - ADR-0149 (UTF-8 paths), ADR-0248 (kit-shipped fast tests).
 - Source: `req` (paraphrased, 2026-11-09, controller order for unit tl1-vmafx-pelorus-c15-1): add a transcript test for the `pelorus_qp_report` command-line usage and CSV output, and an integration test that runs the executable.
+
+## Amendment (2026-11-14): stdin fixtures
+
+A case may feed one fixture file to the tool's stdin with `% stdin <fixture>`. Without this directive, stdin stays the null device. The fixture uses the same 8 MiB byte cap as other fixture inputs. This covers `pelorus_zones` and `pelorus_qloop`, which read shots and history from stdin only (issue #583); their cases live in `tools/transcripts/pelorus_zones.t` and `tools/transcripts/pelorus_qloop.t`.

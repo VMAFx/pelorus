@@ -7,6 +7,49 @@
 from __future__ import annotations
 
 
+def stdin_plants(tool_name: str, cap: int) -> list[tuple[str, str, int, str]]:
+    """Return malformed stdin directives and fixture read failures with reasons."""
+    run = f"$ {tool_name}\n[exit 0]"
+    return [
+        (
+            "stdin missing name",
+            f"% stdin\n{run}",
+            2,
+            "<planted>:1: malformed stdin directive",
+        ),
+        (
+            "stdin extra token",
+            f"% stdin input.txt extra\n{run}",
+            2,
+            "<planted>:1: malformed stdin directive",
+        ),
+        (
+            "stdin duplicate",
+            f"% stdin input.txt\n% stdin other.txt\n{run}",
+            2,
+            "<planted>:2: duplicate stdin directive",
+        ),
+        (
+            "stdin path traversal",
+            f"% stdin ../input.txt\n{run}",
+            2,
+            "<planted>:1: invalid fixture name",
+        ),
+        (
+            "stdin oversized fixture",
+            f"% stdin oversized.txt\n{run}",
+            1,
+            f"fixture oversized.txt exceeds {cap} bytes",
+        ),
+        (
+            "stdin missing fixture",
+            f"% stdin missing.txt\n{run}",
+            1,
+            "fixture 'missing.txt' not found",
+        ),
+    ]
+
+
 def runtime_plants(tool_name: str) -> list[tuple[str, str, int]]:
     """Return runtime test cases verifying stream diff and exit code handling."""
     pass_case = (

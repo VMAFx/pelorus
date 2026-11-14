@@ -83,6 +83,8 @@ longer than 128 characters are refused. Do not put a blank between a comma and t
 values remain separated by whitespace; history and CSV line indentation remain
 allowed.
 
+The transcripts `tools/transcripts/pelorus_zones.t` and `tools/transcripts/pelorus_qloop.t` pin these number forms ([ADR-0249](../adr/0249-tool-cli-transcript-tests.md)).
+
 ## Measured reference results
 
 The reference test suite (`scripts/quality/qloop-x265-reference.sh`, part of `meson test --suite=slow`) executes this complete loop against a 60-frame clip containing two contrasting shots (frames 0..29 from `testsrc`, frames 30..59 from `testsrc2`).
