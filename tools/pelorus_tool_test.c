@@ -174,6 +174,121 @@ static void test_crf_helper(int *fails)
     CHECK(pelorus_tool_parse_crf("nan", &end, &val) == -1, fails);
 }
 
+/* Decimal option forms and binary64 range boundaries. */
+static void test_number_grammar_double(int *fails)
+{
+    double val = 0.0;
+    const PelorusOpt opts[] = {{"--number", PELORUS_OPT_DOUBLE, &val, 0, NULL, NULL}};
+    char *const good[] = {"32", "-0",   "1e1",  "69.0", "0.5",  ".5",
+                          "5.", "1E+2", "1e-2", "007",  "1e308"};
+    const double expected[] = {32.0, 0.0, 10.0, 69.0, 0.5, 0.5, 5.0, 100.0, 0.01, 7.0, 1e308};
+    char *const bad[] = {"0x20", "0X20", "0x1p5", " 32",  "\t32",     "+32", "1e",
+                         "1e+",  ".",    "-",     "-.e1", "infinity", "1 ",  "1e309"};
+    char token[130];
+    char *argv[] = {"tool", "--number", token};
+
+    for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
+        argv[2] = good[i];
+        CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == 0, fails);
+        CHECK(val == expected[i], fails);
+    }
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        argv[2] = bad[i];
+        CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == -1, fails);
+    }
+    token[0] = '1';
+    token[1] = '.';
+    memset(token + 2, '0', 126);
+    token[128] = '\0';
+    argv[2] = token;
+    CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == 0, fails);
+    CHECK(val == 1.0, fails);
+    token[128] = '0';
+    token[129] = '\0';
+    CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == -1, fails);
+}
+
+/* Decimal float forms and binary32 overflow. */
+static void test_number_grammar_float(int *fails)
+{
+    float val = 0.0f;
+    const PelorusOpt opts[] = {{"--number", PELORUS_OPT_FLOAT, &val, 0, NULL, NULL}};
+    char *const good[] = {"23.5", "-0", ".5", "3.4e38"};
+    const float expected[] = {23.5f, 0.0f, 0.5f, 3.4e38f};
+    char *const bad[] = {"0x20", " 23.5", "+23.5", "nan", "3.5e38"};
+    char *argv[] = {"tool", "--number", NULL};
+
+    for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
+        argv[2] = good[i];
+        CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == 0, fails);
+        CHECK(val == expected[i], fails);
+    }
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        argv[2] = bad[i];
+        CHECK(pelorus_tool_parse_args("tool", 3, argv, opts, 1, NULL) == -1, fails);
+    }
+}
+
+/* Unsigned decimal digits and signed decimal integers. */
+static void test_number_grammar_int(int *fails)
+{
+    uint32_t uval = 0;
+    int32_t ival = 0;
+    const PelorusOpt uopts[] = {{"--number", PELORUS_OPT_U32, &uval, 0, NULL, NULL}};
+    const PelorusOpt iopts[] = {{"--number", PELORUS_OPT_I32, &ival, 0, NULL, NULL}};
+    char *const ugood[] = {"0", "007"};
+    const uint32_t uexpected[] = {0, 7};
+    char *const ubad[] = {" 1", "\t1", "+1", "0x10", "-0"};
+    char *const igood[] = {"-0", "-1"};
+    const int32_t iexpected[] = {0, -1};
+    char *const ibad[] = {" -1", "+1", "- 1", "0x10", "--1"};
+    char *argv[] = {"tool", "--number", NULL};
+
+    for (size_t i = 0; i < sizeof(ugood) / sizeof(ugood[0]); i++) {
+        argv[2] = ugood[i];
+        CHECK(pelorus_tool_parse_args("tool", 3, argv, uopts, 1, NULL) == 0, fails);
+        CHECK(uval == uexpected[i], fails);
+    }
+    for (size_t i = 0; i < sizeof(ubad) / sizeof(ubad[0]); i++) {
+        argv[2] = ubad[i];
+        CHECK(pelorus_tool_parse_args("tool", 3, argv, uopts, 1, NULL) == -1, fails);
+    }
+    for (size_t i = 0; i < sizeof(igood) / sizeof(igood[0]); i++) {
+        argv[2] = igood[i];
+        CHECK(pelorus_tool_parse_args("tool", 3, argv, iopts, 1, NULL) == 0, fails);
+        CHECK(ival == iexpected[i], fails);
+    }
+    for (size_t i = 0; i < sizeof(ibad) / sizeof(ibad[0]); i++) {
+        argv[2] = ibad[i];
+        CHECK(pelorus_tool_parse_args("tool", 3, argv, iopts, 1, NULL) == -1, fails);
+    }
+}
+
+/* Prefix parsing preserves delimiters; CRF keeps its trailing whitespace rule. */
+static void test_parse_endptr(int *fails)
+{
+    double dval = 0.0;
+    float fval = 0.0f;
+    uint32_t uval = 0;
+    char *end = NULL;
+
+    CHECK(pelorus_tool_parse_double("1.5 2.0", &end, &dval) == 0 && dval == 1.5 && end != NULL &&
+              *end == ' ',
+          fails);
+    CHECK(pelorus_tool_parse_double("0x20 1", &end, &dval) == -1, fails);
+    CHECK(pelorus_tool_parse_double("1e 2", &end, &dval) == 0 && dval == 1.0 && end != NULL &&
+              *end == 'e',
+          fails);
+    CHECK(pelorus_tool_parse_crf(" 23.5", &end, &fval) == -1, fails);
+    CHECK(pelorus_tool_parse_crf("23.5 \r\n", &end, &fval) == 0 && fval == 23.5f && end != NULL &&
+              *end == ' ',
+          fails);
+    CHECK(pelorus_tool_parse_u32("12,", &end, &uval) == 0 && uval == 12 && end != NULL &&
+              *end == ',',
+          fails);
+    CHECK(pelorus_tool_parse_u32("+12,", &end, &uval) == -1, fails);
+}
+
 /* Execute all unit test suites for the CLI tool argument parsing helpers.
  * Returns EXIT_SUCCESS if all checks pass, or EXIT_FAILURE if any failure occurred. */
 int main(void)
@@ -187,6 +302,10 @@ int main(void)
     test_choice_and_string_kind(&fails);
     test_parser_rules(&fails);
     test_crf_helper(&fails);
+    test_number_grammar_double(&fails);
+    test_number_grammar_float(&fails);
+    test_number_grammar_int(&fails);
+    test_parse_endptr(&fails);
 
     if (fails > 0) {
         (void)fprintf(stderr, "pelorus_tool_test: %d check(s) failed\n", fails);

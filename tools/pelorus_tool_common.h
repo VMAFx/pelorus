@@ -67,24 +67,34 @@ int pelorus_tool_parse_args(const char *tool_name, int argc, char **argv, const 
 /* A tool's main body, called with a UTF-8 argv. */
 typedef int (*pel_tool_run_fn)(int argc, char **argv);
 
-/* Parse a decimal uint32_t; 0 on success, -1 on no digits, overflow or a value above
- * UINT32_MAX. *endptr points past the digits, as strtoull sets it. */
+/* Parse a decimal digit prefix into uint32_t; refuse leading blanks, signs,
+ * missing digits, tokens over 128 chars and overflow past UINT32_MAX (-1).
+ * Return 0 on success; non-NULL *endptr points past the digits only on success.
+ * Callers requiring a complete decimal must refuse suffixes, including hex. */
 int pelorus_tool_parse_u32(const char *str, char **endptr, uint32_t *out);
 
-/* Parse a decimal int32_t; 0 on success, -1 on no digits, overflow or out of range.
- * *endptr points past the digits, as strtoll sets it. */
+/* Parse a decimal int32_t prefix with optional minus; refuse leading blanks,
+ * plus, missing digits, tokens over 128 chars and range overflow (-1).
+ * Return 0 on success; non-NULL *endptr points past the digits only on success.
+ * Callers requiring a complete decimal must refuse suffixes, including hex. */
 int pelorus_tool_parse_i32(const char *str, char **endptr, int32_t *out);
 
-/* Parse a finite double; 0 on success, -1 on no digits, ERANGE or non-finite.
- * *endptr points past the number, as strtod sets it. */
+/* Parse finite decimal double with optional minus, fraction and exponent;
+ * refuse leading blanks, leading plus, hex, inf/nan, missing digits, tokens over
+ * 128 chars and ERANGE (-1). Return 0 on success; non-NULL *endptr points past
+ * the token only on success; an exponent without digits remains unconsumed. */
 int pelorus_tool_parse_double(const char *str, char **endptr, double *out);
 
-/* Parse a finite float; 0 on success, -1 on no digits, ERANGE or non-finite.
- * *endptr points past the number, as strtof sets it. */
+/* Parse finite decimal float with optional minus, fraction and exponent;
+ * refuse leading blanks, leading plus, hex, inf/nan, missing digits, tokens over
+ * 128 chars and ERANGE (-1). Return 0 on success; non-NULL *endptr points past
+ * the token only on success; an exponent without digits remains unconsumed. */
 int pelorus_tool_parse_float(const char *str, char **endptr, float *out);
 
-/* Parse a CRF in [0.0, 63.0]; 0 on success, -1 on invalid, out of range or trailing garbage.
- * *endptr points past the number. */
+/* Parse decimal CRF in [0.0, 63.0], using the float grammar and 128-char cap;
+ * refuse leading blanks, leading plus, hex, inf/nan, range errors and trailing
+ * garbage (-1); trailing blanks/CR/LF remain allowed. Return 0 on success;
+ * non-NULL *endptr points past the number only on success. */
 int pelorus_tool_parse_crf(const char *str, char **endptr, float *out);
 
 /* Read one line into buf. Returns 1 for a line, 0 at end of input, -1 on a read

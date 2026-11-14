@@ -74,6 +74,15 @@ x265 --input full_input.y4m --crf 28.0 --aq-mode 0 --preset ultrafast \
   --frame-threads 1 --zonefile zonefile.txt -o full.265
 ```
 
+Every numeric option of `pelorus_qloop` and `pelorus_zones`, each history value,
+and each `shots.csv` field uses decimal tokens. Real values allow an optional
+minus, fraction and exponent; integer values take digits only, with an optional
+minus for `--direction`. Option values and CSV fields after commas must start
+with the number: leading blanks, a leading `+`, hex, `inf`/`nan` and numbers
+longer than 128 characters are refused. Do not put a blank between a comma and the CRF field (`0,29,32.0000`). History
+values remain separated by whitespace; history and CSV line indentation remain
+allowed.
+
 ## Measured reference results
 
 The reference test suite (`scripts/quality/qloop-x265-reference.sh`, part of `meson test --suite=slow`) executes this complete loop against a 60-frame clip containing two contrasting shots (frames 0..29 from `testsrc`, frames 30..59 from `testsrc2`).
