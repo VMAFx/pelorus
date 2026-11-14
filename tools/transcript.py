@@ -10,6 +10,7 @@ import argparse
 import contextlib
 import dataclasses
 import difflib
+import errno
 import io
 import os
 import pathlib
@@ -97,7 +98,11 @@ class _StdinWriter(threading.Thread):
         except BrokenPipeError:
             return  # A tool may exit before consuming all input.
         except OSError as exc:
-            self.error = str(exc)
+            # CPython Lib/subprocess.py, Popen._stdin_write: bpo-19612,
+            # bpo-30418. Windows can report EINVAL on write or close when
+            # the child exits or closes stdin before consuming all input.
+            if exc.errno != errno.EINVAL:
+                self.error = str(exc)
 
 
 def minimal_env() -> dict[str, str]:
@@ -517,16 +522,61 @@ def _run_stdin_plants(exe: str, tool: str, tmp: pathlib.Path) -> bool:
     return True
 
 
+class _StdinPlantPipe(io.BytesIO):
+    """Inject write or close failures through a real pipe-like context manager."""
+
+    def __init__(self, write_error: OSError | None, close_error: OSError | None):
+        super().__init__()
+        self.write_error = write_error
+        self.close_error = close_error
+
+    def write(self, data: bytes) -> int:
+        if self.write_error is not None:
+            raise self.write_error
+        return super().write(data)
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        super().close()
+        if self.close_error is not None:
+            raise self.close_error
+
+
+def _run_stdin_writer_plants() -> bool:
+    """Check ignored early-close errors and a retained unrelated I/O error."""
+    plants = (
+        ("stdin writer write EINVAL", OSError(errno.EINVAL, "write"), None, False),
+        ("stdin writer broken pipe", BrokenPipeError(), None, False),
+        ("stdin writer write EIO", OSError(errno.EIO, "write"), None, True),
+        ("stdin writer close EINVAL", None, OSError(errno.EINVAL, "close"), False),
+    )
+    failed = False
+    for label, write_error, close_error, want_error in plants:
+        writer = _StdinWriter(_StdinPlantPipe(write_error, close_error), b"input")
+        writer.run()
+        if bool(writer.error) != want_error:
+            sys.stderr.write(
+                f"self-test failed for plant {label}: expected error={want_error}, got {writer.error!r}\n"
+            )
+            failed = True
+        else:
+            print(f"ok: plant {label}")
+    return not failed
+
+
 def _run_stdin_capture_plants(tmp: pathlib.Path) -> bool:
     """Exercise pipe-capacity input, an early exit, and a blocked input timeout."""
+    if not _run_stdin_writer_plants():
+        return False
     data = b"x" * MAX_INPUT_BYTES
     plants = (
         (
             "stdin drains beyond pipe capacity",
-            "import sys; print(len(sys.stdin.buffer.read()))",
+            "import sys; sys.stdout.buffer.write(str(len(sys.stdin.buffer.read())).encode())",
             5.0,
             "ok",
-            f"{len(data)}\n".encode(),
+            str(len(data)).encode(),
         ),
         ("stdin early exit", "pass", 5.0, "ok", b""),
         (
