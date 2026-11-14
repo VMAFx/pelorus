@@ -36,7 +36,7 @@ import subprocess  # nosec B404 - fixed interpreter argv, no shell, explicit dea
 import sys
 import tempfile
 import time
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent.parent
 RUN_MESON_TEST_SCRIPT = ROOT / "scripts" / "run-meson-test.py"
@@ -431,6 +431,142 @@ def test_stop_tree_after_reap(run_mod: ModuleType) -> list[str]:
     return failures
 
 
+def test_pid_gone_permission_denied(run_mod: ModuleType) -> list[str]:
+    """EPERM means a live process, including when tested off POSIX."""
+    tree = run_mod.process_tree
+    namespace = vars(tree)
+    real_os = namespace["os"]
+    pid = os.getpid()
+    failures: list[str] = []
+
+    def denied(target: int, sig: int) -> None:
+        if (target, sig) != (pid, 0):
+            raise AssertionError(f"unexpected kill({target}, {sig})")
+        raise PermissionError("planted EPERM")
+
+    namespace["os"] = SimpleNamespace(name="posix", kill=denied)
+    try:
+        if tree.pid_gone(pid):
+            _fail(failures, "pid_gone permission denied: live pid reported gone")
+    except PermissionError:
+        _fail(failures, "pid_gone permission denied: EPERM escaped")
+    finally:
+        namespace["os"] = real_os
+    if not failures:
+        print("PASS: pid_gone permission denied means live")
+    return failures
+
+
+def test_windows_wait_error_preserved(run_mod: ModuleType) -> list[str]:
+    """CloseHandle must not overwrite the failed wait's error; no Windows calls."""
+    tree = run_mod.process_tree
+    namespace = vars(tree)
+    saved = {name: namespace[name] for name in ("_kernel32", "_last_error", "_windows_error")}
+    errors = [123]
+    fake = SimpleNamespace(
+        OpenProcess=lambda *_: 77,
+        WaitForSingleObject=lambda *_: 0xFFFFFFFF,
+        CloseHandle=lambda *_: errors.__setitem__(0, 456),
+    )
+    namespace.update(
+        _kernel32=lambda: fake,
+        _last_error=lambda: errors[0],
+        _windows_error=lambda call, error: OSError(f"{call}: error {error}"),
+    )
+    failures: list[str] = []
+    try:
+        tree._windows_pid_gone(os.getpid())
+    except OSError as exc:
+        if "WaitForSingleObject" not in str(exc) or "error 123" not in str(exc):
+            _fail(failures, f"Windows wait error overwritten: {exc}")
+    else:
+        _fail(failures, "Windows wait error: failed wait did not raise")
+    finally:
+        namespace.update(saved)
+    if not failures:
+        print("PASS: Windows wait error survives CloseHandle")
+    return failures
+
+
+def _cleanup_needles(terminate: str, closed: int) -> list[str]:
+    """The stderr text a planted cleanup fault must leave; empty when cleanup worked."""
+    needles = {
+        "ok": [],
+        "zero": ["TerminateJobObject failed: error 5", "may still run"],
+        "raise": ["planted TerminateJobObject fault", "may still run"],
+    }[terminate]
+    return needles if closed else [*needles, "CloseHandle failed: error 5"]
+
+
+def _failed_job_cleanup_case(
+    tree: ModuleType, stage: str, terminate: str, closed: int
+) -> list[str]:
+    """Plant an assign/resume failure; record the cleanup calls and what stderr names."""
+    namespace = vars(tree)
+    saved = {name: namespace[name] for name in (
+        "_kernel32", "_assign_to_job", "_resume_process_threads", "_last_error", "_windows_error",
+    )}
+    calls: list[tuple] = []
+    original = RuntimeError(f"planted {stage} failure")
+    label = f"failed job cleanup {stage}/terminate {terminate}/close {closed}"
+
+    def fail(*_: object) -> None:
+        raise original
+
+    def terminate_job(job: int, code: int) -> int:
+        calls.append(("terminate", job, code))
+        if terminate == "raise":
+            raise ValueError("planted TerminateJobObject fault")
+        return int(terminate == "ok")
+
+    def close(job: int) -> int:
+        calls.append(("close", job))
+        return closed
+
+    fake = SimpleNamespace(
+        CreateJobObjectW=lambda *_: 77, TerminateJobObject=terminate_job, CloseHandle=close,
+    )
+    namespace.update(
+        _kernel32=lambda: fake,
+        _last_error=lambda: 5,
+        _windows_error=lambda call, error: OSError(f"{call} failed: error {error}"),
+        _assign_to_job=fail if stage == "assign" else lambda *_: None,
+        _resume_process_threads=fail if stage == "resume" else lambda *_: 1,
+    )
+    failures: list[str] = []
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr):
+            tree._new_job_with(os.getpid())
+    except RuntimeError as exc:
+        if exc is not original:
+            _fail(failures, f"{label}: original exception masked")
+    else:
+        _fail(failures, f"{label}: original exception lost")
+    finally:
+        namespace.update(saved)
+    if calls != [("terminate", 77, 1), ("close", 77)]:
+        _fail(failures, f"{label}: call order {calls!r}")
+    needles, text = _cleanup_needles(terminate, closed), stderr.getvalue()
+    if any(needle not in text for needle in needles) or (not needles and text):
+        _fail(failures, f"{label}: stderr {text!r}, want {needles!r}")
+    return failures
+
+
+def test_failed_job_cleanup(run_mod: ModuleType) -> list[str]:
+    """Assign/resume failures terminate, then close; a failed call is named, the start error kept."""
+    failures: list[str] = []
+    for stage in ("assign", "resume"):
+        for terminate in ("ok", "zero", "raise"):
+            for closed in (1, 0):
+                failures.extend(
+                    _failed_job_cleanup_case(run_mod.process_tree, stage, terminate, closed)
+                )
+    if not failures:
+        print("PASS: failed job cleanup terminates, closes, names a failed call, keeps the exception")
+    return failures
+
+
 def run_tests() -> int:
     """Run every case; return 0 when all pass."""
     run_mod = _load_module("run_meson_test", RUN_MESON_TEST_SCRIPT)
@@ -443,6 +579,9 @@ def run_tests() -> int:
         test_failed_tree_step_is_named,
         test_failed_job_start_kills_child,
         test_stop_tree_after_reap,
+        test_pid_gone_permission_denied,
+        test_windows_wait_error_preserved,
+        test_failed_job_cleanup,
     ):
         failures.extend(case(run_mod))
     return 1 if failures else 0

@@ -12,7 +12,9 @@ spawns a long-lived grandchild holding inherited output pipes.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import os
 import pathlib
 import signal
@@ -159,6 +161,160 @@ def test_driver_argv() -> bool:
     return ok
 
 
+def _cleanup_stub_pids(paths: Sequence[pathlib.Path]) -> None:
+    """Kill only recorded fixture pids if a cleanup regression leaves them alive."""
+    for path in paths:
+        pid = _read_pid(path)
+        if pid is not None and pid > 1 and not harness.process_tree.pid_gone(pid):
+            try:
+                os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+            except ProcessLookupError:
+                # Fixture exited between its liveness check and cleanup signal.
+                pass
+
+
+def test_interrupted_compiler_child() -> bool:
+    """A communicate interrupt propagates only after compiler and grandchild stop."""
+    tree = harness.process_tree
+    real_popen = tree.TreePopen
+    old_env = os.environ.get("PELORUS_TEST_GRANDCHILD_PID_FILE")
+    original = KeyboardInterrupt("planted compiler interrupt")
+    seen: list = []
+    with tempfile.TemporaryDirectory(prefix="pelorus-interrupted-child-") as tmp:
+        root = pathlib.Path(tmp)
+        stub, child, grandchild = root / "stub_cc.py", root / "compiler.pid", root / "grandchild.pid"
+        _write_stub(stub)
+
+        class InterruptingPopen(real_popen):
+            """Interrupt once the compiler has started its grandchild."""
+
+            def communicate(self, *args, **kwargs):
+                if not seen:
+                    seen.append(self)
+                    child.write_text(str(self.pid), encoding="utf-8")
+                    for _ in range(200):
+                        if _read_pid(grandchild) is not None:
+                            raise original
+                        time.sleep(0.05)
+                    raise AssertionError("interrupted child: no grandchild pid")
+                return super().communicate(*args, **kwargs)
+
+        vars(tree)["TreePopen"] = InterruptingPopen
+        os.environ["PELORUS_TEST_GRANDCHILD_PID_FILE"] = str(grandchild)
+        try:
+            try:
+                harness.build_and_run(OK_C, cc=[sys.executable, str(stub)])
+            except KeyboardInterrupt as exc:
+                if exc is not original:
+                    print("FAIL interrupted child: original KeyboardInterrupt masked")
+                    return False
+            else:
+                print("FAIL interrupted child: KeyboardInterrupt did not propagate")
+                return False
+            for path in (child, grandchild):
+                pid = _read_pid(path)
+                if pid is None or not tree.wait_pid_gone(pid):
+                    print(f"FAIL interrupted child: {path.name} pid {pid} still alive")
+                    return False
+            print("PASS: interrupt stops compiler and grandchild before propagating")
+            return True
+        finally:
+            vars(tree)["TreePopen"] = real_popen
+            _cleanup_stub_pids((grandchild, child))
+            for proc in seen:
+                proc.communicate(timeout=5)
+            if old_env is None:
+                os.environ.pop("PELORUS_TEST_GRANDCHILD_PID_FILE", None)
+            else:
+                os.environ["PELORUS_TEST_GRANDCHILD_PID_FILE"] = old_env
+
+
+def test_failed_stop_still_reaps() -> bool:
+    """A stop_tree fault is named; the child is still killed and reaped, the interrupt kept."""
+    tree = harness.process_tree
+    real_popen, real_stop = tree.TreePopen, tree.stop_tree
+    original = KeyboardInterrupt("planted capture interrupt")
+    seen: list = []
+
+    class InterruptOnce(real_popen):
+        """Interrupt the first capture, as Ctrl-C during communicate() would."""
+
+        def communicate(self, *args, **kwargs):
+            if not seen:
+                seen.append(self)
+                raise original
+            return super().communicate(*args, **kwargs)
+
+    def refused_stop(_proc: object) -> bool:
+        raise PermissionError("planted tree stop refusal")
+
+    stderr = io.StringIO()
+    vars(tree).update(TreePopen=InterruptOnce, stop_tree=refused_stop)
+    try:
+        with contextlib.redirect_stderr(stderr):
+            harness._run_with_deadline(list(STALL_CC), 30.0)
+    except KeyboardInterrupt as exc:
+        kept = exc is original
+    except Exception as exc:  # the stop fault replaced the interrupt
+        stderr.write(f"raised {exc!r}\n")
+        kept = False
+    else:
+        kept = False
+    finally:
+        vars(tree).update(TreePopen=real_popen, stop_tree=real_stop)
+    proc = seen[0] if seen else None
+    reaped = proc is not None and proc.returncode is not None
+    if proc is not None and not reaped:
+        proc.kill()
+        proc.communicate(timeout=5)
+    if not kept or not reaped or "planted tree stop refusal" not in stderr.getvalue():
+        print(f"FAIL failed stop: interrupt kept {kept}, reaped {reaped}, stderr {stderr.getvalue()!r}")
+        return False
+    print("PASS: a failed tree stop is named, the child reaped, the interrupt kept")
+    return True
+
+
+def _write_undecodable_stub(path: pathlib.Path) -> None:
+    """Write a compiler that prints undecodable bytes, leaves a grandchild off its pipes, fails."""
+    path.write_text(
+        "import os, subprocess, sys\n"
+        "proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],\n"
+        "                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,\n"
+        "                        stderr=subprocess.DEVNULL)\n"
+        "with open(os.environ['PELORUS_TEST_GRANDCHILD_PID_FILE'], 'w') as f:\n"
+        "    f.write(str(proc.pid))\n"
+        "os.write(1, b'out \\x81\\xff')\n"
+        "os.write(2, b'err \\x81\\xff')\n"
+        "sys.exit(1)\n",
+        encoding="utf-8",
+    )
+
+
+def test_undecodable_output() -> bool:
+    """Undecodable compiler output is replaced, never raised after communicate() reaped the compiler."""
+    old_env = os.environ.get("PELORUS_TEST_GRANDCHILD_PID_FILE")
+    with tempfile.TemporaryDirectory(prefix="pelorus-undecodable-") as tmp:
+        stub, grandchild = pathlib.Path(tmp) / "stub_cc.py", pathlib.Path(tmp) / "grandchild.pid"
+        _write_undecodable_stub(stub)
+        os.environ["PELORUS_TEST_GRANDCHILD_PID_FILE"] = str(grandchild)
+        try:
+            status, output = harness.build_and_run(OK_C, [sys.executable, "-I", str(stub)])
+        except UnicodeDecodeError as exc:
+            print(f"FAIL undecodable output: capture raised {exc!r}")
+            return False
+        finally:
+            _cleanup_stub_pids((grandchild,))
+            if old_env is None:
+                os.environ.pop("PELORUS_TEST_GRANDCHILD_PID_FILE", None)
+            else:
+                os.environ["PELORUS_TEST_GRANDCHILD_PID_FILE"] = old_env
+    if status != 2 or "out \ufffd" not in output or "err \ufffd" not in output:
+        print(f"FAIL undecodable output: status {status}, output {output!r}")
+        return False
+    print("PASS: undecodable compiler output is replaced, the build reports its status")
+    return True
+
+
 def _remove_tree_calls(
     errors: Sequence[BaseException | None], is_windows: bool
 ) -> tuple[int, str, list[float]]:
@@ -226,6 +382,46 @@ def test_build_and_run_cleanup() -> bool:
     return True
 
 
+def test_close_and_reap_windows() -> bool:
+    """Leave Windows pipes to reader threads; close other pipes and always bound reap."""
+    class Pipe:
+        def close(self):
+            closed.append(self)
+
+    class Proc:
+        pid = 123
+
+        def __init__(self, missing):
+            self.stdout = None if missing == "stdout" else Pipe()
+            self.stderr = None if missing == "stderr" else Pipe()
+
+        def wait(self, timeout):
+            waits.append(timeout)
+            return 0
+
+    for windows, missing in ((True, None), (False, None), (True, "stdout"),
+                             (False, "stdout"), (True, "stderr"), (False, "stderr")):
+        closed, waits = [], []
+        proc = Proc(missing)
+        pipes = [(name, stream) for name, stream in (("stdout", proc.stdout), ("stderr", proc.stderr))
+                 if stream is not None]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            harness._close_and_reap(proc, is_windows=windows)
+        expected = "".join(f"patch_harness: left the {name} pipe of pid {proc.pid} open; "
+                           "its reader thread may still block on it\n" for name, _ in pipes)
+        want_closed = [stream for _, stream in pipes]
+        if windows:
+            want_closed = []
+        else:
+            expected = ""
+        if closed != want_closed or waits != [5] or stderr.getvalue() != expected:
+            print(f"FAIL close_and_reap windows={windows}, missing={missing}: "
+                  f"closed {len(closed)}, waits {waits}, stderr {stderr.getvalue()!r}")
+            return False
+    return True
+
+
 def main() -> int:
     """Run patch harness tests across compiler cases; returns 0 on success, 1 on failure."""
     parser = harness.make_parser(DESCRIPTION)
@@ -251,9 +447,17 @@ def main() -> int:
         failures += 1
     if not test_build_and_run_cleanup():
         failures += 1
+    if not test_interrupted_compiler_child():
+        failures += 1
+    if not test_failed_stop_still_reaps():
+        failures += 1
+    if not test_undecodable_output():
+        failures += 1
+    if not test_close_and_reap_windows():
+        failures += 1
     if failures:
         return 1
-    print(f"patch-harness: {len(cases) + 4} cases ok")
+    print(f"patch-harness: {len(cases) + 8} cases ok")
     return 0
 
 
