@@ -6,7 +6,7 @@ include .config/praetor/engine.mk
 BUILD_DIR ?= build
 
 .PHONY: all verify-all verify-native verify-offline configure build test format-check tidy \
-	docs-check compile-context compile-context-verify audit hooks-install python-lint patches
+	docs-check compile-context compile-context-verify audit hooks-install python-lint changed-lint patches
 
 all: build
 
@@ -17,7 +17,7 @@ verify-all: compile-context-verify audit verify-native
 # it downloads and installs Ruff and zizmor from PyPI into a virtualenv.
 verify-offline: build test format-check tidy docs-check
 
-verify-native: verify-offline python-lint
+verify-native: verify-offline python-lint changed-lint
 
 configure:
 	@if test -f "$(BUILD_DIR)/meson-private/coredata.dat"; then \
@@ -93,11 +93,21 @@ docs-check:
 # Outside $(BUILD_DIR): a directory there before `meson setup` blocks setup.
 # Quoted in every recipe line; the self-test plants a path with a space.
 PYTHON_LINT_ENV ?= .cache/python-lint
+# cppcheck program for changed-lint: a name on PATH or a path.
+CPPCHECK ?= cppcheck
 
 python-lint:
 	@bash scripts/check-python-lint.sh --ensure "$(PYTHON_LINT_ENV)" >/dev/null
 	PYTHON_LINT_ENV="$(PYTHON_LINT_ENV)" bash scripts/check-python-lint.sh --self-test
 	PYTHON_LINT_ENV="$(PYTHON_LINT_ENV)" bash scripts/check-python-lint.sh
+
+# ADR-0258: compare cppcheck findings and format only changed Python lines.
+# The self-test runs under the hook-variable isolation harness (pre-push exports GIT_DIR).
+changed-lint: python-lint
+	PYTHON_LINT_ENV="$(PYTHON_LINT_ENV)" python3 -I scripts/test-selftest-git-isolation.py \
+		python3 -I scripts/check-changed-lint.py --cppcheck "$(CPPCHECK)" --self-test
+	PYTHON_LINT_ENV="$(PYTHON_LINT_ENV)" python3 -I scripts/check-changed-lint.py \
+		--cppcheck "$(CPPCHECK)" --base "$(LINT_BASE)"
 
 compile-context:
 	$(PRAETORCTL) compile-context
@@ -110,6 +120,7 @@ compile-context-verify:
 # AUDIT_BASE unless the increase carries a recorded reason.
 # AUDIT_FLAGS=--offline reads nothing from the forge; the pre-commit hook uses it.
 AUDIT_BASE ?= origin/master
+LINT_BASE ?= $(AUDIT_BASE)
 AUDIT_DEBT_REASON ?= ADR-0145 baseline ratchet; touched files keep baselined debt but may not add findings; zero-debt mode deferred
 AUDIT_FLAGS ?=
 

@@ -33,6 +33,8 @@ REQUIRED_COMMANDS: tuple[str, ...] = (
     "clang",
     "clang-format",
     "clang-tidy",
+    # Changed-code static analysis: docs job / Containerfile line 47
+    "cppcheck",
     # Build system: core + sanitizers jobs / Containerfile line 46
     "meson",
     "ninja",

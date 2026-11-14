@@ -48,10 +48,6 @@ exceptions:
     reason: "category D, capped at the engine maximum of 90 days: fixture recorder built by hand against libaom, which Meson does not depend on, so no compile database entry exists; follow-up: an optional Meson target once a libaom build dependency has an ADR (VMAFx/pelorus#111)"
     expires: "2027-01-13"
   - rule: declared-linters
-    tool: cppcheck
-    reason: "category D, capped at the engine maximum of 90 days: no workflow runs cppcheck yet; C static analysis runs through clang-tidy on every Meson-built unit (make verify-native, CI core job, ADR-0168), and a cppcheck lane first needs a recorded baseline of its current findings (ADR-0190)"
-    expires: "2027-01-11"
-  - rule: declared-linters
     tool: trivy
     reason: "category D, capped at the engine maximum of 90 days: no workflow runs trivy yet; it needs a pinned vulnerability database, because trivy downloads its database at run time and two runs of one commit can disagree (ADR-0190)"
     expires: "2027-01-11"

@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0190: CI scans every branch and tag for credentials with a pinned gitleaks
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by [ADR-0258](0258-changed-code-lint-gate.md) (cppcheck on changed code)
 - **Date**: 2026-10-13
 - **Deciders**: Lusoris
 - **Tags**: security, ci, governance
