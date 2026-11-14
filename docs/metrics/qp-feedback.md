@@ -132,6 +132,13 @@ prints `honored_fraction` as `0.0000  (no requested map supplied)`.
   range)` and the usage line on stderr, then exits 1. `-1` is rejected the same
   way; before ADR-0249 the tool silently treated it as "no request". `-0`
   prints as `0.00`.
+- **Number form:** `N` is a plain decimal: an optional `-`, digits with an
+  optional fraction (or a fraction such as `.5`), and an optional exponent such
+  as `1e1`. Leading blanks, a leading `+`, hex, `inf`/`nan` and a number longer
+  than 128 characters are refused with the `invalid value` message and exit 1;
+  see the shared parser in
+  [`tools/pelorus_tool_common.c`](../../tools/pelorus_tool_common.c)
+  ([issue 583](https://github.com/VMAFx/pelorus/issues/583)).
 - **Frame cap:** the tool reads at most 4096 frame rows (`MAX_FRAMES` in
   `tools/pelorus_qp_report.c`). A longer CSV prints `pelorus_qp_report: warning:
   <csv> has more than 4096 frame rows; the report covers the first 4096` on

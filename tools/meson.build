@@ -43,6 +43,7 @@ pelorus_qloop = executable(
 pelorus_tool_test = executable(
   'pelorus_tool_test',
   files('pelorus_tool_test.c'),
+  include_directories: include_directories('../libpelorus/test'),
   link_with: pelorus_tool_common,
   dependencies: tool_deps,
   install: false,
@@ -51,6 +52,37 @@ test('tool-argv', pelorus_tool_test, suite: 'fast')
 
 _transcript_driver = files('transcript.py')
 _telemetry_fixtures = meson.project_source_root() / 'libpelorus' / 'test' / 'fixtures' / 'telemetry'
+_stdin_fixtures = meson.project_source_root() / 'tools' / 'transcripts' / 'fixtures'
+
+test(
+  'tool-zones-transcript',
+  python_prog,
+  args: [
+    '-I',
+    _transcript_driver,
+    '--exe', pelorus_zones,
+    '--tool', 'pelorus_zones',
+    '--fixtures', _stdin_fixtures,
+    files('transcripts/pelorus_zones.t'),
+  ],
+  timeout: 60,
+  suite: 'fast',
+)
+
+test(
+  'tool-qloop-transcript',
+  python_prog,
+  args: [
+    '-I',
+    _transcript_driver,
+    '--exe', pelorus_qloop,
+    '--tool', 'pelorus_qloop',
+    '--fixtures', _stdin_fixtures,
+    files('transcripts/pelorus_qloop.t'),
+  ],
+  timeout: 60,
+  suite: 'fast',
+)
 
 test(
   'tool-qp-report-transcript',
@@ -99,6 +131,22 @@ test('tool-qloop-dup-arg', pelorus_qloop,
 test('tool-qloop-missing-val', pelorus_qloop,
      args: ['--target', '90.0', '--tolerance', '1.0', '--min', '10.0', '--max', '45.0',
             '--start', '20.0', '--resolution', '0.5', '--max-iter', '10', '--direction'],
+     should_fail: true, suite: 'fast')
+
+test('tool-qp-report-leading-space', pelorus_qp_report,
+     args: [_telemetry_fixtures / 'x265-4.3-qp32.csv', '--requested-qp', ' 32'],
+     should_fail: true, suite: 'fast')
+test('tool-qp-report-leading-tab', pelorus_qp_report,
+     args: [_telemetry_fixtures / 'x265-4.3-qp32.csv', '--requested-qp', '\t32'],
+     should_fail: true, suite: 'fast')
+
+test('tool-qloop-decimal-ok', pelorus_qloop,
+     args: ['--target', '90.0', '--tolerance', '1.0', '--min', '10.0', '--max', '45.0',
+            '--start', '20.0', '--resolution', '0.5', '--max-iter', '10', '--direction', '1'],
+     suite: 'fast')
+test('tool-qloop-leading-space', pelorus_qloop,
+     args: ['--target', ' 90.0', '--tolerance', '1.0', '--min', '10.0', '--max', '45.0',
+            '--start', '20.0', '--resolution', '0.5', '--max-iter', '10', '--direction', '1'],
      should_fail: true, suite: 'fast')
 
 bash_prog = find_program('bash', required: false)

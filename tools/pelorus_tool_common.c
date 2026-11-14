@@ -67,27 +67,89 @@ static char **tool_utf8_argv(int *argc)
 }
 #endif
 
+/* Numeric tokens are capped at 128 characters, with bounded exponent lookahead. */
+#define TOOL_MAX_NUMBER_CHARS 128u
+#define TOOL_NUMBER_SIGNED 1u
+#define TOOL_NUMBER_REAL 2u
+
+static size_t tool_scan_digits(const char *str, size_t pos)
+{
+    while (pos <= TOOL_MAX_NUMBER_CHARS && str[pos] >= '0' && str[pos] <= '9') {
+        pos++;
+    }
+    return pos;
+}
+
+static size_t tool_scan_mantissa(const char *str, size_t pos, int real)
+{
+    const size_t first = pos;
+
+    pos = tool_scan_digits(str, pos);
+    if (real && pos <= TOOL_MAX_NUMBER_CHARS && str[pos] == '.') {
+        const size_t fraction = pos + 1u;
+
+        pos = tool_scan_digits(str, fraction);
+        if (pos == fraction && fraction == first + 1u) {
+            return 0;
+        }
+    } else if (pos == first) {
+        return 0;
+    }
+    return pos;
+}
+
+static size_t tool_scan_exponent(const char *str, size_t pos)
+{
+    if (str[pos] != 'e' && str[pos] != 'E') {
+        return pos;
+    }
+    size_t first = pos + 1u;
+
+    if (str[first] == '+' || str[first] == '-') {
+        first++;
+    }
+    if (str[first] < '0' || str[first] > '9') {
+        return pos;
+    }
+    return tool_scan_digits(str, first);
+}
+
+/* Decimal prefix only; an incomplete exponent remains outside the token. */
+static size_t tool_scan_number(const char *str, unsigned int flags)
+{
+    size_t pos = 0;
+
+    if ((flags & TOOL_NUMBER_SIGNED) != 0u && str[0] == '-') {
+        pos = 1;
+    }
+    pos = tool_scan_mantissa(str, pos, (flags & TOOL_NUMBER_REAL) != 0u);
+    if (pos == 0 || pos > TOOL_MAX_NUMBER_CHARS) {
+        return 0;
+    }
+    if ((flags & TOOL_NUMBER_REAL) != 0u) {
+        pos = tool_scan_exponent(str, pos);
+    }
+    return pos <= TOOL_MAX_NUMBER_CHARS ? pos : 0;
+}
+
 /* Parse a decimal uint32_t from str into out, updating endptr if non-NULL.
  * Returns 0 on success, or -1 on invalid input, negative values, or overflow past UINT32_MAX. */
 int pelorus_tool_parse_u32(const char *str, char **endptr, uint32_t *out)
 {
     unsigned long long val;
     char *end = NULL;
-    const char *p;
 
     if (str == NULL || out == NULL) {
         return -1;
     }
-    p = str;
-    while (*p == ' ' || *p == '\t') {
-        p++;
-    }
-    if (*p == '-') {
+    const size_t n = tool_scan_number(str, 0u);
+
+    if (n == 0) {
         return -1;
     }
     errno = 0;
     val = strtoull(str, &end, 10);
-    if (errno == ERANGE || end == str || val > UINT32_MAX) {
+    if (errno == ERANGE || end != str + n || val > UINT32_MAX) {
         return -1;
     }
     if (endptr != NULL) {
@@ -107,9 +169,14 @@ int pelorus_tool_parse_i32(const char *str, char **endptr, int32_t *out)
     if (str == NULL || out == NULL) {
         return -1;
     }
+    const size_t n = tool_scan_number(str, TOOL_NUMBER_SIGNED);
+
+    if (n == 0) {
+        return -1;
+    }
     errno = 0;
     val = strtoll(str, &end, 10);
-    if (errno == ERANGE || end == str || val < INT32_MIN || val > INT32_MAX) {
+    if (errno == ERANGE || end != str + n || val < INT32_MIN || val > INT32_MAX) {
         return -1;
     }
     if (endptr != NULL) {
@@ -129,9 +196,14 @@ int pelorus_tool_parse_double(const char *str, char **endptr, double *out)
     if (str == NULL || out == NULL) {
         return -1;
     }
+    const size_t n = tool_scan_number(str, TOOL_NUMBER_SIGNED | TOOL_NUMBER_REAL);
+
+    if (n == 0) {
+        return -1;
+    }
     errno = 0;
     val = strtod(str, &end);
-    if (errno == ERANGE || end == str || !isfinite(val)) {
+    if (errno == ERANGE || end != str + n || !isfinite(val)) {
         return -1;
     }
     if (endptr != NULL) {
@@ -151,9 +223,14 @@ int pelorus_tool_parse_float(const char *str, char **endptr, float *out)
     if (str == NULL || out == NULL) {
         return -1;
     }
+    const size_t n = tool_scan_number(str, TOOL_NUMBER_SIGNED | TOOL_NUMBER_REAL);
+
+    if (n == 0) {
+        return -1;
+    }
     errno = 0;
     val = strtof(str, &end);
-    if (errno == ERANGE || end == str || !isfinite(val)) {
+    if (errno == ERANGE || end != str + n || !isfinite(val)) {
         return -1;
     }
     if (endptr != NULL) {

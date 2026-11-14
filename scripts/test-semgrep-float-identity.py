@@ -17,7 +17,9 @@ Checks that `pelorus-test-float-identity` in `.semgrep.yml`:
     allowing literals, macros, k-constants, NaN idioms, integer casts, and calls;
 (b) catches a planted regression in libpelorus/test/interop_test.c when
     float_bits_equal() is reverted to ==;
+(b') catches a planted double comparison regression in tools/pelorus_tool_test.c;
 (c) produces zero findings across the real repository tree;
+(c') confirms that the real-tree scan includes tools/pelorus_tool_test.c;
 (d) keeps its macro and k-constant exemption sound: no test source declares a
     non-const float or double with such a name.
 """
@@ -45,6 +47,7 @@ scrubbed_env = semgrep_harness.scrubbed_env
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RULE_FILE = ROOT / ".semgrep.yml"
 INTEROP_TEST = ROOT / "libpelorus" / "test" / "interop_test.c"
+TOOLS_TEST = ROOT / "tools" / "pelorus_tool_test.c"
 
 PLANTED_C = """\
 #include <stdbool.h>
@@ -137,9 +140,11 @@ CONST_QUALIFIER = re.compile(r"\b(?:const|constexpr)\b")
 TEST_DIRS = (ROOT / "libpelorus" / "test", ROOT / "ffmpeg-patches" / "test")
 
 
-def make_tree(root: pathlib.Path, name: str, source: str) -> pathlib.Path:
-    """Lay out root/libpelorus/test/<name> with an ignore file that keeps test/."""
-    test_dir = root / "libpelorus" / "test"
+def make_tree(
+    root: pathlib.Path, name: str, source: str, test_path: str = "libpelorus/test"
+) -> pathlib.Path:
+    """Lay out a test source with an ignore file that keeps test/."""
+    test_dir = root / test_path
     test_dir.mkdir(parents=True)
     (root / ".semgrepignore").write_text("build*/\nsubprojects/\n", encoding="utf-8")
     (test_dir / name).write_text(source, encoding="utf-8")
@@ -178,9 +183,7 @@ def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
 
 def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     """(c) The real tree is clean, and the scan did read the test sources."""
-    data = run_semgrep(
-        semgrep_bin, ROOT, RULE_FILE, 0, tmp / "cfg", hermetic=False
-    )
+    data = run_semgrep(semgrep_bin, ROOT, RULE_FILE, 0, tmp / "cfg", hermetic=False)
     # Semgrep's built-in ignore list skips test/ folders; without the
     # repository .semgrepignore the scan reads nothing and passes empty.
     scanned = data.get("paths", {}).get("scanned", [])
@@ -193,10 +196,41 @@ def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
             "step (c): the real-tree scan did not read "
             "ffmpeg-patches/test/pelorus_sidedata_test.c; check .semgrepignore"
         )
+    if not any(p.endswith("tools/pelorus_tool_test.c") for p in scanned):
+        return "step (c'): the real-tree scan did not read tools/pelorus_tool_test.c; check rule paths"
     results = data.get("results", [])
     if results:
         return f"step (c): real tree has {len(results)} findings: {results}"
     return None
+
+
+def step_planted_tool_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
+    """(b') Reverting the tools double bit comparison yields exactly one hit."""
+    needle = "CHECK(double_bits_equal(val, expected[i]), fails)"
+    source = TOOLS_TEST.read_text(encoding="utf-8")
+    if source.count(needle) != 1:
+        return f"step (b'): expected one needle '{needle}' in {TOOLS_TEST}"
+    planted = source.replace(needle, "CHECK(val == expected[i], fails)", 1)
+    tree = make_tree(tmp / "tool_revert_repo", "pelorus_tool_test.c", planted, "tools")
+    results = run_semgrep(
+        semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True
+    ).get("results", [])
+    if len(results) != 1:
+        return f"step (b'): expected exactly 1 finding, got {len(results)}"
+    if not results[0].get("path", "").endswith("tools/pelorus_tool_test.c"):
+        return (
+            f"step (b'): finding outside pelorus_tool_test.c: {results[0].get('path')}"
+        )
+    return None
+
+
+def test_sources():
+    """Yield all sources covered by the float comparison rule, including tools."""
+    for test_dir in TEST_DIRS:
+        for path in sorted(test_dir.rglob("*")):
+            if path.suffix in (".c", ".h", ".cpp", ".hpp") and path.is_file():
+                yield path
+    yield TOOLS_TEST
 
 
 def _blank_lexeme(match: re.Match[str]) -> str:
@@ -234,6 +268,7 @@ def declarators(code: str, start: int, in_params: bool) -> list[tuple[int, int]]
     so one parameter never reads the next.
     """
     spans: list[tuple[int, int]] = []
+    terminators = ");{}," if in_params else ");{}"
     depth = 0
     begin = start
     for offset in range(start, len(code)):
@@ -242,9 +277,7 @@ def declarators(code: str, start: int, in_params: bool) -> list[tuple[int, int]]
             depth += 1
         elif char in ")]" and depth:
             depth -= 1
-        elif depth == 0 and (
-            char in ");{}" or (char == "," and in_params)
-        ):
+        elif depth == 0 and char in terminators:
             break
         elif depth == 0 and char == ",":
             spans.append((begin, offset))
@@ -315,11 +348,9 @@ def step_constant_names(_semgrep_bin: str, _tmp: pathlib.Path) -> str | None:
     if [g.split(" ", 1)[0] for g in got] != want:
         return f"step (d): constant-style name findings {got}, want lines {want}"
     found = []
-    for test_dir in TEST_DIRS:
-        for path in sorted(test_dir.rglob("*")):
-            if path.suffix in (".c", ".h", ".cpp", ".hpp") and path.is_file():
-                text = path.read_text(encoding="utf-8", errors="replace")
-                found += constant_name_findings(text, str(path.relative_to(ROOT)))
+    for path in test_sources():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        found += constant_name_findings(text, str(path.relative_to(ROOT)))
     if found:
         return "step (d): non-const float with a constant-style name:\n" + "\n".join(
             found
@@ -333,7 +364,7 @@ def main() -> int:
     if not semgrep_bin:
         print("SKIP: semgrep not found")
         return 77
-    for required in (RULE_FILE, INTEROP_TEST):
+    for required in (RULE_FILE, INTEROP_TEST, TOOLS_TEST):
         if not required.is_file():
             sys.stderr.write(f"missing file: {required}\n")
             return 1
@@ -364,6 +395,7 @@ def main() -> int:
             for step in (
                 step_planted_cases,
                 step_planted_revert,
+                step_planted_tool_revert,
                 step_real_tree,
                 step_constant_names,
             ):
@@ -375,7 +407,7 @@ def main() -> int:
             sys.stderr.write(f"{err}\n")
             return 1
     print(
-        "semgrep float identity: planted cases, planted revert, real tree and constant names ok"
+        "semgrep float identity: planted cases, interop and tools planted reverts, real tree (including tools) and constant names ok"
     )
     return 0
 

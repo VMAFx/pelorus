@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0249: CLI demonstrators carry golden transcripts run by an in-repo driver
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by [ADR-0257](0257-transcript-stdin-fixtures.md) (stdin fixtures)
 - **Date**: 2026-11-09
 - **Deciders**: Lusoris
 - **Tags**: test, tools, meson, ci

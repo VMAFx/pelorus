@@ -186,6 +186,7 @@ rules:
       include:
         - /libpelorus/test/**
         - /ffmpeg-patches/test/**
+        - /tools/pelorus_tool_test.c
     message: >
       Two computed floating-point values are compared with == or !=. Compare
       via bit patterns (such as float_bits_equal() in
