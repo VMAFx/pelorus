@@ -1354,7 +1354,9 @@ No script holds a copy of a moving pin either. `build-config-sync` refuses any
 `.py`, `.sh` or `.bash` file under `scripts/`, `tools/` or `ffmpeg-patches/`
 that spells `KEY=<current value>` for `FFMPEG_TAG`, `FFMPEG_COMMIT`,
 `FFMPEG_SERIES_TAG`, `FFMPEG_SERIES_COMMIT`, `FFMPEG_SERIES_SHA256` or
-`GO_VERSION`. A self-test fixture holding that literal stops matching on the
+`GO_VERSION`. The match covers the whole value: with `GO_VERSION=1.27.4`
+pinned, `GO_VERSION=1.27.40` is another pin and passes, as does
+`FFMPEG_SERIES_TAG=v1.2.3-rc.1` against `v1.2.3`. A self-test fixture holding that literal stops matching on the
 next bump and turns the bump PR red for the wrong reason
 ([#609](https://github.com/VMAFx/pelorus/pull/609)). Fixtures read the value
 from `build-config.env` instead; `go_pin_literal()` in

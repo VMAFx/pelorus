@@ -4358,6 +4358,14 @@ PIN_SCAN_TREES = ("scripts", "tools", "ffmpeg-patches")
 # Pins a bump rewrites: Renovate moves the FFmpeg tag, commit and GO_VERSION; an
 # ADR-0185 series bump moves the series tag, commit and sha256 together.
 MOVING_PIN_KEYS = ("FFMPEG_TAG", "FFMPEG_COMMIT", *SERIES_KEYS[1:], *GO_KEYS)
+# What may follow a pin value and still end it: anything but a value character,
+# or a dot or dash that is not followed by one (sentence or flag punctuation).
+LIVE_PIN_VALUE_END = r"(?![A-Za-z0-9_+]|[.-][A-Za-z0-9_+])"
+
+
+def live_pin_pattern(key: str, value: str) -> re.Pattern[str]:
+    """KEY=<value> with the whole value: 1.27.40 or v1.2.3-rc.1 is another pin."""
+    return re.compile(f"{re.escape(key)}={re.escape(value)}{LIVE_PIN_VALUE_END}")
 
 
 def validate_script_content_live_pins(
@@ -4372,7 +4380,7 @@ def validate_script_content_live_pins(
         f"{rel}: literal {key}={values[key]} goes stale on the next bump; "
         f"derive it from {CONFIG_RELATIVE}"
         for key in MOVING_PIN_KEYS
-        if values.get(key) and f"{key}={values[key]}" in content
+        if values.get(key) and live_pin_pattern(key, values[key]).search(content)
     ]
 
 
@@ -8860,11 +8868,42 @@ def _live_pin_literal_regressions(values: dict[str, str]) -> list[str]:
     return failures
 
 
+# (script line, refused?) against LIVE_PIN_BOUNDARY_VALUES: a longer value is
+# another pin; a quote, bracket, space or closing dot still ends the current one.
+LIVE_PIN_BOUNDARY_CASES = (
+    ("GO_VERSION=1.27.40", False),
+    ("GO_VERSION=1.27.4.1", False),
+    ("FFMPEG_SERIES_TAG=v1.2.3-rc.1", False),
+    ("FFMPEG_SERIES_TAG=v1.2.3+build.7", False),
+    ("FFMPEG_SERIES_TAG=v1.2.3_x", False),
+    ("GO_VERSION=1.27.4", True),
+    ('env "GO_VERSION=1.27.4" go build', True),
+    ("# pinned at GO_VERSION=1.27.4.", True),
+    ("pins=(FFMPEG_SERIES_TAG=v1.2.3)", True),
+)
+LIVE_PIN_BOUNDARY_VALUES = {"GO_VERSION": "1.27.4", "FFMPEG_SERIES_TAG": "v1.2.3"}
+
+
+def _live_pin_boundary_regressions() -> list[str]:
+    """Prove the live-pin scan matches whole pin values, never a value prefix."""
+    return [
+        f"live-pin regression: {line!r} "
+        f"{'accepted' if refused else 'refused'} against {LIVE_PIN_BOUNDARY_VALUES}"
+        for line, refused in LIVE_PIN_BOUNDARY_CASES
+        if bool(
+            validate_script_content_live_pins(
+                "scripts/x.py", f"{line}\n", LIVE_PIN_BOUNDARY_VALUES
+            )
+        )
+        != refused
+    ]
+
+
 def live_pin_regressions() -> list[str]:
     """Replay the Renovate fixtures on a bumped GO_VERSION, as a Renovate PR does (PR #609)."""
     config_source = CONFIG.read_text(encoding="utf-8")
     values, _ = parse_assignments(config_source)
-    failures = _live_pin_literal_regressions(values)
+    failures = _live_pin_literal_regressions(values) + _live_pin_boundary_regressions()
     bumped = config_source.replace(
         go_pin_literal(config_source), "GO_VERSION=999.0.0", 1
     )
