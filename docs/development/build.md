@@ -739,6 +739,31 @@ A Ruff finding the code answers on purpose carries
 `# noqa: <code> - <reason>`; a bare `# noqa` fails (`PGH004`). `S101`, `S603`
 and `S607` are left to Bandit and its reviewed `# nosec` markers.
 
+`make verify-native` also runs `changed-lint`: its self-test plants a cppcheck
+`unreadVariable` and an unformatted Python file before the real scan
+([ADR-0258](../adr/0258-changed-code-lint-gate.md)). Install `cppcheck` from your
+system packages, or point `CPPCHECK=/path/to/cppcheck` (the script's `--cppcheck`
+option) at another build; Ruff comes from `make python-lint`. The scan in
+`scripts/check-changed-lint.py` reads committed trees, using the merge base of
+`LINT_BASE` (default `origin/master`, inherited from `AUDIT_BASE`) and `HEAD`.
+It refuses new cppcheck findings in `.config/clang-tidy/lane-files.txt` units
+when C, headers or that list change. Finding counts keyed by file, rule and
+source text preserve existing debt through line moves. The FFmpeg-tree lane
+is outside this scan; Codacy remains its cppcheck barrier. For Python, new
+files must be formatted; existing files are checked only on added lines with
+`ruff format --check --range`, respecting `ruff.toml` exclusions.
+
+The checker exits 0 for clean changes, 1 for findings and 2 for tool or Git
+errors. Fix format findings with the printed `ruff format --range START-END
+FILE` command (END is exclusive); restructure C code for cppcheck findings.
+There is no cppcheck suppression marker path. To run by hand after installing
+the tools:
+
+```bash
+PYTHON_LINT_ENV=.cache/python-lint python3 -I scripts/check-changed-lint.py --self-test
+PYTHON_LINT_ENV=.cache/python-lint python3 -I scripts/check-changed-lint.py --base origin/master
+```
+
 The governance targets and the Lefthook jobs run the Praetor engine pinned at
 `PRAETOR_REF` in `.github/workflows/standards-gate.yml`, whatever `praetorctl`
 or `standardsctl` is first on `PATH`. The engine's own launcher,
@@ -956,7 +981,7 @@ controls below, and no workflow implements them; they are declared only
 | Declared by | Control | Current state |
 | --- | --- | --- |
 | `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, 16 required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
-| `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | `semgrep` runs in CI (`semgrep` job) and via the fast suite (`scripts/test-semgrep-float-identity.py`, ADR-0239); `cppcheck` not run; Pelorus has no Rust for `clippy` |
+| `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | `semgrep` runs in CI (`semgrep` job) and via the fast suite (`scripts/test-semgrep-float-identity.py`, ADR-0239); `cppcheck` compares finding deltas in declared C units through `make changed-lint` ([ADR-0258](../adr/0258-changed-code-lint-gate.md)); Pelorus has no Rust for `clippy` |
 | `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
 | `api:public-contract` | `buf`, `spectral`, OpenAPI drift, `Migration:` footer check | Not run; Pelorus has no protobuf or OpenAPI surface. The append-only C ABI is guarded by the interop conformance fixture and review |
 | `docs:seo-portal` | Schema.org JSON-LD, sitemap, `robots.txt`, Core Web Vitals | Not applicable; Pelorus builds no documentation site. The facet's locked Markdown and figure gate does run |

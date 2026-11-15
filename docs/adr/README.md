@@ -103,7 +103,7 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0187](0187-praetor-engine-7cf9cbb-engine-launcher.md) | Re-pin the Praetor engine to `7cf9cbb2`, run it through the engine's launcher, and take the engine's harness block | Accepted |
 | [0188](0188-named-test-skips.md) | A skipped test passes only when it is named with its reason | Accepted |
 | [0189](0189-named-nvenc-smoke-skip.md) | The patch-stack replay passes the NVENC smoke's skip only when the caller names its reason | Accepted |
-| [0190](0190-gitleaks-every-ref.md) | CI scans every branch and tag for credentials with a pinned gitleaks | Accepted |
+| [0190](0190-gitleaks-every-ref.md) | CI scans every branch and tag for credentials with a pinned gitleaks | Accepted; amended by [0258](0258-changed-code-lint-gate.md) |
 | [0191](0191-nvenc-hop-derived-vulkan-device.md) | Derive Vulkan device from decoder CUDA device for the NVENC hop | Accepted |
 | [0192](0192-series-v0.2.0-forced-keyframe-smoke.md) | Pin the shared series at v0.2.0 and gate the forced-keyframe hang with a GPU smoke | Accepted |
 | [0193](0193-filter-stance-labels.md) | Label every filter with its evidence stance | Accepted |
@@ -155,16 +155,17 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0240](0240-doc-recipes-run-verbatim.md) | Run documented zero-copy recipes verbatim as hardware tests | Accepted |
 | [0241](0241-suppression-marker-binding.md) | Bind every nosemgrep and nosec marker to its start line, rule id and reason | Accepted; amended by [0256](0256-mc-sad-gain-wall-time-threshold.md) |
 | [0242](0242-msvc-clang-cl-ci-leg.md) | Build and test libpelorus with cl.exe and clang-cl in CI | Accepted |
-| [0243](0243-ruff-zizmor-local-gate.md) | Run pinned Ruff and zizmor in the local gate | Accepted |
+| [0243](0243-ruff-zizmor-local-gate.md) | Run pinned Ruff and zizmor in the local gate | Accepted; amended by [0258](0258-changed-code-lint-gate.md) |
 | [0244](0244-python-argparse-gate.md) | Parse every Python command line with argparse | Accepted |
 | [0245](0245-changelog-render-at-landing.md) | Changelog render at landing | Accepted |
 | [0246](0246-meson-testlog-credential-scrub.md) | Meson testlog credential scrub and scanner | Proposed |
 | [0247](0247-interop-abi-history-fixtures.md) | Persisted interop blobs from released ABI writers and readers | Accepted |
 | [0248](0248-tester-kit-expected-fail.md) | Kit-shipped fast tests carry their expectation in the binary | Accepted |
 | [0249](0249-tool-cli-transcript-tests.md) | CLI demonstrators carry golden transcripts run by an in-repo driver | Accepted; amended by [0257](0257-transcript-stdin-fixtures.md) |
-| [0250](0250-devcontainer-toolchain-smoke.md) | Run the offline native gate inside the dev container image before it is pushed | Accepted |
+| [0250](0250-devcontainer-toolchain-smoke.md) | Run the offline native gate inside the dev container image before it is pushed | Accepted; amended by [0258](0258-changed-code-lint-gate.md) |
 | [0251](0251-changelog-render-owed-on-pull-requests.md) | Pull requests fail while the default branch owes a changelog render for more than 20 h | Accepted |
 | [0252](0252-scheduled-changelog-render-pull-request.md) | A scheduled workflow opens the changelog render pull request as a signed bot commit | Accepted |
 | [0255](0255-mapped-memory-host-reads.md) | Copy mapped device memory before element-wise host reads | Accepted |
 | [0256](0256-mc-sad-gain-wall-time-threshold.md) | Guard the mc subgroup SAD gain with an in-binary wall-time ratio | Accepted |
 | [0257](0257-transcript-stdin-fixtures.md) | Transcript cases may feed one fixture file to the tool's stdin | Accepted |
+| [0258](0258-changed-code-lint-gate.md) | Lint changed code in the pre-push gate: cppcheck finding delta and ruff format on changed lines | Accepted |

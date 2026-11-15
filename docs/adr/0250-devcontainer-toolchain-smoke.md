@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0250: Run the offline native gate inside the dev container image before it is pushed
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by [ADR-0258](0258-changed-code-lint-gate.md) (`verify-native` also runs `changed-lint`)
 - **Date**: 2026-11-09
 - **Deciders**: Lusoris
 - **Tags**: `ci`, `docker`, `devcontainer`, `test`

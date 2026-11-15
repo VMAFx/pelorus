@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0243: Run pinned Ruff and zizmor in the local gate
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by [ADR-0258](0258-changed-code-lint-gate.md) (ruff format on changed lines)
 - **Date**: 2026-11-04
 - **Deciders**: Lusoris
 - **Tags**: testing, static-analysis, ci, supply-chain

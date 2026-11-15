@@ -8938,6 +8938,9 @@ DEV_IMAGE_BUILD_JOB = "build"
 DEV_IMAGE_BUILD_GATE_IF = "if: github.event.pull_request.draft != true"
 DEV_IMAGE_MAKEFILE = ROOT / "Makefile"
 DEV_IMAGE_OFFLINE_STEPS = ("build", "test", "format-check", "tidy", "docs-check")
+# Native gate steps that need the network (python-lint installs Ruff and zizmor;
+# changed-lint runs that Ruff), so the dev image gate leaves them out.
+DEV_IMAGE_NETWORK_STEPS = ("python-lint", "changed-lint")
 DEV_IMAGE_WORKFLOW_TOKENS = (
     "PELORUS_COMMIT=${{ github.sha }}",
     "file: .devcontainer/base/Containerfile",
@@ -9120,15 +9123,26 @@ def make_prerequisites(text: str, target: str) -> tuple[list[str], bool] | None:
 
 
 def validate_dev_image_makefile_text(relative: str, text: str) -> list[str]:
-    """ADR-0250: the image gate runs every native step except the networked lint."""
+    """ADR-0250, ADR-0258: the image gate runs every native step except the networked lint steps."""
     errors: list[str] = []
-    if make_prerequisites(text, "verify-native") != (["verify-offline", "python-lint"], False):
-        errors.append(f"{relative}: verify-native must be exactly verify-offline python-lint, with no recipe of its own")
+    native = ["verify-offline", *DEV_IMAGE_NETWORK_STEPS]
+    if make_prerequisites(text, "verify-native") != (native, False):
+        errors.append(
+            f"{relative}: verify-native must be exactly {' '.join(native)}, with no recipe of its own"
+        )
     offline = make_prerequisites(text, "verify-offline")
     missing = [step for step in DEV_IMAGE_OFFLINE_STEPS if offline is None or step not in offline[0]]
-    if offline is None or missing or offline[1] or {"python-lint", "verify-native"} & set(offline[0]):
+    if (
+        offline is None
+        or missing
+        or offline[1]
+        or {*DEV_IMAGE_NETWORK_STEPS, "verify-native"} & set(offline[0])
+    ):
         steps = " ".join(DEV_IMAGE_OFFLINE_STEPS)
-        errors.append(f"{relative}: verify-offline must list {steps}, without python-lint or a recipe (missing: {' '.join(missing) or 'none'})")
+        network = " or ".join(DEV_IMAGE_NETWORK_STEPS)
+        errors.append(
+            f"{relative}: verify-offline must list {steps}, without {network} or a recipe (missing: {' '.join(missing) or 'none'})"
+        )
     return errors
 
 
@@ -9355,25 +9369,39 @@ def _dev_image_offline_cases(text: str) -> dict[str, tuple[str, str]]:
 
 
 def _dev_image_makefile_cases(text: str) -> dict[str, tuple[str, str]]:
-    return _dev_image_offline_cases(text) | {
+    network = " ".join(DEV_IMAGE_NETWORK_STEPS)
+    native = f"verify-native: verify-offline {network}"
+    cases = _dev_image_offline_cases(text) | {
         "native lists a step directly": (
-            text.replace("verify-native: verify-offline python-lint", "verify-native: verify-offline python-lint build", 1),
+            text.replace(native, f"{native} build", 1),
             "verify-native must be exactly",
         ),
         "native without the offline gate": (
-            text.replace("verify-native: verify-offline python-lint", "verify-native: build test python-lint", 1),
+            text.replace(native, f"verify-native: build test {network}", 1),
             "verify-native must be exactly",
         ),
         "native with a recipe": (
-            text.replace("verify-native: verify-offline python-lint\n", "verify-native: verify-offline python-lint\n\t@true\n", 1),
+            text.replace(native + "\n", native + "\n\t@true\n", 1),
             "verify-native must be exactly",
         ),
-        "offline gate needs the network": (
-            text.replace("verify-offline: build test", "verify-offline: python-lint build test", 1),
+        "offline gate missing": (
+            text.replace("verify-offline: build", "verify-offlinex: build", 1),
             "verify-offline must list",
         ),
-        "offline gate missing": (text.replace("verify-offline: build", "verify-offlinex: build", 1), "verify-offline must list"),
     }
+    for step in DEV_IMAGE_NETWORK_STEPS:
+        kept = " ".join(word for word in DEV_IMAGE_NETWORK_STEPS if word != step)
+        cases[f"native without {step}"] = (
+            text.replace(native, f"verify-native: verify-offline {kept}", 1),
+            "verify-native must be exactly",
+        )
+        cases[f"offline gate runs {step}"] = (
+            text.replace(
+                "verify-offline: build test", f"verify-offline: {step} build test", 1
+            ),
+            "verify-offline must list",
+        )
+    return cases
 
 
 def _dev_image_regressions_for(name: str, original: str, cases: dict[str, tuple[str, str]], validate) -> list[str]:
