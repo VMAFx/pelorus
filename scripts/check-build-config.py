@@ -8868,44 +8868,134 @@ def _live_pin_literal_regressions(values: dict[str, str]) -> list[str]:
     return failures
 
 
-# (script line, refused?) against LIVE_PIN_BOUNDARY_VALUES: a longer value is
-# another pin; a quote, bracket, space or closing dot still ends the current one.
+# (before, key, value, after, refused?) against LIVE_PIN_BOUNDARY_VALUES: a longer
+# value is another pin; a quote, bracket, space or closing dot still ends the
+# current one. Key and value stay apart so this file never spells a pin a bump
+# can reach; _next_bump_scan_regressions holds that (PR #626 review).
 LIVE_PIN_BOUNDARY_CASES = (
-    ("GO_VERSION=1.27.40", False),
-    ("GO_VERSION=1.27.4.1", False),
-    ("FFMPEG_SERIES_TAG=v1.2.3-rc.1", False),
-    ("FFMPEG_SERIES_TAG=v1.2.3+build.7", False),
-    ("FFMPEG_SERIES_TAG=v1.2.3_x", False),
-    ("GO_VERSION=1.27.4", True),
-    ('env "GO_VERSION=1.27.4" go build', True),
-    ("# pinned at GO_VERSION=1.27.4.", True),
-    ("pins=(FFMPEG_SERIES_TAG=v1.2.3)", True),
+    ("", "GO_VERSION", "1.27.40", "", False),
+    ("", "GO_VERSION", "1.27.4.1", "", False),
+    ("", "FFMPEG_SERIES_TAG", "v1.2.3-rc.1", "", False),
+    ("", "FFMPEG_SERIES_TAG", "v1.2.3+build.7", "", False),
+    ("", "FFMPEG_SERIES_TAG", "v1.2.3_x", "", False),
+    ("", "GO_VERSION", "1.27.4", "", True),
+    ('env "', "GO_VERSION", "1.27.4", '" go build', True),
+    ("# pinned at ", "GO_VERSION", "1.27.4", ".", True),
+    ("pins=(", "FFMPEG_SERIES_TAG", "v1.2.3", ")", True),
 )
 LIVE_PIN_BOUNDARY_VALUES = {"GO_VERSION": "1.27.4", "FFMPEG_SERIES_TAG": "v1.2.3"}
+# A version pin as build-config.env spells it: GO_VERSION 1.27.3, FFMPEG_TAG n9.0.2,
+# FFMPEG_SERIES_TAG v0.5.0 or v0.6.0-rc.1. Commits and digests never match.
+VERSION_PIN_RE = re.compile(r"([A-Za-z]*)(\d+(?:\.\d+)*)(-rc\.\d+)?")
 
 
 def _live_pin_boundary_regressions() -> list[str]:
     """Prove the live-pin scan matches whole pin values, never a value prefix."""
-    return [
-        f"live-pin regression: {line!r} "
-        f"{'accepted' if refused else 'refused'} against {LIVE_PIN_BOUNDARY_VALUES}"
-        for line, refused in LIVE_PIN_BOUNDARY_CASES
-        if bool(
-            validate_script_content_live_pins(
-                "scripts/x.py", f"{line}\n", LIVE_PIN_BOUNDARY_VALUES
-            )
+    failures: list[str] = []
+    for before, key, value, after, refused in LIVE_PIN_BOUNDARY_CASES:
+        line = f"{before}{key}={value}{after}"
+        found = validate_script_content_live_pins(
+            "scripts/x.py", f"{line}\n", LIVE_PIN_BOUNDARY_VALUES
         )
-        != refused
+        if bool(found) != refused:
+            failures.append(
+                f"live-pin regression: {line!r} "
+                f"{'accepted' if refused else 'refused'} against {LIVE_PIN_BOUNDARY_VALUES}"
+            )
+    return failures
+
+
+def bump_version_part(parts: list[int], index: int) -> str:
+    """parts with parts[index] raised by one and every later part reset to 0."""
+    bumped = [*parts[:index], parts[index] + 1] + [0] * (len(parts) - index - 1)
+    return ".".join(str(part) for part in bumped)
+
+
+def next_pin_versions(value: str) -> list[str]:
+    """Values a bump can move a version pin to: 1.27.3 -> 1.27.4, 1.28.0, 2.0.0.
+
+    A release candidate also reaches its release: v0.6.0-rc.1 -> v0.6.0 first.
+    Anything else (a commit, a digest) has no next version.
+    """
+    match = VERSION_PIN_RE.fullmatch(value)
+    if match is None:
+        return []
+    prefix, core, candidate = match.groups()
+    parts = [int(part) for part in core.split(".")]
+    released = [prefix + core] if candidate else []
+    return released + [
+        prefix + bump_version_part(parts, index)
+        for index in reversed(range(len(parts)))
+    ]
+
+
+# (pin value, values a bump reaches): plain, prefixed, release candidate, and
+# values without a next version (commit, digest, empty).
+NEXT_PIN_VERSION_CASES = (
+    ("1.27.3", ("1.27.4", "1.28.0", "2.0.0")),
+    ("n9.0.2", ("n9.0.3", "n9.1.0", "n10.0.0")),
+    ("v0.6.0-rc.1", ("v0.6.0", "v0.6.1", "v0.7.0", "v1.0.0")),
+    ("1.9.9", ("1.9.10", "1.10.0", "2.0.0")),
+    ("0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c", ()),
+    ("deadbeef" * 8, ()),
+    ("", ()),
+)
+
+
+def _next_pin_version_regressions() -> list[str]:
+    """Prove next_pin_versions reaches each next patch, minor and major, and nothing else."""
+    return [
+        f"live-pin regression: next versions of {value!r} are "
+        f"{next_pin_versions(value)}, expected {list(expected)}"
+        for value, expected in NEXT_PIN_VERSION_CASES
+        if next_pin_versions(value) != list(expected)
+    ]
+
+
+def _next_bump_scan_regressions(values: dict[str, str]) -> list[str]:
+    """Replay the script scan on every value a bump or a fixture can reach (PR #626 review).
+
+    A script spelling the next pin passes today and is refused the day the bump
+    lands, which turns the bump PR red; scanning each moving pin's next patch,
+    minor and major, plus the boundary fixture values, fails it now instead.
+    """
+    reachable = dict.fromkeys(
+        [
+            (key, bumped)
+            for key in MOVING_PIN_KEYS
+            for bumped in next_pin_versions(values.get(key, ""))
+        ]
+        + list(LIVE_PIN_BOUNDARY_VALUES.items())
+    )
+    texts = [
+        (rel, read_scanned_text(path, rel)[0])
+        for name in PIN_SCAN_TREES
+        for path in script_paths(ROOT / name)
+        for rel in [path.relative_to(ROOT).as_posix()]
+    ]
+    return [
+        f"live-pin regression: once {key} is {value}, {error}"
+        for key, value in reachable
+        for rel, content in texts
+        for error in validate_script_content_live_pins(rel, content, {key: value})
     ]
 
 
 def live_pin_regressions() -> list[str]:
-    """Replay the Renovate fixtures on a bumped GO_VERSION, as a Renovate PR does (PR #609)."""
+    """Replay the Renovate fixtures and the script scan past today's pins, as a bump PR does (PR #609)."""
     config_source = CONFIG.read_text(encoding="utf-8")
     values, _ = parse_assignments(config_source)
-    failures = _live_pin_literal_regressions(values) + _live_pin_boundary_regressions()
+    failures = (
+        _live_pin_literal_regressions(values)
+        + _live_pin_boundary_regressions()
+        + _next_pin_version_regressions()
+        + _next_bump_scan_regressions(values)
+    )
+    next_go = next_pin_versions(values.get("GO_VERSION", ""))
+    if not next_go:
+        return failures + ["live-pin regression: GO_VERSION has no next version"]
     bumped = config_source.replace(
-        go_pin_literal(config_source), "GO_VERSION=999.0.0", 1
+        go_pin_literal(config_source), f"GO_VERSION={next_go[0]}", 1
     )
     if bumped == config_source:
         return failures + ["live-pin regression: bumping GO_VERSION changed nothing"]

@@ -1356,14 +1356,17 @@ that spells `KEY=<current value>` for `FFMPEG_TAG`, `FFMPEG_COMMIT`,
 `FFMPEG_SERIES_TAG`, `FFMPEG_SERIES_COMMIT`, `FFMPEG_SERIES_SHA256` or
 `GO_VERSION`. The match covers the whole value: with `GO_VERSION=1.27.4`
 pinned, `GO_VERSION=1.27.40` is another pin and passes, as does
-`FFMPEG_SERIES_TAG=v1.2.3-rc.1` against `v1.2.3`. A self-test fixture holding that literal stops matching on the
-next bump and turns the bump PR red for the wrong reason
-([#609](https://github.com/VMAFx/pelorus/pull/609)). Fixtures read the value
-from `build-config.env` instead; `go_pin_literal()` in
-`scripts/check-build-config.py` returns the Go line. The self-test also replays
-the Renovate fixtures against a copy of `build-config.env` with `GO_VERSION`
-bumped, the edit a Renovate Go PR makes, so
-`python3 scripts/check-build-config.py --self-test` fails before such a PR
+`FFMPEG_SERIES_TAG=v1.2.3-rc.1` against `v1.2.3`. A self-test fixture holding
+that literal stops matching on the next bump and turns the bump PR red for the
+wrong reason ([#609](https://github.com/VMAFx/pelorus/pull/609)). Fixtures read
+the value from `build-config.env` or join it from separate key and value
+strings; `go_pin_literal()` in `scripts/check-build-config.py` returns the Go
+line. The self-test also replays the Renovate fixtures against a copy of
+`build-config.env` with `GO_VERSION` bumped, the edit a Renovate Go PR makes,
+and replays the script scan at the next patch, minor and major value of each
+version pin (`next_pin_versions()`; a release candidate also reaches its
+release). A literal that a bump would make live therefore fails
+`python3 scripts/check-build-config.py --self-test` today, before the bump PR
 opens.
 
 The two `actions/setup-python` floor pins test the declared Python minimum
