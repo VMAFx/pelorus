@@ -114,8 +114,7 @@ static int mode_pack(const char *out_path)
     meta.bit_depth = 10u;
     meta.grid_cols = 16u;
     meta.grid_rows = 9u;
-    /* PEL_FOURCC is the public interop.h macro; its char literals promote to int. */
-    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'S'); // NOLINT(bugprone-signed-bitwise)
+    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'S');
 
     for (i = 0; i < NUM_SECTIONS; i++) {
         if (k_sections[i].size > sizeof(sec_data[i])) {

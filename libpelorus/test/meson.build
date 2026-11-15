@@ -91,6 +91,17 @@ path_utf8_test = executable(
 )
 test('path-utf8', path_utf8_test, suite: 'fast')
 
+# PEL_FOURCC (issue #582): each producer fourcc keeps its wire value and uint32_t
+# type, and every shift count in the expansion is an unsigned literal, so
+# bugprone-signed-bitwise stays quiet at every use. Kept apart from the
+# vmafx-shared conformance fixture above: vmafx mirrors interop_test.c only.
+fourcc_test = executable(
+  'pelorus_fourcc_test',
+  files('fourcc_test.c'),
+  dependencies: libpelorus_dep,
+)
+test('interop-fourcc', fourcc_test, suite: 'fast')
+
 # ABI 1.4 encoder telemetry (ADR-0174): validation, non-allocating pack, the map
 # reader, and the #221 rule that pelorus/telemetry.h compiles with no FFmpeg
 # include path (this target has none). Not part of the VMAFx-mirrored fixture:

@@ -39,6 +39,7 @@ libpelorus/test/abi_history/abi_history_fill.c
 libpelorus/test/abi_history/abi_history_pack.c
 libpelorus/test/encode_options_test.c
 libpelorus/test/encode_record_test.c
+libpelorus/test/fourcc_test.c
 libpelorus/test/grain_convert_test.c
 libpelorus/test/grain_table_test.c
 libpelorus/test/integration/host_pipeline_carrier.c
