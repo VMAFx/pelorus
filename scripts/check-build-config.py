@@ -4364,8 +4364,14 @@ LIVE_PIN_VALUE_END = r"(?![A-Za-z0-9_+]|[.-][A-Za-z0-9_+])"
 
 
 def live_pin_pattern(key: str, value: str) -> re.Pattern[str]:
-    """KEY=<value> with the whole value: 1.27.40 or v1.2.3-rc.1 is another pin."""
-    return re.compile(f"{re.escape(key)}={re.escape(value)}{LIVE_PIN_VALUE_END}")
+    """Match standalone KEY = ['"]?<value> with the whole key and whole value.
+
+    Spaces or tabs around '=' and a leading quote are allowed; a longer key
+    (MIN_<KEY>, CARGO_VERSION) or longer value (1.27.40, v1.2.3-rc.1) does not match.
+    """
+    return re.compile(
+        rf"(?<![A-Za-z0-9_]){re.escape(key)}[ \t]*=[ \t]*['\"]?{re.escape(value)}{LIVE_PIN_VALUE_END}"
+    )
 
 
 def validate_script_content_live_pins(
@@ -4411,11 +4417,12 @@ def validate_script_pin_literals(
         if scripts_dir is None
         else [scripts_dir]
     )
+    base = ROOT if scripts_dir is None else scripts_dir.parent
     if values is None:
         values, _ = parse_assignments(CONFIG.read_text(encoding="utf-8"))
     for tree in trees:
         for path in script_paths(tree):
-            rel = path.relative_to(tree.parent).as_posix()
+            rel = path.relative_to(base).as_posix()
             content, read_error = read_scanned_text(path, rel)
             if read_error is not None:
                 errors.append(read_error)
@@ -8868,32 +8875,45 @@ def _live_pin_literal_regressions(values: dict[str, str]) -> list[str]:
     return failures
 
 
-# (before, key, value, after, refused?) against LIVE_PIN_BOUNDARY_VALUES: a longer
-# value is another pin; a quote, bracket, space or closing dot still ends the
-# current one. Key and value stay apart so this file never spells a pin a bump
-# can reach; _next_bump_scan_regressions holds that (PR #626 review).
+# (before, key, sep, value, after, refused?) against LIVE_PIN_BOUNDARY_VALUES:
+# a longer key or value is another pin; spaces, tabs or quotes around '=' still
+# match the current one. Key and value stay apart so this file never spells a
+# pin a bump can reach; _next_bump_scan_regressions holds that (PR #626 review).
 LIVE_PIN_BOUNDARY_CASES = (
-    ("", "GO_VERSION", "1.27.40", "", False),
-    ("", "GO_VERSION", "1.27.4.1", "", False),
-    ("", "FFMPEG_SERIES_TAG", "v1.2.3-rc.1", "", False),
-    ("", "FFMPEG_SERIES_TAG", "v1.2.3+build.7", "", False),
-    ("", "FFMPEG_SERIES_TAG", "v1.2.3_x", "", False),
-    ("", "GO_VERSION", "1.27.4", "", True),
-    ('env "', "GO_VERSION", "1.27.4", '" go build', True),
-    ("# pinned at ", "GO_VERSION", "1.27.4", ".", True),
-    ("pins=(", "FFMPEG_SERIES_TAG", "v1.2.3", ")", True),
+    ("", "GO_VERSION", "=", "1.27.40", "", False),
+    ("", "GO_VERSION", '="', "1.27.40", '"', False),
+    ("", "GO_VERSION", "=", "1.27.4.1", "", False),
+    ("", "FFMPEG_SERIES_TAG", "=", "v1.2.3-rc.1", "", False),
+    ("", "FFMPEG_SERIES_TAG", "=", "v1.2.3+build.7", "", False),
+    ("", "FFMPEG_SERIES_TAG", "=", "v1.2.3_x", "", False),
+    ("# CAR", "GO_VERSION", "=", "1.27.4", "", False),
+    ("MIN_", "GO_VERSION", "=", "1.27.4", "", False),
+    ("OLD_", "FFMPEG_SERIES_TAG", "=", "v1.2.3", "", False),
+    ("", "GO_VERSION", "=", "1.27.4", "", True),
+    ("", "GO_VERSION", '="', "1.27.4", '"', True),
+    ("env ", "GO_VERSION", "='", "1.27.4", "' go build", True),
+    ("", "FFMPEG_SERIES_TAG", ' = "', "v1.2.3", '"', True),
+    ("", "GO_VERSION", "\t=\t", "1.27.4", "", True),
+    ("dict(X, ", "FFMPEG_SERIES_TAG", '="', "v1.2.3", '")', True),
+    ('env "', "GO_VERSION", "=", "1.27.4", '" go build', True),
+    ("# pinned at ", "GO_VERSION", "=", "1.27.4", ".", True),
+    ("pins=(", "FFMPEG_SERIES_TAG", "=", "v1.2.3", ")", True),
 )
 LIVE_PIN_BOUNDARY_VALUES = {"GO_VERSION": "1.27.4", "FFMPEG_SERIES_TAG": "v1.2.3"}
-# A version pin as build-config.env spells it: GO_VERSION 1.27.3, FFMPEG_TAG n9.0.2,
-# FFMPEG_SERIES_TAG v0.5.0 or v0.6.0-rc.1. Commits and digests never match.
-VERSION_PIN_RE = re.compile(r"([A-Za-z]*)(\d+(?:\.\d+)*)(-rc\.\d+)?")
+VERSION_PIN_KEYS = ("FFMPEG_TAG", "FFMPEG_SERIES_TAG", "GO_VERSION")
+RC_PIN_KEYS = ("FFMPEG_SERIES_TAG",)
+# Dotted version pin (e.g. 1.2.3, n1.2.3, v1.2.3, v1.2.3-rc.4) with bounded
+# non-zero-padded parts; commits and digests never match because a dot is required.
+VERSION_PIN_RE = re.compile(
+    r"([A-Za-z]*)((?:0|[1-9]\d{0,8})(?:\.(?:0|[1-9]\d{0,8}))+)(?:-rc\.([1-9]\d{0,8}))?"
+)
 
 
 def _live_pin_boundary_regressions() -> list[str]:
-    """Prove the live-pin scan matches whole pin values, never a value prefix."""
+    """Prove the live-pin scan matches whole keys and values across quote and space forms."""
     failures: list[str] = []
-    for before, key, value, after, refused in LIVE_PIN_BOUNDARY_CASES:
-        line = f"{before}{key}={value}{after}"
+    for before, key, sep, value, after, refused in LIVE_PIN_BOUNDARY_CASES:
+        line = f"{before}{key}{sep}{value}{after}"
         found = validate_script_content_live_pins(
             "scripts/x.py", f"{line}\n", LIVE_PIN_BOUNDARY_VALUES
         )
@@ -8911,74 +8931,182 @@ def bump_version_part(parts: list[int], index: int) -> str:
     return ".".join(str(part) for part in bumped)
 
 
-def next_pin_versions(value: str) -> list[str]:
-    """Values a bump can move a version pin to: 1.27.3 -> 1.27.4, 1.28.0, 2.0.0.
+def next_pin_versions(value: str, candidates: bool = False) -> list[str]:
+    """Values a bump can move a version pin to: 1.2.3 -> 1.2.4, 1.3.0, 2.0.0.
 
-    A release candidate also reaches its release: v0.6.0-rc.1 -> v0.6.0 first.
-    Anything else (a commit, a digest) has no next version.
+    An -rc.N pin reaches -rc.N+1 and its release first; with candidates=True
+    each bumped version also yields its -rc.1 candidate before the release.
+    Anything else (a commit, digest, leading zero or oversized part) returns [].
     """
     match = VERSION_PIN_RE.fullmatch(value)
     if match is None:
         return []
     prefix, core, candidate = match.groups()
     parts = [int(part) for part in core.split(".")]
-    released = [prefix + core] if candidate else []
-    return released + [
-        prefix + bump_version_part(parts, index)
-        for index in reversed(range(len(parts)))
-    ]
+    released = (
+        [f"{prefix}{core}-rc.{int(candidate) + 1}", prefix + core] if candidate else []
+    )
+    bumps: list[str] = []
+    for index in reversed(range(len(parts))):
+        bumped = prefix + bump_version_part(parts, index)
+        if candidates:
+            bumps.append(f"{bumped}-rc.1")
+        bumps.append(bumped)
+    return released + bumps
 
 
-# (pin value, values a bump reaches): plain, prefixed, release candidate, and
-# values without a next version (commit, digest, empty).
+# (pin value, candidates?, values a bump reaches): plain, prefixed, release
+# candidate, and values without a next version (commit, digest, leading zero,
+# oversized part, empty).
 NEXT_PIN_VERSION_CASES = (
-    ("1.27.3", ("1.27.4", "1.28.0", "2.0.0")),
-    ("n9.0.2", ("n9.0.3", "n9.1.0", "n10.0.0")),
-    ("v0.6.0-rc.1", ("v0.6.0", "v0.6.1", "v0.7.0", "v1.0.0")),
-    ("1.9.9", ("1.9.10", "1.10.0", "2.0.0")),
-    ("0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c", ()),
-    ("deadbeef" * 8, ()),
-    ("", ()),
+    ("1.27.3", False, ("1.27.4", "1.28.0", "2.0.0")),
+    ("n9.0.2", False, ("n9.0.3", "n9.1.0", "n10.0.0")),
+    ("v0.6.0-rc.1", False, ("v0.6.0-rc.2", "v0.6.0", "v0.6.1", "v0.7.0", "v1.0.0")),
+    (
+        "v0.6.0-rc.1",
+        True,
+        (
+            "v0.6.0-rc.2",
+            "v0.6.0",
+            "v0.6.1-rc.1",
+            "v0.6.1",
+            "v0.7.0-rc.1",
+            "v0.7.0",
+            "v1.0.0-rc.1",
+            "v1.0.0",
+        ),
+    ),
+    (
+        "v0.5.0",
+        True,
+        (
+            "v0.5.1-rc.1",
+            "v0.5.1",
+            "v0.6.0-rc.1",
+            "v0.6.0",
+            "v1.0.0-rc.1",
+            "v1.0.0",
+        ),
+    ),
+    ("1.9.9", False, ("1.9.10", "1.10.0", "2.0.0")),
+    ("0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c", False, ()),
+    ("deadbeef" * 8, False, ()),
+    ("0" * 64, False, ()),
+    ("9" * 40, False, ()),
+    ("1." + "9" * 12 + ".0", False, ()),
+    ("01.2.3", False, ()),
+    ("", False, ()),
 )
 
 
-def _next_pin_version_regressions() -> list[str]:
-    """Prove next_pin_versions reaches each next patch, minor and major, and nothing else."""
+def _missing_next_pin_regressions(values: dict[str, str]) -> list[str]:
+    """Report every version pin in values that has no next version."""
     return [
-        f"live-pin regression: next versions of {value!r} are "
-        f"{next_pin_versions(value)}, expected {list(expected)}"
-        for value, expected in NEXT_PIN_VERSION_CASES
-        if next_pin_versions(value) != list(expected)
+        f"live-pin regression: {key} has no next version"
+        for key in VERSION_PIN_KEYS
+        if not next_pin_versions(values.get(key, ""))
     ]
 
 
-def _next_bump_scan_regressions(values: dict[str, str]) -> list[str]:
+def _next_pin_version_regressions() -> list[str]:
+    """Prove next_pin_versions reaches each next version and rc candidate, and nothing else."""
+    failures = [
+        f"live-pin regression: next versions of {value!r} (candidates={candidates}) are "
+        f"{next_pin_versions(value, candidates=candidates)}, expected {list(expected)}"
+        for value, candidates, expected in NEXT_PIN_VERSION_CASES
+        if next_pin_versions(value, candidates=candidates) != list(expected)
+    ]
+    missing = _missing_next_pin_regressions(dict.fromkeys(VERSION_PIN_KEYS, ""))
+    expected_missing = [
+        f"live-pin regression: {key} has no next version" for key in VERSION_PIN_KEYS
+    ]
+    if missing != expected_missing:
+        failures.append(
+            f"live-pin regression: empty version pins reported {missing}, expected {expected_missing}"
+        )
+    return failures
+
+
+def _next_bump_scan_regressions(values: dict[str, str], root: Path = ROOT) -> list[str]:
     """Replay the script scan on every value a bump or a fixture can reach (PR #626 review).
 
     A script spelling the next pin passes today and is refused the day the bump
     lands, which turns the bump PR red; scanning each moving pin's next patch,
-    minor and major, plus the boundary fixture values, fails it now instead.
+    minor and major (plus series rc candidates and boundary values) fails it now.
     """
     reachable = dict.fromkeys(
         [
             (key, bumped)
             for key in MOVING_PIN_KEYS
-            for bumped in next_pin_versions(values.get(key, ""))
+            for bumped in next_pin_versions(
+                values.get(key, ""), candidates=key in RC_PIN_KEYS
+            )
         ]
         + list(LIVE_PIN_BOUNDARY_VALUES.items())
     )
-    texts = [
-        (rel, read_scanned_text(path, rel)[0])
-        for name in PIN_SCAN_TREES
-        for path in script_paths(ROOT / name)
-        for rel in [path.relative_to(ROOT).as_posix()]
-    ]
-    return [
+    failures: list[str] = []
+    texts: list[tuple[str, str]] = []
+    for name in PIN_SCAN_TREES:
+        for path in script_paths(root / name):
+            rel = path.relative_to(root).as_posix()
+            content, read_error = read_scanned_text(path, rel)
+            if read_error is not None:
+                failures.append(f"live-pin regression: {read_error}")
+                continue
+            texts.append((rel, content))
+    failures.extend(
         f"live-pin regression: once {key} is {value}, {error}"
         for key, value in reachable
         for rel, content in texts
         for error in validate_script_content_live_pins(rel, content, {key: value})
+    )
+    return failures
+
+
+def _next_bump_scan_planted_regressions(values: dict[str, str]) -> list[str]:
+    """Prove _next_bump_scan_regressions catches next-bump pins, series rcs and bad bytes."""
+    next_go = next_pin_versions(values.get("GO_VERSION", ""))
+    series_rcs = [
+        version
+        for version in next_pin_versions(
+            values.get("FFMPEG_SERIES_TAG", ""), candidates=True
+        )
+        if "-rc." in version
     ]
+    if not next_go or not series_rcs:
+        return ["live-pin regression: missing next version for planted scan"]
+    go_next = next_go[0]
+    rc_next = series_rcs[0]
+    with tempfile.TemporaryDirectory() as tmp_str:
+        root = Path(tmp_str)
+        scripts_dir = root / "scripts"
+        scripts_dir.mkdir()
+        (scripts_dir / "planted.sh").write_text(
+            "# " + "GO_VERSION" + "=" + go_next + "\n", encoding="utf-8"
+        )
+        (scripts_dir / "planted_rc.sh").write_text(
+            "# " + "FFMPEG_SERIES_TAG" + "=" + rc_next + "\n", encoding="utf-8"
+        )
+        (scripts_dir / "bad.sh").write_bytes(b"\xff\xfe\n")
+        found = _next_bump_scan_regressions(values, root=root)
+    failures: list[str] = []
+    if not any(
+        f"once GO_VERSION is {go_next}, scripts/planted.sh:" in e for e in found
+    ):
+        failures.append("live-pin regression: next-bump scan missed planted GO_VERSION")
+    if not any(
+        f"once FFMPEG_SERIES_TAG is {rc_next}, scripts/planted_rc.sh:" in e
+        for e in found
+    ):
+        failures.append(
+            "live-pin regression: next-bump scan missed planted FFMPEG_SERIES_TAG rc"
+        )
+    if not any(
+        e.startswith("live-pin regression: scripts/bad.sh: could not read:")
+        for e in found
+    ):
+        failures.append("live-pin regression: next-bump scan missed unreadable script")
+    return failures
 
 
 def live_pin_regressions() -> list[str]:
@@ -8990,10 +9118,12 @@ def live_pin_regressions() -> list[str]:
         + _live_pin_boundary_regressions()
         + _next_pin_version_regressions()
         + _next_bump_scan_regressions(values)
+        + _next_bump_scan_planted_regressions(values)
+        + _missing_next_pin_regressions(values)
     )
     next_go = next_pin_versions(values.get("GO_VERSION", ""))
     if not next_go:
-        return failures + ["live-pin regression: GO_VERSION has no next version"]
+        return failures
     bumped = config_source.replace(
         go_pin_literal(config_source), f"GO_VERSION={next_go[0]}", 1
     )
