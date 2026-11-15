@@ -152,9 +152,11 @@ enum pel_qp_report_source {
     PEL_QPSRC_VULKAN = 3 /* Vulkan-Video encode feedback (reserved)         */
 };
 
-/* fourcc of the writing stage, for diagnostics (e.g. 'PLRS'). */
+/* fourcc of the writing stage, for diagnostics (e.g. 'PLRS'). The shift counts
+ * are unsigned so no operand of a bitwise operator is signed (issue #582); the
+ * value and its uint32_t type are the same as with plain int counts. */
 #define PEL_FOURCC(a, b, c, d)                                                                     \
-    ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
+    ((uint32_t)(a) | ((uint32_t)(b) << 8u) | ((uint32_t)(c) << 16u) | ((uint32_t)(d) << 24u))
 
 /* ---- Blob framing ------------------------------------------------------- */
 

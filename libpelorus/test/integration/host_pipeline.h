@@ -30,9 +30,7 @@
 #define HP_EXPECTED_X265_FRAME_COUNT 10u
 #define HP_GRAIN_ENTRY_CAP 4u
 
-/* PEL_FOURCC('P', 'L', 'R', 'S') as an unsigned literal: the macro's char literals promote to int
- * and trip bugprone-signed-bitwise at every expansion. */
-#define PLRS_PRODUCER_ID 0x53524C50u
+#define PLRS_PRODUCER_ID PEL_FOURCC('P', 'L', 'R', 'S')
 /* "sha256:" + 64 hex digits, without the terminating NUL. */
 #define DIGEST_TEXT_LEN (PEL_DIGEST_TEXT_SIZE - 1u)
 #define JSON_DIGEST_KEY "\"digest\":\""

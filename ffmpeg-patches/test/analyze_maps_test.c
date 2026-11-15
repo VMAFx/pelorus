@@ -276,7 +276,7 @@ static void fill_meta(PelorusSideData *meta, uint16_t cols, uint16_t rows)
     meta->bit_depth = 8;
     meta->grid_cols = cols;
     meta->grid_rows = rows;
-    meta->producer_id = 0x41524C50u; /* PEL_FOURCC('P', 'L', 'R', 'A') */
+    meta->producer_id = PEL_FOURCC('P', 'L', 'R', 'A');
 }
 
 static void fill_sections(PelAnSections *sec)
