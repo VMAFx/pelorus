@@ -1350,6 +1350,20 @@ either would leave a copied value behind:
   carries no version for the same reason
   ([ADR-0151](../adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
 
+No script holds a copy of a moving pin either. `build-config-sync` refuses any
+`.py`, `.sh` or `.bash` file under `scripts/`, `tools/` or `ffmpeg-patches/`
+that spells `KEY=<current value>` for `FFMPEG_TAG`, `FFMPEG_COMMIT`,
+`FFMPEG_SERIES_TAG`, `FFMPEG_SERIES_COMMIT`, `FFMPEG_SERIES_SHA256` or
+`GO_VERSION`. A self-test fixture holding that literal stops matching on the
+next bump and turns the bump PR red for the wrong reason
+([#609](https://github.com/VMAFx/pelorus/pull/609)). Fixtures read the value
+from `build-config.env` instead; `go_pin_literal()` in
+`scripts/check-build-config.py` returns the Go line. The self-test also replays
+the Renovate fixtures against a copy of `build-config.env` with `GO_VERSION`
+bumped, the edit a Renovate Go PR makes, so
+`python3 scripts/check-build-config.py --self-test` fails before such a PR
+opens.
+
 The two `actions/setup-python` floor pins test the declared Python minimum
 named in [Git hooks](#git-hooks-opt-in-per-clone): `floor-py` covers the Meson
 floor and `floor-py-scripts` covers the script floor. `renovate.json` disables
