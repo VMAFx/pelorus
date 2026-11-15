@@ -23,7 +23,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 
 /* Wire values (little-endian, first character in the low byte). */
 _Static_assert(PEL_FOURCC('P', 'L', 'R', 'S') == 0x53524C50u, "PLRS: deband");
@@ -88,11 +87,11 @@ static int unsigned_literal_at(const char *text, size_t len, size_t pos)
     return pos >= len || !is_ident(text[pos]);
 }
 
-/* 1 when the text holds exactly FOURCC_SHIFTS left shifts and each count is an
- * unsigned literal. */
-static int shift_counts_unsigned(const char *text)
+/* 1 when the len bytes of text hold exactly FOURCC_SHIFTS left shifts and each
+ * count is an unsigned literal. The caller passes the length of a string literal
+ * (sizeof - 1), so no read depends on a terminating NUL. */
+static int shift_counts_unsigned(const char *text, size_t len)
 {
-    size_t len = strlen(text);
     size_t shifts = 0;
 
     if (len > FOURCC_TEXT_CAP) {
@@ -114,11 +113,11 @@ int main(void)
 {
     int failed = 0;
 
-    if (shift_counts_unsigned(k_planted_signed)) {
+    if (shift_counts_unsigned(k_planted_signed, sizeof(k_planted_signed) - 1u)) {
         (void)fprintf(stderr, "FAIL: checker accepted the planted signed spelling\n");
         failed = 1;
     }
-    if (!shift_counts_unsigned(k_expansion)) {
+    if (!shift_counts_unsigned(k_expansion, sizeof(k_expansion) - 1u)) {
         (void)fprintf(stderr, "FAIL: PEL_FOURCC shift count not an unsigned literal: %s\n",
                       k_expansion);
         failed = 1;
