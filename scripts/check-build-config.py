@@ -4353,28 +4353,82 @@ def validate_script_content_go_pins(rel: str, content: str, suffix: str) -> list
 
 # Script suffixes validate_script_content_go_pins understands; discovery walks all of them.
 GO_PIN_SCRIPT_SUFFIXES = (".py", ".sh", ".bash")
+# Trees the script pin scan walks by default; an absent tree is skipped.
+PIN_SCAN_TREES = ("scripts", "tools", "ffmpeg-patches")
+# Pins a bump rewrites: Renovate moves the FFmpeg tag, commit and GO_VERSION; an
+# ADR-0185 series bump moves the series tag, commit and sha256 together.
+MOVING_PIN_KEYS = ("FFMPEG_TAG", "FFMPEG_COMMIT", *SERIES_KEYS[1:], *GO_KEYS)
+# What may follow a pin value and still end it: anything but a value character,
+# or a dot or dash that is not followed by one (sentence or flag punctuation).
+LIVE_PIN_VALUE_END = r"(?![A-Za-z0-9_+]|[.-][A-Za-z0-9_+])"
 
 
-def validate_no_literal_go_pins(scripts_dir: Path | None = None) -> list[str]:
-    """Refuse literal Go version assignments outside build-config.env in scripts."""
-    errors: list[str] = []
-    scripts_dir = ROOT / "scripts" if scripts_dir is None else scripts_dir
-    if not scripts_dir.is_dir():
-        return errors
-    paths = sorted(
+def live_pin_pattern(key: str, value: str) -> re.Pattern[str]:
+    """Match standalone KEY = ['"]?<value> with the whole key and whole value.
+
+    Spaces or tabs around '=' and a leading quote are allowed; a longer key
+    (MIN_<KEY>, CARGO_VERSION) or longer value (1.27.40, v1.2.3-rc.1) does not match.
+    """
+    return re.compile(
+        rf"(?<![A-Za-z0-9_]){re.escape(key)}[ \t]*=[ \t]*['\"]?{re.escape(value)}{LIVE_PIN_VALUE_END}"
+    )
+
+
+def validate_script_content_live_pins(
+    rel: str, content: str, values: dict[str, str]
+) -> list[str]:
+    """Refuse a script that spells a moving pin as KEY=<current value>.
+
+    A self-test fixture holding that literal stops matching on the next bump
+    and turns the bump PR red (PR #609); fixtures derive it from the config.
+    """
+    return [
+        f"{rel}: literal {key}={values[key]} goes stale on the next bump; "
+        f"derive it from {CONFIG_RELATIVE}"
+        for key in MOVING_PIN_KEYS
+        if values.get(key) and live_pin_pattern(key, values[key]).search(content)
+    ]
+
+
+def script_paths(tree: Path) -> list[Path]:
+    """Every scanned script below tree, sorted, with bytecode caches skipped."""
+    if not tree.is_dir():
+        return []
+    return sorted(
         path
-        for path in scripts_dir.rglob("*")
+        for path in tree.rglob("*")
         if path.suffix in GO_PIN_SCRIPT_SUFFIXES
         and path.is_file()
         and "__pycache__" not in path.parts
     )
-    for path in paths:
-        rel = path.relative_to(scripts_dir.parent).as_posix()
-        content, read_error = read_scanned_text(path, rel)
-        if read_error is not None:
-            errors.append(read_error)
-            continue
-        errors.extend(validate_script_content_go_pins(rel, content, path.suffix))
+
+
+def validate_script_pin_literals(
+    scripts_dir: Path | None = None, values: dict[str, str] | None = None
+) -> list[str]:
+    """Refuse literal Go assignments and current moving-pin literals in scripts.
+
+    Without scripts_dir the scan walks PIN_SCAN_TREES; values defaults to the
+    parsed build-config.env.
+    """
+    errors: list[str] = []
+    trees = (
+        [ROOT / name for name in PIN_SCAN_TREES]
+        if scripts_dir is None
+        else [scripts_dir]
+    )
+    base = ROOT if scripts_dir is None else scripts_dir.parent
+    if values is None:
+        values, _ = parse_assignments(CONFIG.read_text(encoding="utf-8"))
+    for tree in trees:
+        for path in script_paths(tree):
+            rel = path.relative_to(base).as_posix()
+            content, read_error = read_scanned_text(path, rel)
+            if read_error is not None:
+                errors.append(read_error)
+                continue
+            errors.extend(validate_script_content_go_pins(rel, content, path.suffix))
+            errors.extend(validate_script_content_live_pins(rel, content, values))
     return errors
 
 
@@ -7719,7 +7773,7 @@ def _go_pin_script_discovery_regressions() -> list[str]:
             (scripts_dir / "nested" / name).write_text(text, encoding="utf-8")
         for name in ("bad.py", "bad.sh"):
             (scripts_dir / "nested" / name).write_bytes(b"GO_VERSION=\xff\xfe\n")
-        errs = validate_no_literal_go_pins(scripts_dir)
+        errs = validate_script_pin_literals(scripts_dir)
     for name in planted:
         if not any(f"scripts/nested/{name}:" in e for e in errs):
             failures.append(f"go-pin regression: repository scan missed a literal pin in {name}")
@@ -7904,13 +7958,17 @@ def go_pin_regressions() -> list[str]:
     source = standards_gate.read_text(encoding="utf-8")
     rel = ".github/workflows/standards-gate.yml"
 
-    planted = source.replace("go-version: ${{ env.GO_VERSION }}", "go-version: '1.27.3'", 1)
+    planted = source.replace(
+        "go-version: ${{ env.GO_VERSION }}", "go-version: '1.0.0'", 1
+    )
     if planted == source:
         failures.append("go-pin regression: planting literal go-version did not mutate standards-gate.yml")
     else:
         errs = validate_workflow_go_pins(rel, planted)
         if not any("literal go-version" in e for e in errs):
-            failures.append("go-pin regression: planted literal go-version: '1.27.3' was accepted")
+            failures.append(
+                "go-pin regression: planted literal go-version: '1.0.0' was accepted"
+            )
 
     if validate_workflow_go_pins(rel, source):
         failures.append("go-pin regression: canonical env form was rejected")
@@ -8767,15 +8825,320 @@ def _renovate_case_failures(config: dict, config_source: str, ci: str) -> list[s
     return failures
 
 
-def renovate_validator_regressions() -> list[str]:
-    """Prove that removing or breaking the Go manager fails."""
+def go_pin_literal(config_source: str) -> str:
+    """The GO_VERSION=<pin> line as config_source spells it; fixtures never hardcode it."""
+    values, _ = parse_assignments(config_source)
+    return f"GO_VERSION={values.get('GO_VERSION', '')}"
+
+
+def renovate_validator_regressions(config_source: str | None = None) -> list[str]:
+    """Prove that removing or breaking the Go manager fails.
+
+    config_source defaults to build-config.env; live_pin_regressions passes a
+    bumped copy to prove the fixtures follow the pin.
+    """
     source = RENOVATE_CONFIG.read_text(encoding="utf-8")
-    config_source = CONFIG.read_text(encoding="utf-8")
+    if config_source is None:
+        config_source = CONFIG.read_text(encoding="utf-8")
     ci = (ROOT / CI_RELATIVE).read_text(encoding="utf-8")
     failures = _renovate_case_failures(json.loads(source), config_source, ci)
-    stale = config_source.replace("GO_VERSION=1.27.3", "GO_VERSION=go1.0", 1)
+    stale = config_source.replace(go_pin_literal(config_source), "GO_VERSION=go1.0", 1)
     if stale == config_source or not validate_renovate_text(source, stale, ci):
         failures.append("renovate regression: unmatched build-config literal was accepted")
+    return failures
+
+
+def _live_pin_literal_regressions(values: dict[str, str]) -> list[str]:
+    """Prove the scan refuses each moving pin's current literal and keeps derived forms."""
+    failures: list[str] = []
+    for key in MOVING_PIN_KEYS:
+        planted = f'stale = source.replace("{key}={values.get(key, "")}", "x")\n'
+        if not validate_script_content_live_pins("scripts/x.py", planted, values):
+            failures.append(f"live-pin regression: current {key} literal was accepted")
+    derived = "stale = source.replace(go_pin_literal(source), 'GO_VERSION=go1.0')\n"
+    if validate_script_content_live_pins("scripts/x.py", derived, values):
+        failures.append("live-pin regression: a derived GO_VERSION fixture was refused")
+    with tempfile.TemporaryDirectory() as tmp_str:
+        scripts_dir = Path(tmp_str) / "scripts"
+        (scripts_dir / "nested").mkdir(parents=True)
+        literal = go_pin_literal(CONFIG.read_text(encoding="utf-8"))
+        (scripts_dir / "nested" / "live.sh").write_text(
+            f"# {literal}\n", encoding="utf-8"
+        )
+        errs = validate_script_pin_literals(scripts_dir, values)
+    if not any(
+        e.startswith("scripts/nested/live.sh: literal GO_VERSION=") for e in errs
+    ):
+        failures.append(
+            "live-pin regression: repository scan missed a current GO_VERSION literal"
+        )
+    return failures
+
+
+# (before, key, sep, value, after, refused?) against LIVE_PIN_BOUNDARY_VALUES:
+# a longer key or value is another pin; spaces, tabs or quotes around '=' still
+# match the current one. Key and value stay apart so this file never spells a
+# pin a bump can reach; _next_bump_scan_regressions holds that (PR #626 review).
+LIVE_PIN_BOUNDARY_CASES = (
+    ("", "GO_VERSION", "=", "1.27.40", "", False),
+    ("", "GO_VERSION", '="', "1.27.40", '"', False),
+    ("", "GO_VERSION", "=", "1.27.4.1", "", False),
+    ("", "FFMPEG_SERIES_TAG", "=", "v1.2.3-rc.1", "", False),
+    ("", "FFMPEG_SERIES_TAG", "=", "v1.2.3+build.7", "", False),
+    ("", "FFMPEG_SERIES_TAG", "=", "v1.2.3_x", "", False),
+    ("# CAR", "GO_VERSION", "=", "1.27.4", "", False),
+    ("MIN_", "GO_VERSION", "=", "1.27.4", "", False),
+    ("OLD_", "FFMPEG_SERIES_TAG", "=", "v1.2.3", "", False),
+    ("", "GO_VERSION", "=", "1.27.4", "", True),
+    ("", "GO_VERSION", '="', "1.27.4", '"', True),
+    ("env ", "GO_VERSION", "='", "1.27.4", "' go build", True),
+    ("", "FFMPEG_SERIES_TAG", ' = "', "v1.2.3", '"', True),
+    ("", "GO_VERSION", "\t=\t", "1.27.4", "", True),
+    ("dict(X, ", "FFMPEG_SERIES_TAG", '="', "v1.2.3", '")', True),
+    ('env "', "GO_VERSION", "=", "1.27.4", '" go build', True),
+    ("# pinned at ", "GO_VERSION", "=", "1.27.4", ".", True),
+    ("pins=(", "FFMPEG_SERIES_TAG", "=", "v1.2.3", ")", True),
+)
+LIVE_PIN_BOUNDARY_VALUES = {"GO_VERSION": "1.27.4", "FFMPEG_SERIES_TAG": "v1.2.3"}
+VERSION_PIN_KEYS = ("FFMPEG_TAG", "FFMPEG_SERIES_TAG", "GO_VERSION")
+RC_PIN_KEYS = ("FFMPEG_SERIES_TAG",)
+# Dotted version pin (e.g. 1.2.3, n1.2.3, v1.2.3, v1.2.3-rc.4) with bounded
+# non-zero-padded parts; commits and digests never match because a dot is required.
+VERSION_PIN_RE = re.compile(
+    r"([A-Za-z]*)((?:0|[1-9]\d{0,8})(?:\.(?:0|[1-9]\d{0,8}))+)(?:-rc\.([1-9]\d{0,8}))?"
+)
+
+
+def _live_pin_boundary_regressions() -> list[str]:
+    """Prove the live-pin scan matches whole keys and values across quote and space forms."""
+    failures: list[str] = []
+    for before, key, sep, value, after, refused in LIVE_PIN_BOUNDARY_CASES:
+        line = f"{before}{key}{sep}{value}{after}"
+        found = validate_script_content_live_pins(
+            "scripts/x.py", f"{line}\n", LIVE_PIN_BOUNDARY_VALUES
+        )
+        if bool(found) != refused:
+            failures.append(
+                f"live-pin regression: {line!r} "
+                f"{'accepted' if refused else 'refused'} against {LIVE_PIN_BOUNDARY_VALUES}"
+            )
+    return failures
+
+
+def bump_version_part(parts: list[int], index: int) -> str:
+    """parts with parts[index] raised by one and every later part reset to 0."""
+    bumped = [*parts[:index], parts[index] + 1] + [0] * (len(parts) - index - 1)
+    return ".".join(str(part) for part in bumped)
+
+
+def next_pin_versions(value: str, candidates: bool = False) -> list[str]:
+    """Values a bump can move a version pin to: 1.2.3 -> 1.2.4, 1.3.0, 2.0.0.
+
+    An -rc.N pin reaches -rc.N+1 and its release first; with candidates=True
+    each bumped version also yields its -rc.1 candidate before the release.
+    Anything else (a commit, digest, leading zero or oversized part) returns [].
+    """
+    match = VERSION_PIN_RE.fullmatch(value)
+    if match is None:
+        return []
+    prefix, core, candidate = match.groups()
+    parts = [int(part) for part in core.split(".")]
+    released = (
+        [f"{prefix}{core}-rc.{int(candidate) + 1}", prefix + core] if candidate else []
+    )
+    bumps: list[str] = []
+    for index in reversed(range(len(parts))):
+        bumped = prefix + bump_version_part(parts, index)
+        if candidates:
+            bumps.append(f"{bumped}-rc.1")
+        bumps.append(bumped)
+    return released + bumps
+
+
+# (pin value, candidates?, values a bump reaches): plain, prefixed, release
+# candidate, and values without a next version (commit, digest, leading zero,
+# oversized part, empty).
+NEXT_PIN_VERSION_CASES = (
+    ("1.27.3", False, ("1.27.4", "1.28.0", "2.0.0")),
+    ("n9.0.2", False, ("n9.0.3", "n9.1.0", "n10.0.0")),
+    ("v0.6.0-rc.1", False, ("v0.6.0-rc.2", "v0.6.0", "v0.6.1", "v0.7.0", "v1.0.0")),
+    (
+        "v0.6.0-rc.1",
+        True,
+        (
+            "v0.6.0-rc.2",
+            "v0.6.0",
+            "v0.6.1-rc.1",
+            "v0.6.1",
+            "v0.7.0-rc.1",
+            "v0.7.0",
+            "v1.0.0-rc.1",
+            "v1.0.0",
+        ),
+    ),
+    (
+        "v0.5.0",
+        True,
+        (
+            "v0.5.1-rc.1",
+            "v0.5.1",
+            "v0.6.0-rc.1",
+            "v0.6.0",
+            "v1.0.0-rc.1",
+            "v1.0.0",
+        ),
+    ),
+    ("1.9.9", False, ("1.9.10", "1.10.0", "2.0.0")),
+    ("0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c", False, ()),
+    ("deadbeef" * 8, False, ()),
+    ("0" * 64, False, ()),
+    ("9" * 40, False, ()),
+    ("1." + "9" * 12 + ".0", False, ()),
+    ("01.2.3", False, ()),
+    ("", False, ()),
+)
+
+
+def _missing_next_pin_regressions(values: dict[str, str]) -> list[str]:
+    """Report every version pin in values that has no next version."""
+    return [
+        f"live-pin regression: {key} has no next version"
+        for key in VERSION_PIN_KEYS
+        if not next_pin_versions(values.get(key, ""))
+    ]
+
+
+def _next_pin_version_regressions() -> list[str]:
+    """Prove next_pin_versions reaches each next version and rc candidate, and nothing else."""
+    failures = [
+        f"live-pin regression: next versions of {value!r} (candidates={candidates}) are "
+        f"{next_pin_versions(value, candidates=candidates)}, expected {list(expected)}"
+        for value, candidates, expected in NEXT_PIN_VERSION_CASES
+        if next_pin_versions(value, candidates=candidates) != list(expected)
+    ]
+    missing = _missing_next_pin_regressions(dict.fromkeys(VERSION_PIN_KEYS, ""))
+    expected_missing = [
+        f"live-pin regression: {key} has no next version" for key in VERSION_PIN_KEYS
+    ]
+    if missing != expected_missing:
+        failures.append(
+            f"live-pin regression: empty version pins reported {missing}, expected {expected_missing}"
+        )
+    return failures
+
+
+def _next_bump_scan_regressions(values: dict[str, str], root: Path = ROOT) -> list[str]:
+    """Replay the script scan on every value a bump or a fixture can reach (PR #626 review).
+
+    A script spelling the next pin passes today and is refused the day the bump
+    lands, which turns the bump PR red; scanning each moving pin's next patch,
+    minor and major (plus series rc candidates and boundary values) fails it now.
+    """
+    reachable = dict.fromkeys(
+        [
+            (key, bumped)
+            for key in MOVING_PIN_KEYS
+            for bumped in next_pin_versions(
+                values.get(key, ""), candidates=key in RC_PIN_KEYS
+            )
+        ]
+        + list(LIVE_PIN_BOUNDARY_VALUES.items())
+    )
+    failures: list[str] = []
+    texts: list[tuple[str, str]] = []
+    for name in PIN_SCAN_TREES:
+        for path in script_paths(root / name):
+            rel = path.relative_to(root).as_posix()
+            content, read_error = read_scanned_text(path, rel)
+            if read_error is not None:
+                failures.append(f"live-pin regression: {read_error}")
+                continue
+            texts.append((rel, content))
+    failures.extend(
+        f"live-pin regression: once {key} is {value}, {error}"
+        for key, value in reachable
+        for rel, content in texts
+        for error in validate_script_content_live_pins(rel, content, {key: value})
+    )
+    return failures
+
+
+def _next_bump_scan_planted_regressions(values: dict[str, str]) -> list[str]:
+    """Prove _next_bump_scan_regressions catches next-bump pins, series rcs and bad bytes."""
+    next_go = next_pin_versions(values.get("GO_VERSION", ""))
+    series_rcs = [
+        version
+        for version in next_pin_versions(
+            values.get("FFMPEG_SERIES_TAG", ""), candidates=True
+        )
+        if "-rc." in version
+    ]
+    if not next_go or not series_rcs:
+        return ["live-pin regression: missing next version for planted scan"]
+    go_next = next_go[0]
+    rc_next = series_rcs[0]
+    with tempfile.TemporaryDirectory() as tmp_str:
+        root = Path(tmp_str)
+        scripts_dir = root / "scripts"
+        scripts_dir.mkdir()
+        (scripts_dir / "planted.sh").write_text(
+            "# " + "GO_VERSION" + "=" + go_next + "\n", encoding="utf-8"
+        )
+        (scripts_dir / "planted_rc.sh").write_text(
+            "# " + "FFMPEG_SERIES_TAG" + "=" + rc_next + "\n", encoding="utf-8"
+        )
+        (scripts_dir / "bad.sh").write_bytes(b"\xff\xfe\n")
+        found = _next_bump_scan_regressions(values, root=root)
+    failures: list[str] = []
+    if not any(
+        f"once GO_VERSION is {go_next}, scripts/planted.sh:" in e for e in found
+    ):
+        failures.append("live-pin regression: next-bump scan missed planted GO_VERSION")
+    if not any(
+        f"once FFMPEG_SERIES_TAG is {rc_next}, scripts/planted_rc.sh:" in e
+        for e in found
+    ):
+        failures.append(
+            "live-pin regression: next-bump scan missed planted FFMPEG_SERIES_TAG rc"
+        )
+    if not any(
+        e.startswith("live-pin regression: scripts/bad.sh: could not read:")
+        for e in found
+    ):
+        failures.append("live-pin regression: next-bump scan missed unreadable script")
+    return failures
+
+
+def live_pin_regressions() -> list[str]:
+    """Replay the Renovate fixtures and the script scan past today's pins, as a bump PR does (PR #609)."""
+    config_source = CONFIG.read_text(encoding="utf-8")
+    values, _ = parse_assignments(config_source)
+    failures = (
+        _live_pin_literal_regressions(values)
+        + _live_pin_boundary_regressions()
+        + _next_pin_version_regressions()
+        + _next_bump_scan_regressions(values)
+        + _next_bump_scan_planted_regressions(values)
+        + _missing_next_pin_regressions(values)
+    )
+    next_go = next_pin_versions(values.get("GO_VERSION", ""))
+    if not next_go:
+        return failures
+    bumped = config_source.replace(
+        go_pin_literal(config_source), f"GO_VERSION={next_go[0]}", 1
+    )
+    if bumped == config_source:
+        return failures + ["live-pin regression: bumping GO_VERSION changed nothing"]
+    renovate = RENOVATE_CONFIG.read_text(encoding="utf-8")
+    ci = (ROOT / CI_RELATIVE).read_text(encoding="utf-8")
+    failures.extend(
+        f"live-pin regression: bumped GO_VERSION rejected: {error}"
+        for error in validate_renovate_text(renovate, bumped, ci)
+    )
+    failures.extend(
+        f"live-pin regression after a GO_VERSION bump: {failure}"
+        for failure in renovate_validator_regressions(bumped)
+    )
     return failures
 
 
@@ -8809,7 +9172,7 @@ def validate_consumers() -> list[str]:
         )
     errors.extend(validate_workflows())
     errors.extend(validate_all_workflow_go_pins())
-    errors.extend(validate_no_literal_go_pins())
+    errors.extend(validate_script_pin_literals())
     if not PATCH_NOTICE.is_file():
         errors.append("scripts/release/write-patch-notice.sh: missing")
     else:
@@ -9633,6 +9996,7 @@ def main(argv: list[str] | None = None) -> int:
         errors.extend(windows_tester_regressions())
         errors.extend(renovate_pattern_regressions())
         errors.extend(renovate_validator_regressions())
+        errors.extend(live_pin_regressions())
         errors.extend(python_floor_regressions())
         errors.extend(go_pin_regressions())
 
