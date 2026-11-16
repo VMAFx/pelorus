@@ -164,8 +164,9 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0249](0249-tool-cli-transcript-tests.md) | CLI demonstrators carry golden transcripts run by an in-repo driver | Accepted; amended by [0257](0257-transcript-stdin-fixtures.md) |
 | [0250](0250-devcontainer-toolchain-smoke.md) | Run the offline native gate inside the dev container image before it is pushed | Accepted; amended by [0258](0258-changed-code-lint-gate.md) |
 | [0251](0251-changelog-render-owed-on-pull-requests.md) | Pull requests fail while the default branch owes a changelog render for more than 20 h | Accepted |
-| [0252](0252-scheduled-changelog-render-pull-request.md) | A scheduled workflow opens the changelog render pull request as a signed bot commit | Accepted |
+| [0252](0252-scheduled-changelog-render-pull-request.md) | A scheduled workflow opens the changelog render pull request as a signed bot commit | Accepted; amended by [0259](0259-render-schedule-best-effort.md) |
 | [0255](0255-mapped-memory-host-reads.md) | Copy mapped device memory before element-wise host reads | Accepted |
 | [0256](0256-mc-sad-gain-wall-time-threshold.md) | Guard the mc subgroup SAD gain with an in-binary wall-time ratio | Accepted |
 | [0257](0257-transcript-stdin-fixtures.md) | Transcript cases may feed one fixture file to the tool's stdin | Accepted |
 | [0258](0258-changed-code-lint-gate.md) | Lint changed code in the pre-push gate: cppcheck finding delta and ruff format on changed lines | Accepted |
+| [0259](0259-render-schedule-best-effort.md) | Keep the hourly changelog render schedule under best-effort platform delivery | Accepted |
